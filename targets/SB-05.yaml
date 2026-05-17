@@ -1,0 +1,30 @@
+# SB-05 타겟 정보, ELK dataset, KQL 쿼리 같은 대상 환경 정보
+
+target_id: SB-05
+name: ClusterDrain k3s Environment
+description: k3s 기반 Kubernetes 클러스터와 공격자 EC2, AWS S3 유출 경로를 포함한 SB-05 대상 환경이다.
+environment_type: k3s
+primary_namespace: prod-platform
+
+elk:
+  enabled: false
+  index: logs-*
+  datasets:
+    kubernetes_audit: sb05.kubernetes_audit
+    attacker_auditd: sb05.attacker_auditd
+    aws_cloudtrail: sb05.aws_cloudtrail
+
+log_queries:
+  kube_get_pods: 'data_stream.dataset:"sb05.kubernetes_audit" and objectRef.resource:"pods"'
+  kube_get_services: 'data_stream.dataset:"sb05.kubernetes_audit" and objectRef.resource:"services"'
+  kube_get_deployments: 'data_stream.dataset:"sb05.kubernetes_audit" and objectRef.resource:"deployments"'
+
+  kube_resource_discovery: 'data_stream.dataset:"sb05.kubernetes_audit" and (objectRef.resource:"namespaces" or objectRef.resource:"pods" or objectRef.resource:"deployments" or objectRef.resource:"services" or objectRef.resource:"ingresses")'
+  kube_secret_access: 'data_stream.dataset:"sb05.kubernetes_audit" and objectRef.resource:"secrets"'
+  kube_pod_exec: 'data_stream.dataset:"sb05.kubernetes_audit" and requestURI:*exec*'
+  kube_deploy_collector: 'data_stream.dataset:"sb05.kubernetes_audit" and objectRef.resource:"pods"'
+  kube_rbac_addition: 'data_stream.dataset:"sb05.kubernetes_audit" and (objectRef.resource:"serviceaccounts" or objectRef.resource:"roles" or objectRef.resource:"rolebindings")'
+
+  local_data_staging: 'data_stream.dataset:"sb05.attacker_auditd" and file.path:*sb05_stage*'
+  archive_staged_data: 'data_stream.dataset:"sb05.attacker_auditd" and (process.name:"zip" or process.name:"tar")'
+  s3_exfiltration: 'data_stream.dataset:"sb05.aws_cloudtrail" and eventSource:"s3.amazonaws.com"'

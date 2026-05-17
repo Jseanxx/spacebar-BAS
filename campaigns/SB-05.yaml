@@ -1,0 +1,137 @@
+# 어떤 순서로 normal/attack 모듈 실행할지에 대한 캠페인 시나리오
+
+campaign_id: SB-05
+campaign_name: ClusterDrain
+description: ingress-nginx 권한을 이용해 k3s 클러스터 리소스를 정찰하고, Secret 수집, Pod exec, Collector 배포, RBAC 추가, 로컬 스테이징, 압축, S3 유출 흐름을 재현한다.
+
+flow:
+  - order: 1
+    phase: normal
+    module: normal.kube_get_pods
+    target: SB-05
+    name: baseline pod inventory check
+    params:
+      behavior: kube_get_pods
+
+  - order: 2
+    phase: normal
+    module: normal.kube_get_services
+    target: SB-05
+    name: baseline service inventory check
+    params:
+      behavior: kube_get_services
+
+  - order: 3
+    phase: attack
+    module: attack.T1613_kube_resource_discovery
+    target: SB-05
+    name: k3s resource discovery
+    technique_id: T1613
+    params:
+      behavior: kube_resource_discovery
+      namespace: prod-platform
+
+  - order: 4
+    phase: attack
+    module: attack.T1552_007_kube_secret_access
+    target: SB-05
+    name: prod-platform secret access
+    technique_id: T1552.007
+    depends_on_orders:
+      - 3
+    params:
+      behavior: kube_secret_access
+      namespace: prod-platform
+      resource: secrets
+
+  - order: 5
+    phase: normal
+    module: normal.kube_get_deployments
+    target: SB-05
+    name: post-discovery deployment status check
+    params:
+      behavior: kube_get_deployments
+
+  - order: 6
+    phase: attack
+    module: attack.T1609_kube_pod_exec
+    target: SB-05
+    name: orders-api pod command execution
+    technique_id: T1609
+    depends_on_orders:
+      - 3
+      - 4
+    params:
+      behavior: kube_pod_exec
+      namespace: prod-platform
+      pod_selector: orders-api
+
+  - order: 7
+    phase: attack
+    module: attack.T1610_kube_deploy_collector
+    target: SB-05
+    name: deploy sb05 collector pod
+    technique_id: T1610
+    depends_on_orders:
+      - 3
+      - 4
+      - 6
+    params:
+      behavior: kube_deploy_collector
+      namespace: prod-platform
+      pod_name: sb05-collector
+
+  - order: 8
+    phase: attack
+    module: attack.T1098_006_kube_rbac_addition
+    target: SB-05
+    name: create service account and rolebinding
+    technique_id: T1098.006
+    depends_on_orders:
+      - 3
+      - 4
+    params:
+      behavior: kube_rbac_addition
+      namespace: prod-platform
+      service_account: sb05-reader
+
+  - order: 9
+    phase: attack
+    module: attack.T1074_001_local_data_staging
+    target: SB-05
+    name: local data staging
+    technique_id: T1074.001
+    depends_on_orders:
+      - 3
+      - 4
+      - 6
+      - 7
+      - 8
+    params:
+      behavior: local_data_staging
+      staging_dir: /tmp/sb05_stage
+
+  - order: 10
+    phase: attack
+    module: attack.T1560_001_archive_staged_data
+    target: SB-05
+    name: archive staged data
+    technique_id: T1560.001
+    depends_on_orders:
+      - 9
+    params:
+      behavior: archive_staged_data
+      archive_name: sb05_archive.zip
+
+  - order: 11
+    phase: attack
+    module: attack.T1567_002_s3_exfiltration
+    target: SB-05
+    name: exfiltrate archive to S3
+    technique_id: T1567.002
+    depends_on_orders:
+      - 9
+      - 10
+    params:
+      behavior: s3_exfiltration
+      destination: private_s3_bucket

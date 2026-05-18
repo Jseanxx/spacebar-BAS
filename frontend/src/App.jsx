@@ -13,11 +13,15 @@ export default function App() {
   const [selectedCampaignId, setSelectedCampaignId] = useState("SB-05");
   const [campaignDetail, setCampaignDetail] = useState(null);
   const [runs, setRuns] = useState([]);
+  const [jobs, setJobs] = useState([]);
+  const [agents, setAgents] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedOrders, setSelectedOrders] = useState([]);
   const [notice, setNotice] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
+
+  const DEFAULT_AGENT_ID = "SB05-bas-agent";
 
   async function fetchJson(path, options) {
     const response = await fetch(`${API_BASE}${path}`, options);
@@ -41,6 +45,13 @@ export default function App() {
 
       const runData = await fetchJson("/runs");
       setRuns(runData.runs || []);
+
+      const agentData = await fetchJson("/agents");
+      setAgents(agentData.agents || []);
+
+      const jobData = await fetchJson("/jobs");
+      setJobs(jobData.jobs || []);
+
     } catch (err) {
       setError(err.message);
     }
@@ -131,31 +142,38 @@ export default function App() {
 
   async function runCampaign() {
     try {
-      setIsRunning(true);
-      setError("");
+        setIsRunning(true);
+        setError("");
 
-      const data = await fetchJson("/runs", {
+        const data = await fetchJson("/jobs", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+            "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          campaign_id: selectedCampaignId,
-          selected_orders: selectedOrders.length > 0 ? selectedOrders : null,
-          include_normal: true
+            agent_id: DEFAULT_AGENT_ID,
+            campaign_id: selectedCampaignId,
+            selected_orders: selectedOrders.length > 0 ? selectedOrders : null,
+            include_normal: true
         })
-      });
+        });
 
-      setSelectedRun(data.result);
+        setNotice(`Job queued: ${data.job.job_id}`);
 
-      const runData = await fetchJson("/runs");
-      setRuns(runData.runs || []);
+        const agentData = await fetchJson("/agents");
+        setAgents(agentData.agents || []);
+
+        const jobData = await fetchJson("/jobs");
+        setJobs(jobData.jobs || []);
+
+        const runData = await fetchJson("/runs");
+        setRuns(runData.runs || []);
     } catch (err) {
-      setError(err.message);
+        setError(err.message);
     } finally {
-      setIsRunning(false);
+        setIsRunning(false);
     }
-  }
+    }
 
   async function loadRun(executionId) {
     try {
@@ -166,6 +184,29 @@ export default function App() {
       setError(err.message);
     }
   }
+
+  async function refreshAgentJobs() {
+    try {
+        setError("");
+
+        const agentData = await fetchJson("/agents");
+        setAgents(agentData.agents || []);
+
+        const jobData = await fetchJson("/jobs");
+        setJobs(jobData.jobs || []);
+
+        const runData = await fetchJson("/runs");
+        setRuns(runData.runs || []);
+
+        const completedJob = (jobData.jobs || []).find((job) => job.execution_id);
+        if (completedJob?.execution_id) {
+        const run = await fetchJson(`/runs/${completedJob.execution_id}`);
+        setSelectedRun(run);
+        }
+    } catch (err) {
+        setError(err.message);
+    }
+    }
 
   useEffect(() => {
     loadInitialData();
@@ -243,7 +284,7 @@ export default function App() {
               onClick={runCampaign}
               disabled={isRunning}
             >
-              {isRunning ? "Running..." : "Run Campaign"}
+              {isRunning ? "Queueing..." : "Queue Job"}
             </button>
           </div>
 
@@ -302,6 +343,82 @@ export default function App() {
         </section>
       </section>
 
+      <section className="layout agent-layout">
+        <section className="panel">
+            <div className="panel-title-row">
+            <div>
+                <div className="section-title">BasAgents</div>
+                <h3>Registered Agents</h3>
+            </div>
+
+            <button
+                type="button"
+                className="ghost-button"
+                onClick={refreshAgentJobs}
+            >
+                Refresh
+            </button>
+            </div>
+
+            <div className="agent-list">
+            {agents.length === 0 && (
+                <p className="empty">No BasAgent registered yet.</p>
+            )}
+
+            {agents.map((agent) => (
+                <div key={agent.agent_id} className="agent-item">
+                <div>
+                    <strong>{agent.display_name || agent.agent_id}</strong>
+                    <span>{agent.agent_id}</span>
+                    <small>
+                    {agent.collector_type || "collector unknown"} ·{" "}
+                    {agent.last_heartbeat_at || "no heartbeat"}
+                    </small>
+                </div>
+
+                <span className={`job-badge ${agent.status || "offline"}`}>
+                    {agent.status || "offline"}
+                </span>
+                </div>
+            ))}
+            </div>
+        </section>
+
+        <section className="panel">
+            <div className="section-title">Jobs</div>
+
+            <div className="job-list">
+            {jobs.length === 0 && <p className="empty">No jobs queued yet.</p>}
+
+            {jobs.map((job) => (
+                <button
+                key={job.job_id}
+                type="button"
+                className="job-item"
+                onClick={() => {
+                    if (job.execution_id) {
+                    loadRun(job.execution_id);
+                    }
+                }}
+                >
+                <div>
+                    <strong>{job.job_id}</strong>
+                    <span>{job.campaign_id} · {job.agent_id}</span>
+                    <small>
+                    {job.created_at}
+                    {job.execution_id ? ` · ${job.execution_id}` : ""}
+                    </small>
+                </div>
+
+                <span className={`job-badge ${job.status}`}>
+                    {job.status}
+                </span>
+                </button>
+            ))}
+            </div>
+        </section>
+        </section>
+      
       <section className="layout bottom-layout">
         <section className="panel">
           <div className="section-title">Recent Runs</div>
@@ -315,7 +432,9 @@ export default function App() {
               >
                 <strong>{run.execution_id}</strong>
                 <span>{run.campaign_id}</span>
-                <small>{run.started_at}</small>
+                <small>
+                    {run.bas_agent?.type || "bas_agent"} · {run.started_at}
+                </small>
               </button>
             ))}
           </div>
@@ -332,6 +451,15 @@ export default function App() {
               <p>
                 {selectedRun.campaign_id} · {selectedRun.started_at}
               </p>
+
+              {selectedRun.bas_agent && (
+                <div className="run-summary">
+                    <strong>BasAgent</strong>
+                    <span>
+                    {selectedRun.bas_agent.type} · {selectedRun.bas_agent.runner}
+                    </span>
+                </div>
+                )}
 
               {selectedRun.final_orders && (
                 <div className="run-summary">

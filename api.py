@@ -1,5 +1,7 @@
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
 import json
+import uuid
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +14,15 @@ from bas.loader import load_campaign, load_target
 BASE_DIR = Path(__file__).resolve().parent
 CAMPAIGNS_DIR = BASE_DIR / "campaigns"
 RUNS_DIR = BASE_DIR / "outputs" / "runs"
+
+JOBS_DIR = BASE_DIR / "outputs" / "jobs"
+AGENTS_DIR = BASE_DIR / "outputs" / "agents"
+
+KST = timezone(timedelta(hours=9))
+
+def now_kst():
+    # Controller와 BasAgent 간 상태 시간을 한국 시간 기준으로 남깁니다.
+    return datetime.now(KST).isoformat(timespec="seconds")
 
 
 app = FastAPI(title="Mini BAS API", version="0.3.0")
@@ -50,6 +61,49 @@ class PreviewRequest(BaseModel):
     campaign_id: str = "SB-05"
     selected_orders: list[int] | None = None
     include_normal: bool = True
+
+class AgentRegisterRequest(BaseModel):
+    """
+    BasAgent가 중앙 Controller에 처음 등록할 때 사용하는 요청 모델입니다.
+
+    agent_id는 CampaignAgent 환경 안에 설치된 BasAgent의 고유 이름입니다.
+    예: jseanxx-sb05-agent
+    """
+
+    agent_id: str
+    campaign_agent_id: str = "SB-05"
+    display_name: str | None = None
+    collector_type: str | None = "elastic_agent"
+
+
+class AgentHeartbeatRequest(BaseModel):
+    """
+    BasAgent가 살아 있는지 Controller에 주기적으로 알리는 요청 모델입니다.
+    """
+
+    status: str = "online"
+
+
+class JobRequest(BaseModel):
+    """
+    Controller가 BasAgent에게 실행시킬 작업을 만들 때 사용하는 요청 모델입니다.
+    """
+
+    agent_id: str
+    campaign_id: str = "SB-05"
+    selected_orders: list[int] | None = None
+    include_normal: bool = True
+
+
+class JobResultRequest(BaseModel):
+    """
+    BasAgent가 캠페인 실행 결과를 Controller에 업로드할 때 사용하는 요청 모델입니다.
+    """
+
+    status: str
+    execution_id: str | None = None
+    result: dict | None = None
+    error: str | None = None
 
 
 def get_bas_agent_status_payload():
@@ -202,6 +256,38 @@ def build_execution_plan(campaign_id, selected_orders=None, include_normal=True)
         ],
     }
 
+def read_json_file(path, default):
+    # 파일이 아직 없으면 기본값을 반환합니다. MVP 단계에서 DB 대신 JSON 파일을 쓰기 위한 함수입니다.
+    if not path.exists():
+        return default
+
+    with path.open("r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def write_json_file(path, data):
+    # JSON 저장 위치가 없으면 자동으로 만듭니다.
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with path.open("w", encoding="utf-8") as file:
+        json.dump(data, file, indent=2, ensure_ascii=False)
+
+
+def get_agent_path(agent_id):
+    return AGENTS_DIR / f"{agent_id}.json"
+
+
+def get_job_path(job_id):
+    return JOBS_DIR / f"{job_id}.json"
+
+
+def load_job(job_id):
+    path = get_job_path(job_id)
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return read_json_file(path, {})
 
 @app.get("/health")
 def health_check():
@@ -232,6 +318,207 @@ def get_agent_status_legacy():
 
     return get_bas_agent_status_payload()
 
+@app.post("/agents/register")
+def register_agent(request: AgentRegisterRequest):
+    """
+    BasAgent 등록 API입니다.
+
+    지금은 DB 없이 outputs/agents/{agent_id}.json 파일로 저장합니다.
+    나중에 SQLite나 DB로 바꿔도 API 형태는 유지할 수 있습니다.
+    """
+
+    agent = {
+        "agent_id": request.agent_id,
+        "campaign_agent_id": request.campaign_agent_id,
+        "display_name": request.display_name or request.agent_id,
+        "collector_type": request.collector_type,
+        "status": "registered",
+        "registered_at": now_kst(),
+        "last_heartbeat_at": None,
+    }
+
+    write_json_file(get_agent_path(request.agent_id), agent)
+
+    return {
+        "message": "agent registered",
+        "agent": agent,
+    }
+
+
+@app.post("/agents/{agent_id}/heartbeat")
+def heartbeat_agent(agent_id: str, request: AgentHeartbeatRequest):
+    """
+    BasAgent 생존 확인 API입니다.
+
+    BasAgent는 주기적으로 이 API를 호출해서 Controller에 살아 있음을 알립니다.
+    """
+
+    path = get_agent_path(agent_id)
+    agent = read_json_file(path, {
+        "agent_id": agent_id,
+        "campaign_agent_id": None,
+        "display_name": agent_id,
+        "collector_type": None,
+        "registered_at": None,
+    })
+
+    agent["status"] = request.status
+    agent["last_heartbeat_at"] = now_kst()
+
+    write_json_file(path, agent)
+
+    return {
+        "message": "heartbeat received",
+        "agent": agent,
+    }
+
+
+@app.get("/agents")
+def list_agents():
+    """
+    등록된 BasAgent 목록을 반환합니다.
+    """
+
+    AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    agents = []
+
+    for path in sorted(AGENTS_DIR.glob("*.json")):
+        agents.append(read_json_file(path, {}))
+
+    return {
+        "agents": agents,
+    }
+
+
+@app.post("/jobs")
+def create_job(request: JobRequest):
+    """
+    BasAgent가 가져갈 실행 Job을 생성합니다.
+
+    이 API는 나중에 React UI의 '캠페인 실행' 버튼과 연결됩니다.
+    """
+
+    try:
+        build_execution_plan(
+            campaign_id=request.campaign_id,
+            selected_orders=request.selected_orders,
+            include_normal=request.include_normal,
+        )
+    except HTTPException:
+        raise
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Campaign file not found")
+
+    job_id = f"job-{datetime.now(KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+
+    job = {
+        "job_id": job_id,
+        "agent_id": request.agent_id,
+        "campaign_id": request.campaign_id,
+        "selected_orders": request.selected_orders,
+        "include_normal": request.include_normal,
+        "status": "queued",
+        "created_at": now_kst(),
+        "started_at": None,
+        "finished_at": None,
+        "execution_id": None,
+        "result": None,
+        "error": None,
+    }
+
+    write_json_file(get_job_path(job_id), job)
+
+    return {
+        "message": "job created",
+        "job": job,
+    }
+
+
+@app.get("/jobs")
+def list_jobs():
+    """
+    생성된 Job 목록을 반환합니다.
+    """
+
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
+    jobs = []
+
+    for path in sorted(JOBS_DIR.glob("*.json"), reverse=True):
+        jobs.append(read_json_file(path, {}))
+
+    return {
+        "jobs": jobs,
+    }
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str):
+    """
+    특정 Job 상세 정보를 반환합니다.
+    """
+
+    return load_job(job_id)
+
+
+@app.get("/agents/{agent_id}/jobs/next")
+def get_next_job(agent_id: str):
+    """
+    BasAgent가 자신에게 할당된 다음 queued Job을 가져가는 API입니다.
+
+    중요한 점:
+    - status가 queued인 Job만 가져갑니다.
+    - 가져가는 순간 running으로 바꿔 중복 실행을 줄입니다.
+    """
+
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
+    for path in sorted(JOBS_DIR.glob("*.json")):
+        job = read_json_file(path, {})
+
+        if job.get("agent_id") != agent_id:
+            continue
+
+        if job.get("status") != "queued":
+            continue
+
+        job["status"] = "running"
+        job["started_at"] = now_kst()
+        write_json_file(path, job)
+
+        return {
+            "job": job,
+        }
+
+    return {
+        "job": None,
+    }
+
+
+@app.post("/agents/{agent_id}/jobs/{job_id}/result")
+def submit_job_result(agent_id: str, job_id: str, request: JobResultRequest):
+    """
+    BasAgent가 캠페인 실행 결과를 Controller에 업로드하는 API입니다.
+    """
+
+    job = load_job(job_id)
+
+    if job.get("agent_id") != agent_id:
+        raise HTTPException(status_code=403, detail="Job does not belong to this agent")
+
+    job["status"] = request.status
+    job["finished_at"] = now_kst()
+    job["execution_id"] = request.execution_id
+    job["result"] = request.result
+    job["error"] = request.error
+
+    write_json_file(get_job_path(job_id), job)
+
+    return {
+        "message": "job result received",
+        "job": job,
+    }
 
 @app.get("/campaigns")
 def list_campaigns():

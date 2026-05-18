@@ -12,10 +12,6 @@ CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
 
 from bas.controller import run_campaign
 
-
-DEFAULT_AGENT_ID = "SB05-bas-agent"
-DEFAULT_CONTROLLER_URL = "http://127.0.0.1:8000"
-
 def parse_simple_yaml(path):
     """
     BasAgent 설정 파일을 읽는 최소 YAML 파서입니다.
@@ -46,10 +42,10 @@ def parse_simple_yaml(path):
 
 def load_config(config_path=CONFIG_PATH):
     config = {
-        "agent_id": "sb05-bas-agent",
-        "campaign_agent_id": "SB-05",
-        "display_name": "SB-05 BasAgent",
-        "collector_type": "elastic_agent",
+        "agent_id": "bas-agent",
+        "campaign_agent_id": "local-campaign-agent",
+        "display_name": "BasAgent",
+        "collector_type": "unknown",
         "controller_url": "http://127.0.0.1:8000",
         "interval_seconds": "5",
         "execution_mode": "simulation",

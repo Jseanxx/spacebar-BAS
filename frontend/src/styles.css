@@ -436,6 +436,20 @@ code {
   padding: 13px;
 }
 
+.agent-item {
+  cursor: pointer;
+}
+
+.agent-item:hover,
+.agent-item.selected-agent {
+  border-color: #2563eb;
+  background: #eef5ff;
+}
+
+.agent-item.selected-agent .job-badge {
+  box-shadow: 0 0 0 2px #bfdbfe;
+}
+
 .job-item {
   cursor: pointer;
 }

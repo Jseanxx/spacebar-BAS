@@ -15,13 +15,12 @@ export default function App() {
   const [runs, setRuns] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [agents, setAgents] = useState([]);
+  const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedOrders, setSelectedOrders] = useState([]);
   const [notice, setNotice] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
-
-  const DEFAULT_AGENT_ID = "SB05-bas-agent";
 
   async function fetchJson(path, options) {
     const response = await fetch(`${API_BASE}${path}`, options);
@@ -47,7 +46,12 @@ export default function App() {
       setRuns(runData.runs || []);
 
       const agentData = await fetchJson("/agents");
-      setAgents(agentData.agents || []);
+      const loadedAgents = agentData.agents || [];
+      setAgents(loadedAgents);
+
+      if (!selectedAgentId && loadedAgents.length > 0) {
+        setSelectedAgentId(loadedAgents[0].agent_id);
+      }
 
       const jobData = await fetchJson("/jobs");
       setJobs(jobData.jobs || []);
@@ -145,13 +149,17 @@ export default function App() {
         setIsRunning(true);
         setError("");
 
+        if (!selectedAgentId) {
+            throw new Error("Select a BasAgent before queueing a job.");
+        }
+
         const data = await fetchJson("/jobs", {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            agent_id: DEFAULT_AGENT_ID,
+            agent_id: selectedAgentId,
             campaign_id: selectedCampaignId,
             selected_orders: selectedOrders.length > 0 ? selectedOrders : null,
             include_normal: true
@@ -190,7 +198,12 @@ export default function App() {
         setError("");
 
         const agentData = await fetchJson("/agents");
-        setAgents(agentData.agents || []);
+        const loadedAgents = agentData.agents || [];
+        setAgents(loadedAgents);
+
+        if (!selectedAgentId && loadedAgents.length > 0) {
+        setSelectedAgentId(loadedAgents[0].agent_id);
+        }
 
         const jobData = await fetchJson("/jobs");
         setJobs(jobData.jobs || []);
@@ -282,7 +295,7 @@ export default function App() {
             <button
               className="run-button"
               onClick={runCampaign}
-              disabled={isRunning}
+              disabled={isRunning || !selectedAgentId}
             >
               {isRunning ? "Queueing..." : "Queue Job"}
             </button>
@@ -366,7 +379,16 @@ export default function App() {
             )}
 
             {agents.map((agent) => (
-                <div key={agent.agent_id} className="agent-item">
+                <button
+                key={agent.agent_id}
+                type="button"
+                className={
+                    agent.agent_id === selectedAgentId
+                    ? "agent-item selected-agent"
+                    : "agent-item"
+                }
+                onClick={() => setSelectedAgentId(agent.agent_id)}
+                >
                 <div>
                     <strong>{agent.display_name || agent.agent_id}</strong>
                     <span>{agent.agent_id}</span>
@@ -379,7 +401,7 @@ export default function App() {
                 <span className={`job-badge ${agent.status || "offline"}`}>
                     {agent.status || "offline"}
                 </span>
-                </div>
+                </button>
             ))}
             </div>
         </section>

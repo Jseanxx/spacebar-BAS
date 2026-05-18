@@ -8,12 +8,57 @@ import urllib.request
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
 
 from bas.controller import run_campaign
 
 
 DEFAULT_AGENT_ID = "SB05-bas-agent"
 DEFAULT_CONTROLLER_URL = "http://127.0.0.1:8000"
+
+def parse_simple_yaml(path):
+    """
+    BasAgent 설정 파일을 읽는 최소 YAML 파서입니다.
+
+    현재 config.yaml은 key: value 형태만 사용하므로 외부 yaml 패키지 없이 처리합니다.
+    나중에 설정 구조가 복잡해지면 PyYAML로 바꾸면 됩니다.
+    """
+
+    config = {}
+
+    if not path.exists():
+        return config
+
+    with path.open("r", encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()
+
+            if not line or line.startswith("#"):
+                continue
+
+            if ":" not in line:
+                continue
+
+            key, value = line.split(":", 1)
+            config[key.strip()] = value.strip()
+
+    return config
+
+def load_config(config_path=CONFIG_PATH):
+    config = {
+        "agent_id": "sb05-bas-agent",
+        "campaign_agent_id": "SB-05",
+        "display_name": "SB-05 BasAgent",
+        "collector_type": "elastic_agent",
+        "controller_url": "http://127.0.0.1:8000",
+        "interval_seconds": "5",
+        "execution_mode": "simulation",
+    }
+
+    config.update(parse_simple_yaml(config_path))
+    config["interval_seconds"] = int(config.get("interval_seconds", 5))
+
+    return config
 
 
 def request_json(method, url, payload=None):
@@ -60,10 +105,12 @@ class BasAgent:
     - 실행 결과를 Controller에 업로드합니다.
     """
 
-    def __init__(self, agent_id, controller_url, interval_seconds=5):
-        self.agent_id = agent_id
-        self.controller_url = controller_url.rstrip("/")
-        self.interval_seconds = interval_seconds
+    def __init__(self, config):
+        self.config = config
+        self.agent_id = config["agent_id"]
+        self.controller_url = config["controller_url"].rstrip("/")
+        self.interval_seconds = config["interval_seconds"]
+        self.execution_mode = config["execution_mode"]
 
     def run_forever(self):
         self.register()
@@ -87,9 +134,9 @@ class BasAgent:
     def register(self):
         payload = {
             "agent_id": self.agent_id,
-            "campaign_agent_id": "SB-05",
-            "display_name": self.agent_id,
-            "collector_type": "elastic_agent",
+            "campaign_agent_id": self.config["campaign_agent_id"],
+            "display_name": self.config["display_name"],
+            "collector_type": self.config["collector_type"],
         }
 
         response = request_json(
@@ -123,6 +170,11 @@ class BasAgent:
         print(f"[+] Job received: {job_id}")
 
         try:
+            if self.execution_mode != "simulation":
+                raise RuntimeError(
+                    f"Unsupported execution_mode: {self.execution_mode}. "
+                    "Only simulation mode is enabled right now."
+                )
             result, output_path = run_campaign(
                 campaign_id=job["campaign_id"],
                 selected_orders=job.get("selected_orders"),
@@ -139,7 +191,7 @@ class BasAgent:
                 result=result,
                 error=None,
             )
-
+        
         except Exception as exc:
             print(f"[!] Job failed: {job_id}: {exc}")
 
@@ -168,17 +220,12 @@ class BasAgent:
 
 def main():
     parser = argparse.ArgumentParser(description="BasAgent runtime")
-    parser.add_argument("--agent-id", default=DEFAULT_AGENT_ID)
-    parser.add_argument("--controller-url", default=DEFAULT_CONTROLLER_URL)
-    parser.add_argument("--interval", type=int, default=5)
+    parser.add_argument("--config", default=str(CONFIG_PATH))
     args = parser.parse_args()
 
-    agent = BasAgent(
-        agent_id=args.agent_id,
-        controller_url=args.controller_url,
-        interval_seconds=args.interval,
-    )
+    config = load_config(Path(args.config))
 
+    agent = BasAgent(config=config)
     agent.run_forever()
 
 

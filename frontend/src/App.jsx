@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import "./styles.css";
 
 const API_BASE = "http://127.0.0.1:8000";
+const JOB_POLL_INTERVAL_MS = 1500;
+const JOB_POLL_ATTEMPTS = 40;
 
 export default function App() {
   const [health, setHealth] = useState(null);
@@ -32,6 +34,62 @@ export default function App() {
     return response.json();
   }
 
+  function sleep(milliseconds) {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, milliseconds);
+    });
+  }
+
+  async function refreshDashboardData() {
+    const agentData = await fetchJson("/agents");
+    const loadedAgents = agentData.agents || [];
+    setAgents(loadedAgents);
+
+    if (!selectedAgentId && loadedAgents.length > 0) {
+      setSelectedAgentId(loadedAgents[0].agent_id);
+    }
+
+    const jobData = await fetchJson("/jobs");
+    setJobs(jobData.jobs || []);
+
+    const runData = await fetchJson("/runs");
+    setRuns(runData.runs || []);
+
+    return {
+      agents: loadedAgents,
+      jobs: jobData.jobs || [],
+      runs: runData.runs || [],
+    };
+  }
+
+  async function pollJobUntilFinished(jobId) {
+    for (let attempt = 0; attempt < JOB_POLL_ATTEMPTS; attempt += 1) {
+      const job = await fetchJson(`/jobs/${jobId}`);
+      await refreshDashboardData();
+
+      if (job.status === "completed") {
+        setNotice(`Job completed: ${jobId}`);
+
+        if (job.execution_id) {
+          const run = await fetchJson(`/runs/${job.execution_id}`);
+          setSelectedRun(run);
+        }
+
+        return job;
+      }
+
+      if (job.status === "failed") {
+        throw new Error(job.error || `Job failed: ${jobId}`);
+      }
+
+      setNotice(`Job ${job.status}: ${jobId}`);
+      await sleep(JOB_POLL_INTERVAL_MS);
+    }
+
+    setNotice(`Job is still running: ${jobId}`);
+    return null;
+  }
+
   async function loadInitialData() {
     try {
       setError("");
@@ -42,19 +100,7 @@ export default function App() {
       const campaignData = await fetchJson("/campaigns");
       setCampaigns(campaignData.campaigns || []);
 
-      const runData = await fetchJson("/runs");
-      setRuns(runData.runs || []);
-
-      const agentData = await fetchJson("/agents");
-      const loadedAgents = agentData.agents || [];
-      setAgents(loadedAgents);
-
-      if (!selectedAgentId && loadedAgents.length > 0) {
-        setSelectedAgentId(loadedAgents[0].agent_id);
-      }
-
-      const jobData = await fetchJson("/jobs");
-      setJobs(jobData.jobs || []);
+      await refreshDashboardData();
 
     } catch (err) {
       setError(err.message);
@@ -149,6 +195,10 @@ export default function App() {
         setIsRunning(true);
         setError("");
 
+        if (!selectedCampaignId) {
+            throw new Error("Select a campaign before queueing a job.");
+        }
+
         if (!selectedAgentId) {
             throw new Error("Select a BasAgent before queueing a job.");
         }
@@ -167,15 +217,8 @@ export default function App() {
         });
 
         setNotice(`Job queued: ${data.job.job_id}`);
-
-        const agentData = await fetchJson("/agents");
-        setAgents(agentData.agents || []);
-
-        const jobData = await fetchJson("/jobs");
-        setJobs(jobData.jobs || []);
-
-        const runData = await fetchJson("/runs");
-        setRuns(runData.runs || []);
+        await refreshDashboardData();
+        await pollJobUntilFinished(data.job.job_id);
     } catch (err) {
         setError(err.message);
     } finally {
@@ -197,21 +240,9 @@ export default function App() {
     try {
         setError("");
 
-        const agentData = await fetchJson("/agents");
-        const loadedAgents = agentData.agents || [];
-        setAgents(loadedAgents);
+        const { jobs: loadedJobs } = await refreshDashboardData();
 
-        if (!selectedAgentId && loadedAgents.length > 0) {
-        setSelectedAgentId(loadedAgents[0].agent_id);
-        }
-
-        const jobData = await fetchJson("/jobs");
-        setJobs(jobData.jobs || []);
-
-        const runData = await fetchJson("/runs");
-        setRuns(runData.runs || []);
-
-        const completedJob = (jobData.jobs || []).find((job) => job.execution_id);
+        const completedJob = loadedJobs.find((job) => job.execution_id);
         if (completedJob?.execution_id) {
         const run = await fetchJson(`/runs/${completedJob.execution_id}`);
         setSelectedRun(run);
@@ -295,9 +326,9 @@ export default function App() {
             <button
               className="run-button"
               onClick={runCampaign}
-              disabled={isRunning || !selectedAgentId}
+              disabled={isRunning || !selectedAgentId || !selectedCampaignId}
             >
-              {isRunning ? "Queueing..." : "Queue Job"}
+              {isRunning ? "Running Job..." : "Queue Job"}
             </button>
           </div>
 

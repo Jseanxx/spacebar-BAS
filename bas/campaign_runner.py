@@ -32,10 +32,17 @@ class CampaignRunner:
     - outputs/runs/*.json에 실행 결과를 저장합니다.
     """
 
-    def __init__(self, campaign_id, selected_orders=None, include_normal=True):
+    def __init__(
+        self,
+        campaign_id,
+        selected_orders=None,
+        include_normal=True,
+        execution_mode="simulation",
+    ):
         self.campaign_id = campaign_id
         self.selected_orders = sorted(selected_orders or [])
         self.include_normal = include_normal
+        self.execution_mode = execution_mode
         self.execution_id = self._create_execution_id()
 
     def run(self):
@@ -167,7 +174,7 @@ class CampaignRunner:
         return {
             "type": "local_bas_agent",
             "runner": "campaign_runner",
-            "mode": "simulation",
+            "mode": self.execution_mode,
             "policy": {
                 "on_step_failure": "continue",
                 "include_normal": self.include_normal,
@@ -189,9 +196,12 @@ class CampaignRunner:
             module = load_module(step["module"])
 
             # 중요한 줄: 각 공격/정상 행위 모듈의 run()이 실제로 호출되는 지점입니다.
+            module_params = dict(step.get("params", {}))
+            module_params["_execution_mode"] = self.execution_mode
+
             module_result = module.run(
                 target=target,
-                params=step.get("params", {}),
+                params=module_params,
             )
 
             status = module_result.get("status", "unknown")

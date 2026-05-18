@@ -166,15 +166,16 @@ class BasAgent:
         print(f"[+] Job received: {job_id}")
 
         try:
-            if self.execution_mode != "simulation":
+            if self.execution_mode not in ("simulation", "real"):
                 raise RuntimeError(
                     f"Unsupported execution_mode: {self.execution_mode}. "
-                    "Only simulation mode is enabled right now."
+                    "Allowed modes: simulation, real."
                 )
             result, output_path = run_campaign(
                 campaign_id=job["campaign_id"],
                 selected_orders=job.get("selected_orders"),
                 include_normal=job.get("include_normal", True),
+                execution_mode=self.execution_mode,
             )
 
             print(f"[+] Job completed: {job_id}")

@@ -218,13 +218,21 @@ class BasAgent:
 def main():
     parser = argparse.ArgumentParser(description="BasAgent runtime")
     parser.add_argument("--config", default=str(CONFIG_PATH))
+    parser.add_argument(
+        "--execution-mode",
+        choices=["simulation", "real"],
+        default=None,
+        help="Override execution_mode from config.yaml for this run.",
+    )
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
 
+    if args.execution_mode:
+        config["execution_mode"] = args.execution_mode
+
     agent = BasAgent(config=config)
     agent.run_forever()
-
 
 if __name__ == "__main__":
     main()

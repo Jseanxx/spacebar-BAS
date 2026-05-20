@@ -1053,3 +1053,395 @@ code {
     width: 100%;
   }
 }
+
+.product-topbar {
+  align-items: flex-start;
+}
+
+.topbar-copy {
+  max-width: 760px;
+  margin: 8px 0 0;
+  color: #66758a;
+}
+
+.topbar-status {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.9fr) minmax(220px, 0.45fr);
+  gap: 18px;
+  align-items: stretch;
+  margin-bottom: 18px;
+}
+
+.campaign-overview,
+.agent-card,
+.score-panel {
+  min-height: 100%;
+}
+
+.campaign-selector-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.campaign-selector-row select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #d1d9e6;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172033;
+  padding: 0 12px;
+  font: inherit;
+}
+
+.campaign-overview h2,
+.agent-card h3 {
+  margin-bottom: 8px;
+}
+
+.campaign-overview p,
+.agent-card p {
+  color: #66758a;
+}
+
+.overview-facts,
+.agent-meta-grid,
+.validation-metrics {
+  display: grid;
+  gap: 10px;
+}
+
+.overview-facts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 18px;
+}
+
+.overview-facts div,
+.agent-meta-grid div,
+.validation-metrics div {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid #dde6f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.overview-facts span,
+.agent-meta-grid span,
+.validation-metrics span {
+  display: block;
+  color: #66758a;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.overview-facts strong,
+.agent-meta-grid strong,
+.validation-metrics strong {
+  display: block;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.scope-pill {
+  width: fit-content;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #edf2f7;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.agent-state-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.agent-meta-grid {
+  margin: 16px 0;
+}
+
+.agent-card .run-button {
+  width: 100%;
+}
+
+.notice-wide {
+  max-width: none;
+  margin-bottom: 18px;
+}
+
+.operator-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(0, 1.1fr);
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 18px;
+}
+
+.history-grid {
+  grid-template-columns: minmax(320px, 0.7fr) minmax(0, 1.3fr);
+}
+
+.technique-panel,
+.validation-panel {
+  min-height: 100%;
+}
+
+.compact-actions {
+  margin-top: 0;
+  justify-content: flex-end;
+}
+
+.technique-list {
+  display: grid;
+  gap: 8px;
+}
+
+.technique-row {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #dde6f0;
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #fbfdff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.technique-row.attack {
+  border-left-color: #ea580c;
+}
+
+.technique-row.normal {
+  border-left-color: #0f766e;
+}
+
+.technique-row:hover {
+  background: #f8fafc;
+  border-color: #b8c7d9;
+}
+
+.technique-row.selected-step {
+  background: #eef5ff;
+  border-color: #8eb4e8;
+  border-left-color: #2563eb;
+}
+
+.technique-main {
+  min-width: 0;
+}
+
+.technique-main strong,
+.technique-main small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.technique-main strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.technique-main small {
+  margin-top: 4px;
+  color: #66758a;
+  font-size: 12px;
+}
+
+.technique-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.validation-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.validation-metrics strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.compact-path-map {
+  gap: 8px;
+}
+
+.validation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #dde6f0;
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.validation-row.attack {
+  border-left-color: #ea580c;
+}
+
+.validation-row.normal {
+  border-left-color: #0f766e;
+}
+
+.validation-row.selected-path-node {
+  background: #f8fafc;
+  border-color: #b8c7d9;
+}
+
+.validation-row strong,
+.validation-row small {
+  display: block;
+}
+
+.validation-row strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.validation-row small {
+  margin-top: 4px;
+  color: #66758a;
+  font-size: 12px;
+}
+
+.validation-badges {
+  display: grid;
+  grid-template-columns: 82px 104px 78px;
+  gap: 8px;
+}
+
+.validation-badges .result-badge,
+.validation-badges .status-tag {
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.job-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.job-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #dde6f0;
+  border-radius: 8px;
+  background: #fbfdff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.job-row:hover {
+  border-color: #8eb4e8;
+  background: #f1f6ff;
+}
+
+.job-row span:first-child {
+  min-width: 0;
+}
+
+.job-row strong,
+.job-row small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.job-row small {
+  margin-top: 4px;
+  color: #66758a;
+}
+
+.evidence-panel {
+  margin-bottom: 18px;
+}
+
+.evidence-list {
+  gap: 12px;
+}
+
+.evidence-step {
+  display: block;
+}
+
+.evidence-step-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.evidence-step-header strong {
+  color: #0f172a;
+}
+
+@media (max-width: 1100px) {
+  .overview-grid,
+  .operator-grid,
+  .history-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .score-panel {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 700px) {
+  .topbar-status,
+  .agent-state-row,
+  .evidence-step-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .campaign-selector-row,
+  .overview-facts,
+  .validation-metrics,
+  .technique-row,
+  .validation-row {
+    grid-template-columns: 1fr;
+  }
+
+  .technique-tags,
+  .compact-actions {
+    justify-content: flex-start;
+  }
+
+  .validation-badges {
+    grid-template-columns: 1fr;
+  }
+}

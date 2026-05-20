@@ -376,12 +376,20 @@ export default function App() {
   const dashboardSummary = buildDashboardSummary(selectedRun);
   const attackPathSteps = selectedRun?.steps || campaignDetail?.flow || [];
   const latestJob = jobs[0] || null;
+  const recentJobs = jobs.slice(0, 4);
   const selectedAgent = agents.find((agent) => agent.agent_id === selectedAgentId);
   const runPageCount = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE));
   const visibleRuns = runs.slice(
     runPage * RUNS_PER_PAGE,
     runPage * RUNS_PER_PAGE + RUNS_PER_PAGE
   );
+  const selectedRunSteps = selectedRun?.steps || [];
+  const selectedRunAttackSteps = selectedRunSteps.filter((step) => step.phase === "attack");
+  const campaignAttackCount = (campaignDetail?.flow || []).filter((step) => step.phase === "attack").length;
+  const campaignNormalCount = (campaignDetail?.flow || []).filter((step) => step.phase === "normal").length;
+  const selectedScopeCount = selectedOrders.length || campaignDetail?.flow?.length || 0;
+  const selectedScopeLabel = selectedOrders.length > 0 ? `${selectedOrders.length} selected` : "Full campaign";
+  const executedStepCount = selectedRunSteps.filter((step) => ["success", "simulated"].includes(step.status)).length;
 
   async function runCampaign() {
     try {
@@ -459,60 +467,33 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <section className="topbar">
+      <section className="topbar product-topbar">
         <div>
-          <p className="eyebrow">Mini BAS Console</p>
-          <h1>Campaign Runner</h1>
+          <p className="eyebrow">Spacebar BAS</p>
+          <h1>Campaign Validation Console</h1>
+          <p className="topbar-copy">
+            Execute campaign techniques, verify expected telemetry, and review evidence from one operator view.
+          </p>
         </div>
 
-        <div className={`status-pill ${health ? "online" : "offline"}`}>
-          {health ? "API Online" : "API Offline"}
+        <div className="topbar-status">
+          <div className={`status-pill ${health ? "online" : "offline"}`}>
+            {health ? "API Online" : "API Offline"}
+          </div>
+          <button type="button" className="ghost-button" onClick={refreshAgentJobs}>
+            Refresh
+          </button>
         </div>
       </section>
 
       {error && <div className="alert">{error}</div>}
 
-      <section className="dashboard-grid">
-        <div className="panel score-panel">
-          <div className="section-title">Security Score</div>
-          <div className="score-value">
-            {dashboardSummary.score === null ? "--" : dashboardSummary.score}
-            <span>/100</span>
-          </div>
-          <p>
-            {selectedRun
-              ? `${selectedRun.campaign_id} campaign run 기준 점수`
-              : "Run 결과를 선택하면 점수가 계산됩니다."}
-          </p>
-        </div>
-
-        <div className="panel metric-panel">
-          <div className="section-title">TTP Execution</div>
-          <strong>{dashboardSummary.successfulAttackCount}</strong>
-          <span>successful attack steps</span>
-          <small>{dashboardSummary.attackCount} attack steps in selected run</small>
-        </div>
-
-        <div className="panel metric-panel">
-          <div className="section-title">Detection</div>
-          <strong>{dashboardSummary.detectedCount}</strong>
-          <span>detected attack steps</span>
-          <small>{dashboardSummary.notCheckedCount} not checked</small>
-        </div>
-
-        <div className="panel metric-panel">
-          <div className="section-title">Missed</div>
-          <strong>{dashboardSummary.missedCount}</strong>
-          <span>missed attack steps</span>
-          <small>successful + missed is high risk</small>
-        </div>
-      </section>
-
-      <section className="panel run-control-panel">
-        <div className="control-group">
-          <label>
-            Campaign
+      <section className="overview-grid">
+        <div className="panel campaign-overview">
+          <div className="section-title">Campaign</div>
+          <div className="campaign-selector-row">
             <select
+              aria-label="Campaign"
               value={selectedCampaignId}
               onChange={(event) => loadCampaignDetail(event.target.value)}
             >
@@ -522,73 +503,101 @@ export default function App() {
                 </option>
               ))}
             </select>
-          </label>
+            <span className="scope-pill">{selectedScopeLabel}</span>
+          </div>
 
-          <div className="inferred-agent">
-            <span>BasAgent</span>
-            <strong>{selectedAgent?.display_name || selectedAgentId || "No matching BasAgent"}</strong>
-            <small>{selectedAgent?.agent_id || `${selectedCampaignId} agent is not registered`}</small>
+          <h2>{campaignDetail?.campaign_name || "No campaign selected"}</h2>
+          <p>{campaignDetail?.description || "Select a campaign to load its execution scope."}</p>
+
+          <div className="overview-facts">
+            <div>
+              <span>Attack Steps</span>
+              <strong>{campaignAttackCount}</strong>
+            </div>
+            <div>
+              <span>Normal Steps</span>
+              <strong>{campaignNormalCount}</strong>
+            </div>
+            <div>
+              <span>Execution Scope</span>
+              <strong>{selectedScopeCount}</strong>
+            </div>
           </div>
         </div>
 
-        <div className="control-actions">
+        <div className="panel agent-card">
+          <div className="section-title">BasAgent</div>
+          <div className="agent-state-row">
+            <div>
+              <h3>{selectedAgent?.display_name || "No matching BasAgent"}</h3>
+              <p>{selectedAgent?.agent_id || `${selectedCampaignId} agent is not registered`}</p>
+            </div>
+            <span className={`job-badge ${selectedAgent?.status || "offline"}`}>
+              {selectedAgent?.status || "offline"}
+            </span>
+          </div>
+
+          <div className="agent-meta-grid">
+            <div>
+              <span>Campaign</span>
+              <strong>{selectedAgent?.campaign_agent_id || selectedCampaignId}</strong>
+            </div>
+            <div>
+              <span>Collector</span>
+              <strong>{selectedAgent?.collector_type || "unknown"}</strong>
+            </div>
+            <div>
+              <span>Heartbeat</span>
+              <strong>{selectedAgent?.last_heartbeat_at || "none"}</strong>
+            </div>
+          </div>
+
           <button
             className="run-button"
             onClick={runCampaign}
             disabled={isRunning || !selectedAgentId || !selectedCampaignId}
           >
-            {isRunning ? "Running Job..." : "Queue Job"}
+            {isRunning ? "Running Job..." : "Queue Campaign Job"}
           </button>
+        </div>
 
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={refreshAgentJobs}
-          >
-            Refresh
-          </button>
+        <div className="panel score-panel">
+          <div className="section-title">Validation Score</div>
+          <div className="score-value">
+            {dashboardSummary.score === null ? "--" : dashboardSummary.score}
+            <span>/100</span>
+          </div>
+          <p>
+            {selectedRun
+              ? `${selectedRun.campaign_id} latest selected run`
+              : "Run a job to calculate validation score."}
+          </p>
         </div>
       </section>
 
-      <section className="layout execution-layout">
-        <section className="panel main-panel">
-          <div className="panel-header">
+      {notice && <div className="notice notice-wide">{notice}</div>}
+
+      <section className="operator-grid">
+        <section className="panel technique-panel">
+          <div className="panel-title-row">
             <div>
-              <div className="section-title">Technique Selection</div>
-              <h2>{campaignDetail?.campaign_name || "No campaign selected"}</h2>
-
-              <div className="selection-actions">
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={selectAllAttacks}
-                >
-                  Select All Attacks
-                </button>
-
-                <button
-                  type="button"
-                  className="secondary-button normal-action"
-                  onClick={selectAllNormal}
-                >
-                  Select All Normal
-                </button>
-
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={clearSelection}
-                >
-                  Clear Selection
-                </button>
-              </div>
-
-              {notice && <div className="notice">{notice}</div>}
+              <div className="section-title">Execution Scope</div>
+              <h3>Techniques</h3>
             </div>
-
+            <div className="selection-actions compact-actions">
+              <button type="button" className="secondary-button" onClick={selectAllAttacks}>
+                Attacks
+              </button>
+              <button type="button" className="secondary-button normal-action" onClick={selectAllNormal}>
+                Normal
+              </button>
+              <button type="button" className="ghost-button" onClick={clearSelection}>
+                Clear
+              </button>
+            </div>
           </div>
 
-          <div className="flow-list">
+          <div className="technique-list">
             {(campaignDetail?.flow || []).map((step) => {
               const isSelectedStep = selectedOrders.includes(step.order);
 
@@ -597,107 +606,128 @@ export default function App() {
                   key={step.order}
                   type="button"
                   className={[
-                    "flow-step",
+                    "technique-row",
                     step.phase,
-                    isSelectedStep ? "selected-step" : ""
+                    isSelectedStep ? "selected-step" : "",
                   ].join(" ")}
                   onClick={() => toggleStep(step)}
                 >
-                  <div className="step-index">{step.order}</div>
-
-                  <div className="step-content">
-                    <div className="step-title-row">
-                      <div>
-                        <div className="step-title">{step.name}</div>
-
-                        <div className="step-meta">
-                          <span
-                            className={
-                              step.phase === "attack"
-                                ? "chip attack-chip"
-                                : "chip normal-chip"
-                            }
-                          >
-                            {step.phase === "attack" ? "Attack" : "Normal"}
-                          </span>
-
-                          {step.technique_id && (
-                            <span className="chip technique-chip">
-                              {step.technique_id}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  <span className="step-index">{step.order}</span>
+                  <span className="technique-main">
+                    <strong>{step.name}</strong>
+                    <small>{step.module}</small>
+                  </span>
+                  <span className="technique-tags">
+                    <span className={step.phase === "attack" ? "chip attack-chip" : "chip normal-chip"}>
+                      {step.phase === "attack" ? "Attack" : "Normal"}
+                    </span>
+                    {step.technique_id && (
+                      <span className="chip technique-chip">{step.technique_id}</span>
+                    )}
+                  </span>
                 </button>
               );
             })}
           </div>
         </section>
 
-        <section className="panel latest-job-panel">
+        <section className="panel validation-panel">
           <div className="panel-title-row">
             <div>
-              <div className="section-title">Latest Job</div>
-              <h3>{latestJob ? latestJob.status : "No job yet"}</h3>
+              <div className="section-title">Detection Validation</div>
+              <h3>{selectedRun ? selectedRun.execution_id : "No run selected"}</h3>
             </div>
-
-            {latestJob && (
-              <span className={`job-badge ${latestJob.status}`}>
-                {latestJob.status}
-              </span>
-            )}
+            <span className="page-indicator">{executedStepCount} executed</span>
           </div>
 
-          {!latestJob && (
-            <p className="empty">Select a campaign and BasAgent, then queue a job.</p>
-          )}
-
-          {latestJob && (
-            <div className="latest-job-card">
-              <div>
-                <span>Job ID</span>
-                <strong>{latestJob.job_id}</strong>
-              </div>
-
-              <div>
-                <span>Campaign</span>
-                <strong>{latestJob.campaign_id}</strong>
-              </div>
-
-              <div>
-                <span>BasAgent</span>
-                <strong>{latestJob.agent_id}</strong>
-              </div>
-
-              <div>
-                <span>Created</span>
-                <strong>{latestJob.created_at}</strong>
-              </div>
-
-              {latestJob.execution_id && (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => loadRun(latestJob.execution_id)}
-                >
-                  Open Run Detail
-                </button>
-              )}
+          <div className="validation-metrics">
+            <div>
+              <span>Attack</span>
+              <strong>{selectedRunAttackSteps.length}</strong>
             </div>
-          )}
+            <div>
+              <span>Detected</span>
+              <strong>{dashboardSummary.detectedCount}</strong>
+            </div>
+            <div>
+              <span>Missed</span>
+              <strong>{dashboardSummary.missedCount}</strong>
+            </div>
+            <div>
+              <span>Not Checked</span>
+              <strong>{dashboardSummary.notCheckedCount}</strong>
+            </div>
+          </div>
+
+          <div className="path-map compact-path-map">
+            {attackPathSteps.map((step) => {
+              const hasRunResult = Boolean(step.status);
+              const executionStatus = step.status || "not_run";
+              const detectionStatus = hasRunResult ? getDetectionStatus(step) : "not_run";
+              const riskLevel = hasRunResult ? getRiskLevel(step) : "not_run";
+              const isSelectedPath = selectedOrders.includes(step.order)
+                || selectedRun?.final_orders?.includes(step.order);
+
+              return (
+                <div
+                  key={step.order}
+                  className={[
+                    "validation-row",
+                    step.phase,
+                    isSelectedPath ? "selected-path-node" : "",
+                  ].join(" ")}
+                >
+                  <div>
+                    <strong>{step.order}. {step.name}</strong>
+                    <small>{step.technique_id || step.phase}</small>
+                  </div>
+                  <div className="validation-badges">
+                    <span className={`result-badge ${executionStatus}`}>{executionStatus}</span>
+                    <span className={`status-tag ${detectionStatus}`}>{detectionStatus}</span>
+                    <span className={`status-tag risk-${riskLevel}`}>{riskLevel}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </section>
       </section>
 
-      <section className="layout analysis-layout">
-        <section className="panel recent-runs-panel">
+      <section className="operator-grid history-grid">
+        <section className="panel">
           <div className="panel-title-row">
             <div>
-              <div className="section-title">Recent Runs</div>
-              <h3>Run History</h3>
+              <div className="section-title">Jobs</div>
+              <h3>Queue</h3>
             </div>
+            {latestJob && <span className={`job-badge ${latestJob.status}`}>{latestJob.status}</span>}
+          </div>
 
+          <div className="job-stack">
+            {recentJobs.map((job) => (
+              <button
+                key={job.job_id}
+                type="button"
+                className="job-row"
+                onClick={() => job.execution_id && loadRun(job.execution_id)}
+              >
+                <span>
+                  <strong>{job.campaign_id}</strong>
+                  <small>{job.job_id}</small>
+                </span>
+                <span className={`job-badge ${job.status}`}>{job.status}</span>
+              </button>
+            ))}
+            {recentJobs.length === 0 && <p className="empty">No jobs queued yet.</p>}
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-title-row">
+            <div>
+              <div className="section-title">Runs</div>
+              <h3>History</h3>
+            </div>
             <span className="page-indicator">
               {runs.length === 0 ? "0 / 0" : `${runPage + 1} / ${runPageCount}`}
             </span>
@@ -719,10 +749,7 @@ export default function App() {
                 <small>{run.started_at}</small>
               </button>
             ))}
-
-            {runs.length === 0 && (
-              <p className="empty">No runs yet.</p>
-            )}
+            {runs.length === 0 && <p className="empty">No runs yet.</p>}
           </div>
 
           <div className="run-pager">
@@ -734,7 +761,6 @@ export default function App() {
             >
               Prev
             </button>
-
             <button
               type="button"
               className="ghost-button"
@@ -745,116 +771,44 @@ export default function App() {
             </button>
           </div>
         </section>
-
-        <section className="panel attack-map-panel">
-          <div className="path-map-header">
-            <div className="section-title">Attack Path Map</div>
-            <div className="path-map-columns">
-              <span>실행</span>
-              <span>탐지</span>
-              <span>위험도</span>
-            </div>
-          </div>
-
-          <div className="path-map">
-            {attackPathSteps.map((step) => {
-              const hasRunResult = Boolean(step.status);
-              const executionStatus = step.status || "not_run";
-              const detectionStatus = hasRunResult ? getDetectionStatus(step) : "not_run";
-              const riskLevel = hasRunResult ? getRiskLevel(step) : "not_run";
-              const isSelectedPath = selectedOrders.includes(step.order)
-                || selectedRun?.final_orders?.includes(step.order);
-
-              return (
-                <div
-                  key={step.order}
-                  className={[
-                    "path-node",
-                    step.phase,
-                    step.status || "",
-                    isSelectedPath ? "selected-path-node" : "",
-                  ].join(" ")}
-                >
-                  <strong>{step.order}</strong>
-
-                  <div className="path-node-main">
-                    <span>{step.name}</span>
-                    <small>{step.technique_id || step.phase}</small>
-                  </div>
-
-                  <div className="path-node-badges">
-                    <span className={`result-badge ${executionStatus}`}>
-                      {executionStatus}
-                    </span>
-                    <span className={`status-tag ${detectionStatus}`}>
-                      {detectionStatus}
-                    </span>
-                    <span className={`status-tag risk-${riskLevel}`}>
-                      {riskLevel}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
       </section>
 
-      <section className="layout detail-layout" ref={detailRef}>
-        <section className="panel">
-          <div className="section-title">Run Detail</div>
+      <section className="panel evidence-panel" ref={detailRef}>
+        <div className="panel-title-row">
+          <div>
+            <div className="section-title">Evidence</div>
+            <h3>{selectedRun ? selectedRun.execution_id : "Select or execute a run"}</h3>
+          </div>
+          {selectedRun && <span className="scope-pill">{selectedRun.campaign_id}</span>}
+        </div>
 
-          {!selectedRun && <p className="empty">Select or execute a run.</p>}
+        {!selectedRun && <p className="empty">Run detail will show commands, artifacts, and expected detection queries.</p>}
 
-          {selectedRun && (
-            <div className="detail">
-              <h3>{selectedRun.execution_id}</h3>
-              <p>
-                {selectedRun.campaign_id} - {selectedRun.started_at}
-              </p>
-
-              <div className="result-steps">
-                {(selectedRun.steps || []).map((step) => (
-                  <div
-                    key={`${step.order}-${step.module}`}
-                    className="result-step"
-                  >
-                    <div>
-                      <strong>
-                        {step.order}. {step.name}
-                      </strong>
-
-                      <div className="step-meta">
-                        <span
-                          className={
-                            step.phase === "attack"
-                              ? "chip attack-chip"
-                              : "chip normal-chip"
-                          }
-                        >
-                          {step.phase === "attack" ? "Attack" : "Normal"}
-                        </span>
-
-                        {step.technique_id && (
-                          <span className="chip technique-chip">
-                            {step.technique_id}
-                          </span>
-                        )}
-                      </div>
-
-                      <p>{step.module_result?.message}</p>
-                      {renderModuleEvidence(step)}
-                    </div>
-
-                    <span className={`result-badge ${step.status}`}>
-                      {step.status}
-                    </span>
+        {selectedRun && (
+          <div className="result-steps evidence-list">
+            {(selectedRun.steps || []).map((step) => (
+              <div key={`${step.order}-${step.module}`} className="result-step evidence-step">
+                <div>
+                  <div className="evidence-step-header">
+                    <strong>{step.order}. {step.name}</strong>
+                    <span className={`result-badge ${step.status}`}>{step.status}</span>
                   </div>
-                ))}
+
+                  <div className="step-meta">
+                    <span className={step.phase === "attack" ? "chip attack-chip" : "chip normal-chip"}>
+                      {step.phase === "attack" ? "Attack" : "Normal"}
+                    </span>
+                    {step.technique_id && <span className="chip technique-chip">{step.technique_id}</span>}
+                    <span className={`status-tag ${getDetectionStatus(step)}`}>{getDetectionStatus(step)}</span>
+                  </div>
+
+                  <p>{step.module_result?.message}</p>
+                  {renderModuleEvidence(step)}
+                </div>
               </div>
-            </div>
-          )}
-        </section>
+            ))}
+          </div>
+        )}
       </section>
     </main>
   );

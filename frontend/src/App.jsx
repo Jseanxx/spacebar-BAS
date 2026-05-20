@@ -40,13 +40,20 @@ export default function App() {
     });
   }
 
+  function findAgentForCampaign(agentList, campaignId) {
+    return agentList.find((agent) => agent.campaign_agent_id === campaignId);
+  }
+
   async function refreshDashboardData() {
     const agentData = await fetchJson("/agents");
     const loadedAgents = agentData.agents || [];
     setAgents(loadedAgents);
 
-    if (!selectedAgentId && loadedAgents.length > 0) {
-      setSelectedAgentId(loadedAgents[0].agent_id);
+    const campaignAgent = findAgentForCampaign(loadedAgents, selectedCampaignId);
+    if (campaignAgent) {
+      setSelectedAgentId(campaignAgent.agent_id);
+    } else if (!selectedAgentId) {
+      setSelectedAgentId("");
     }
 
     const jobData = await fetchJson("/jobs");
@@ -116,6 +123,8 @@ export default function App() {
       const data = await fetchJson(`/campaigns/${campaignId}`);
       setCampaignDetail(data);
       setSelectedCampaignId(campaignId);
+      const campaignAgent = findAgentForCampaign(agents, campaignId);
+      setSelectedAgentId(campaignAgent?.agent_id || "");
     } catch (err) {
       setError(err.message);
     }
@@ -189,6 +198,150 @@ export default function App() {
     setSelectedOrders([]);
     setNotice("");
   }
+
+  function getDetectionStatus(step) {
+    if (!step?.elk_check?.checked) {
+      return "not_checked";
+    }
+
+    return step.elk_check.matched ? "detected" : "missed";
+  }
+
+  function getRiskLevel(step) {
+    const detectionStatus = getDetectionStatus(step);
+
+    if (step.status !== "success") {
+      return "low";
+    }
+
+    if (detectionStatus === "missed") {
+      return "high";
+    }
+
+    if (detectionStatus === "detected") {
+      return "medium";
+    }
+
+    return step.phase === "attack" ? "medium" : "low";
+  }
+
+  function buildDashboardSummary(run) {
+    const steps = run?.steps || [];
+    const attackSteps = steps.filter((step) => step.phase === "attack");
+    const successfulAttacks = attackSteps.filter((step) => step.status === "success");
+    const detectedSteps = attackSteps.filter((step) => getDetectionStatus(step) === "detected");
+    const missedSteps = attackSteps.filter((step) => getDetectionStatus(step) === "missed");
+    const notCheckedSteps = attackSteps.filter((step) => getDetectionStatus(step) === "not_checked");
+
+    const penalty = attackSteps.reduce((total, step) => {
+      const risk = getRiskLevel(step);
+
+      if (risk === "high") return total + 25;
+      if (risk === "medium") return total + 10;
+      return total + 3;
+    }, 0);
+
+    return {
+      totalSteps: steps.length,
+      attackCount: attackSteps.length,
+      successfulAttackCount: successfulAttacks.length,
+      detectedCount: detectedSteps.length,
+      missedCount: missedSteps.length,
+      notCheckedCount: notCheckedSteps.length,
+      score: steps.length > 0 ? Math.max(0, 100 - penalty) : null,
+    };
+  }
+
+  function getStepBehavior(step) {
+    return step.module_result?.behavior || step.module || "unknown";
+  }
+
+  function getExecutionMode(step) {
+    return step.module_result?.execution_mode || selectedRun?.bas_agent?.mode || "simulation";
+  }
+
+  function formatCommandStatus(command) {
+    if (command.returncode === 0) {
+      return "success";
+    }
+
+    if (typeof command.returncode === "number") {
+      return "failed";
+    }
+
+    return "unknown";
+  }
+
+  function renderModuleEvidence(step) {
+    const result = step.module_result || {};
+    const commands = Array.isArray(result.commands) ? result.commands : [];
+    const artifacts = Array.isArray(result.artifacts) ? result.artifacts : [];
+
+    return (
+      <div className="evidence-block">
+        <div className="evidence-grid">
+          <div>
+            <span>Behavior</span>
+            <strong>{getStepBehavior(step)}</strong>
+          </div>
+          <div>
+            <span>Mode</span>
+            <strong>{getExecutionMode(step)}</strong>
+          </div>
+          <div>
+            <span>Evidence Key</span>
+            <strong>{result.evidence_key || "none"}</strong>
+          </div>
+        </div>
+
+        {commands.length > 0 && (
+          <div className="command-list">
+            <div className="evidence-title">Command Results</div>
+
+            {commands.map((command, index) => (
+              <div key={`${step.order}-command-${index}`} className="command-item">
+                <div className="command-header">
+                  <code>{command.command}</code>
+                  <span className={`result-badge ${formatCommandStatus(command)}`}>
+                    rc {command.returncode}
+                  </span>
+                </div>
+
+                {command.stdout && (
+                  <pre>{command.stdout}</pre>
+                )}
+
+                {command.stderr && (
+                  <pre className="stderr">{command.stderr}</pre>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {artifacts.length > 0 && (
+          <div className="artifact-list">
+            <div className="evidence-title">Artifacts</div>
+            {artifacts.map((artifact, index) => (
+              <code key={`${step.order}-artifact-${index}`}>
+                {typeof artifact === "string" ? artifact : JSON.stringify(artifact)}
+              </code>
+            ))}
+          </div>
+        )}
+
+        <div className="query-box">
+          <span>Detection Query</span>
+          <code>{step.elk_check?.query || "No ELK query"}</code>
+        </div>
+      </div>
+    );
+  }
+
+  const dashboardSummary = buildDashboardSummary(selectedRun);
+  const attackPathSteps = campaignDetail?.flow || [];
+  const latestJob = jobs[0] || null;
+  const selectedAgent = agents.find((agent) => agent.agent_id === selectedAgentId);
 
   async function runCampaign() {
     try {
@@ -272,35 +425,90 @@ export default function App() {
 
       {error && <div className="alert">{error}</div>}
 
-      <section className="layout">
-        <aside className="panel sidebar">
-          <div className="section-title">Campaigns</div>
-
-          <div className="campaign-list">
-            {campaigns.map((campaign) => (
-              <button
-                key={campaign.campaign_id}
-                className={
-                  campaign.campaign_id === selectedCampaignId
-                    ? "campaign-item selected"
-                    : "campaign-item"
-                }
-                onClick={() => loadCampaignDetail(campaign.campaign_id)}
-              >
-                <strong>{campaign.campaign_id}</strong>
-                <span>{campaign.campaign_name}</span>
-                <small>{campaign.step_count} steps</small>
-              </button>
-            ))}
+      <section className="dashboard-grid">
+        <div className="panel score-panel">
+          <div className="section-title">Security Score</div>
+          <div className="score-value">
+            {dashboardSummary.score === null ? "--" : dashboardSummary.score}
+            <span>/100</span>
           </div>
-        </aside>
+          <p>
+            {selectedRun
+              ? `${selectedRun.campaign_id} campaign run 기준 점수`
+              : "Run 결과를 선택하면 점수가 계산됩니다."}
+          </p>
+        </div>
 
+        <div className="panel metric-panel">
+          <div className="section-title">TTP Execution</div>
+          <strong>{dashboardSummary.successfulAttackCount}</strong>
+          <span>successful attack steps</span>
+          <small>{dashboardSummary.attackCount} attack steps in selected run</small>
+        </div>
+
+        <div className="panel metric-panel">
+          <div className="section-title">Detection</div>
+          <strong>{dashboardSummary.detectedCount}</strong>
+          <span>detected attack steps</span>
+          <small>{dashboardSummary.notCheckedCount} not checked</small>
+        </div>
+
+        <div className="panel metric-panel">
+          <div className="section-title">Missed</div>
+          <strong>{dashboardSummary.missedCount}</strong>
+          <span>missed attack steps</span>
+          <small>successful + missed is high risk</small>
+        </div>
+      </section>
+
+      <section className="panel run-control-panel">
+        <div className="control-group">
+          <label>
+            Campaign
+            <select
+              value={selectedCampaignId}
+              onChange={(event) => loadCampaignDetail(event.target.value)}
+            >
+              {campaigns.map((campaign) => (
+                <option key={campaign.campaign_id} value={campaign.campaign_id}>
+                  {campaign.campaign_id} - {campaign.campaign_name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="inferred-agent">
+            <span>BasAgent</span>
+            <strong>{selectedAgent?.display_name || selectedAgentId || "No matching BasAgent"}</strong>
+            <small>{selectedAgent?.agent_id || `${selectedCampaignId} agent is not registered`}</small>
+          </div>
+        </div>
+
+        <div className="control-actions">
+          <button
+            className="run-button"
+            onClick={runCampaign}
+            disabled={isRunning || !selectedAgentId || !selectedCampaignId}
+          >
+            {isRunning ? "Running Job..." : "Queue Job"}
+          </button>
+
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={refreshAgentJobs}
+          >
+            Refresh
+          </button>
+        </div>
+      </section>
+
+      <section className="layout execution-layout">
         <section className="panel main-panel">
           <div className="panel-header">
             <div>
-              <div className="section-title">Selected Campaign</div>
+              <div className="section-title">Technique Selection</div>
               <h2>{campaignDetail?.campaign_name || "No campaign selected"}</h2>
-              <p>{campaignDetail?.description}</p>
 
               <div className="selection-actions">
                 <button
@@ -323,13 +531,6 @@ export default function App() {
               {notice && <div className="notice">{notice}</div>}
             </div>
 
-            <button
-              className="run-button"
-              onClick={runCampaign}
-              disabled={isRunning || !selectedAgentId || !selectedCampaignId}
-            >
-              {isRunning ? "Running Job..." : "Queue Job"}
-            </button>
           </div>
 
           <div className="flow-list">
@@ -385,92 +586,124 @@ export default function App() {
             })}
           </div>
         </section>
+
+        <section className="panel latest-job-panel">
+          <div className="panel-title-row">
+            <div>
+              <div className="section-title">Latest Job</div>
+              <h3>{latestJob ? latestJob.status : "No job yet"}</h3>
+            </div>
+
+            {latestJob && (
+              <span className={`job-badge ${latestJob.status}`}>
+                {latestJob.status}
+              </span>
+            )}
+          </div>
+
+          {!latestJob && (
+            <p className="empty">Select a campaign and BasAgent, then queue a job.</p>
+          )}
+
+          {latestJob && (
+            <div className="latest-job-card">
+              <div>
+                <span>Job ID</span>
+                <strong>{latestJob.job_id}</strong>
+              </div>
+
+              <div>
+                <span>Campaign</span>
+                <strong>{latestJob.campaign_id}</strong>
+              </div>
+
+              <div>
+                <span>BasAgent</span>
+                <strong>{latestJob.agent_id}</strong>
+              </div>
+
+              <div>
+                <span>Created</span>
+                <strong>{latestJob.created_at}</strong>
+              </div>
+
+              {latestJob.execution_id && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => loadRun(latestJob.execution_id)}
+                >
+                  Open Run Detail
+                </button>
+              )}
+            </div>
+          )}
+        </section>
       </section>
 
-      <section className="layout agent-layout">
+      <section className="layout analysis-layout">
         <section className="panel">
-            <div className="panel-title-row">
-            <div>
-                <div className="section-title">BasAgents</div>
-                <h3>Registered Agents</h3>
+          <div className="section-title">TTP Execution Status</div>
+
+          {!selectedRun && (
+            <p className="empty">Run을 선택하거나 실행하면 TTP 현황이 표시됩니다.</p>
+          )}
+
+          {selectedRun && (
+            <div className="ttp-table">
+              <div className="ttp-row ttp-header">
+                <span>Technique</span>
+                <span>Step</span>
+                <span>Execution</span>
+                <span>Detection</span>
+                <span>Risk</span>
+              </div>
+
+              {(selectedRun.steps || []).map((step) => {
+                const detectionStatus = getDetectionStatus(step);
+                const riskLevel = getRiskLevel(step);
+
+                return (
+                  <div key={`${step.order}-${step.module}`} className="ttp-row">
+                    <span>{step.technique_id || "baseline"}</span>
+                    <span>{step.order}. {step.name}</span>
+                    <span className={`result-badge ${step.status}`}>
+                      {step.status}
+                    </span>
+                    <span className={`status-tag ${detectionStatus}`}>
+                      {detectionStatus}
+                    </span>
+                    <span className={`status-tag risk-${riskLevel}`}>
+                      {riskLevel}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
-
-            <button
-                type="button"
-                className="ghost-button"
-                onClick={refreshAgentJobs}
-            >
-                Refresh
-            </button>
-            </div>
-
-            <div className="agent-list">
-            {agents.length === 0 && (
-                <p className="empty">No BasAgent registered yet.</p>
-            )}
-
-            {agents.map((agent) => (
-                <button
-                key={agent.agent_id}
-                type="button"
-                className={
-                    agent.agent_id === selectedAgentId
-                    ? "agent-item selected-agent"
-                    : "agent-item"
-                }
-                onClick={() => setSelectedAgentId(agent.agent_id)}
-                >
-                <div>
-                    <strong>{agent.display_name || agent.agent_id}</strong>
-                    <span>{agent.agent_id}</span>
-                    <small>
-                    {agent.collector_type || "collector unknown"} ·{" "}
-                    {agent.last_heartbeat_at || "no heartbeat"}
-                    </small>
-                </div>
-
-                <span className={`job-badge ${agent.status || "offline"}`}>
-                    {agent.status || "offline"}
-                </span>
-                </button>
-            ))}
-            </div>
+          )}
         </section>
 
         <section className="panel">
-            <div className="section-title">Jobs</div>
+          <div className="section-title">Attack Path Map</div>
 
-            <div className="job-list">
-            {jobs.length === 0 && <p className="empty">No jobs queued yet.</p>}
-
-            {jobs.map((job) => (
-                <button
-                key={job.job_id}
-                type="button"
-                className="job-item"
-                onClick={() => {
-                    if (job.execution_id) {
-                    loadRun(job.execution_id);
-                    }
-                }}
-                >
-                <div>
-                    <strong>{job.job_id}</strong>
-                    <span>{job.campaign_id} · {job.agent_id}</span>
-                    <small>
-                    {job.created_at}
-                    {job.execution_id ? ` · ${job.execution_id}` : ""}
-                    </small>
-                </div>
-
-                <span className={`job-badge ${job.status}`}>
-                    {job.status}
-                </span>
-                </button>
+          <div className="path-map">
+            {attackPathSteps.map((step) => (
+              <div
+                key={step.order}
+                className={[
+                  "path-node",
+                  step.phase,
+                  selectedOrders.includes(step.order) ? "selected-path-node" : "",
+                ].join(" ")}
+              >
+                <strong>{step.order}</strong>
+                <span>{step.name}</span>
+                <small>{step.technique_id || step.phase}</small>
+              </div>
             ))}
-            </div>
+          </div>
         </section>
-        </section>
+      </section>
       
       <section className="layout bottom-layout">
         <section className="panel">
@@ -551,7 +784,7 @@ export default function App() {
                       </div>
 
                       <p>{step.module_result?.message}</p>
-                      <code>{step.elk_check?.query || "No ELK query"}</code>
+                      {renderModuleEvidence(step)}
                     </div>
 
                     <span className={`result-badge ${step.status}`}>

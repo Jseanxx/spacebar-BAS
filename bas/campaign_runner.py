@@ -205,6 +205,12 @@ class CampaignRunner:
             )
 
             status = module_result.get("status", "unknown")
+            if self._is_simulated_result(module_result):
+                status = "simulated"
+                module_result["status"] = "simulated"
+                module_result["simulated"] = True
+                module_result.setdefault("execution_mode", self.execution_mode)
+
             error = None
 
         except Exception as exc:
@@ -232,3 +238,7 @@ class CampaignRunner:
             "elk_check": elk_result,
             "error": error,
         }
+
+    def _is_simulated_result(self, module_result):
+        message = str(module_result.get("message", "")).lower()
+        return "simulated" in message or module_result.get("simulated") is True

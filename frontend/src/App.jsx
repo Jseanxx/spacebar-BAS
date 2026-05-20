@@ -2,7 +2,7 @@
 // API 상태 확인 , 캠페인 목록, 캠페인 상세 표시, Run Campaign 버튼 처리
 // 실행 결과 목록 표시, 실행 결과 상세 표시 
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./styles.css";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -25,6 +25,7 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
   const [runPage, setRunPage] = useState(0);
+  const detailRef = useRef(null);
 
   async function fetchJson(path, options) {
     const response = await fetch(`${API_BASE}${path}`, options);
@@ -192,10 +193,18 @@ export default function App() {
 
     setSelectedOrders((currentOrders) => {
       const mergedOrders = new Set(currentOrders);
-      attackOrders.forEach((order) => mergedOrders.add(order));
+      const allAttacksSelected = attackOrders.every((order) => mergedOrders.has(order));
+
+      if (allAttacksSelected) {
+        attackOrders.forEach((order) => mergedOrders.delete(order));
+        setNotice("All attack steps cleared.");
+      } else {
+        attackOrders.forEach((order) => mergedOrders.add(order));
+        setNotice("All attack steps selected.");
+      }
+
       return Array.from(mergedOrders).sort((a, b) => a - b);
     });
-    setNotice("All attack steps selected.");
   }
 
   function selectAllNormal() {
@@ -206,10 +215,18 @@ export default function App() {
 
     setSelectedOrders((currentOrders) => {
       const mergedOrders = new Set(currentOrders);
-      normalOrders.forEach((order) => mergedOrders.add(order));
+      const allNormalSelected = normalOrders.every((order) => mergedOrders.has(order));
+
+      if (allNormalSelected) {
+        normalOrders.forEach((order) => mergedOrders.delete(order));
+        setNotice("All normal steps cleared.");
+      } else {
+        normalOrders.forEach((order) => mergedOrders.add(order));
+        setNotice("All normal steps selected.");
+      }
+
       return Array.from(mergedOrders).sort((a, b) => a - b);
     });
-    setNotice("All normal steps selected.");
   }
 
   function clearSelection() {
@@ -407,6 +424,13 @@ export default function App() {
       setError("");
       const data = await fetchJson(`/runs/${executionId}`);
       setSelectedRun(data);
+      setNotice(`Run detail opened: ${executionId}`);
+      window.setTimeout(() => {
+        detailRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 0);
     } catch (err) {
       setError(err.message);
     }
@@ -734,8 +758,10 @@ export default function App() {
 
           <div className="path-map">
             {attackPathSteps.map((step) => {
-              const detectionStatus = getDetectionStatus(step);
-              const riskLevel = getRiskLevel(step);
+              const hasRunResult = Boolean(step.status);
+              const executionStatus = step.status || "not_run";
+              const detectionStatus = hasRunResult ? getDetectionStatus(step) : "not_run";
+              const riskLevel = hasRunResult ? getRiskLevel(step) : "not_run";
               const isSelectedPath = selectedOrders.includes(step.order)
                 || selectedRun?.final_orders?.includes(step.order);
 
@@ -757,8 +783,8 @@ export default function App() {
                   </div>
 
                   <div className="path-node-badges">
-                    <span className={`result-badge ${step.status || "unknown"}`}>
-                      {step.status || "pending"}
+                    <span className={`result-badge ${executionStatus}`}>
+                      {executionStatus}
                     </span>
                     <span className={`status-tag ${detectionStatus}`}>
                       {detectionStatus}
@@ -774,7 +800,7 @@ export default function App() {
         </section>
       </section>
 
-      <section className="layout detail-layout">
+      <section className="layout detail-layout" ref={detailRef}>
         <section className="panel">
           <div className="section-title">Run Detail</div>
 

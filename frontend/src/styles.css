@@ -323,6 +323,12 @@ h2 {
   background: #fef3c7;
 }
 
+.status-tag.not_run,
+.status-tag.risk-not_run {
+  color: #64748b;
+  background: #f1f5f9;
+}
+
 .path-map {
   display: grid;
   gap: 10px;
@@ -846,6 +852,16 @@ code {
 .result-badge.failed {
   color: #b42318;
   background: #fff0f0;
+}
+
+.result-badge.simulated {
+  color: #475569;
+  background: #edf2f7;
+}
+
+.result-badge.not_run {
+  color: #64748b;
+  background: #f1f5f9;
 }
 
 .agent-layout {

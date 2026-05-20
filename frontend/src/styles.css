@@ -261,7 +261,12 @@ h2 {
 }
 
 .analysis-layout {
-  grid-template-columns: 1.2fr 0.8fr;
+  grid-template-columns: minmax(300px, 0.75fr) minmax(0, 1.25fr);
+  margin-top: 18px;
+}
+
+.detail-layout {
+  grid-template-columns: 1fr;
   margin-top: 18px;
 }
 
@@ -323,12 +328,31 @@ h2 {
   gap: 10px;
 }
 
+.path-map-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 292px;
+  gap: 14px;
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+.path-map-columns {
+  display: grid;
+  grid-template-columns: 78px 104px 78px;
+  gap: 8px;
+  color: #66758a;
+  font-size: 11px;
+  font-weight: 900;
+  text-align: center;
+  text-transform: uppercase;
+}
+
 .path-node {
   display: grid;
-  grid-template-columns: 34px 1fr auto;
-  gap: 10px;
+  grid-template-columns: 34px minmax(0, 1fr) 292px;
+  gap: 14px;
   align-items: center;
-  padding: 11px 12px;
+  padding: 12px 14px;
   border: 1px solid #dde6f0;
   border-left-width: 4px;
   border-radius: 8px;
@@ -337,10 +361,17 @@ h2 {
 
 .path-node.attack {
   border-left-color: #ea580c;
+  background: #fffaf5;
 }
 
 .path-node.normal {
   border-left-color: #0f766e;
+  background: #f7fffd;
+}
+
+.path-node.failed {
+  background: #fff8f8;
+  border-color: #f4b8b8;
 }
 
 .path-node strong {
@@ -360,15 +391,54 @@ h2 {
   font-weight: 800;
 }
 
+.path-node-main {
+  min-width: 0;
+}
+
+.path-node-main span {
+  display: block;
+}
+
 .path-node small {
+  display: block;
+  margin-top: 3px;
   color: #66758a;
   font-size: 12px;
   font-weight: 800;
 }
 
+.path-node-badges {
+  display: grid;
+  grid-template-columns: 78px 104px 78px;
+  gap: 8px;
+  justify-content: end;
+}
+
+.path-node-badges .result-badge,
+.path-node-badges .status-tag {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 7px;
+  text-align: center;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .selected-path-node {
-  border-color: #ea580c;
+  box-shadow: none;
+}
+
+.path-node.attack.selected-path-node {
+  border-color: #fdba74;
+  border-left-color: #ea580c;
   background: #fff7ed;
+}
+
+.path-node.normal.selected-path-node {
+  border-color: #99f6e4;
+  border-left-color: #0f766e;
+  background: #f0fdfa;
 }
 
 .campaign-list,
@@ -394,6 +464,11 @@ h2 {
 .run-item:hover {
   border-color: #8eb4e8;
   background: #f1f6ff;
+}
+
+.run-item.selected-run {
+  border-color: #2563eb;
+  background: #eef5ff;
 }
 
 .campaign-item.selected {
@@ -456,6 +531,12 @@ h2 {
   color: #c2410c;
 }
 
+.secondary-button.normal-action {
+  border-color: #99f6e4;
+  background: #f0fdfa;
+  color: #0f766e;
+}
+
 .ghost-button {
   border: 1px solid #d1d9e6;
   background: #ffffff;
@@ -503,12 +584,20 @@ h2 {
 
 .flow-step.normal {
   border-left-color: #0f766e;
+  cursor: pointer;
 }
 
 .flow-step.attack:hover {
   border-color: #fdba74;
   border-left-color: #ea580c;
   background: #fffaf5;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+}
+
+.flow-step.normal:hover {
+  border-color: #99f6e4;
+  border-left-color: #0f766e;
+  background: #f7fffd;
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
 }
 
@@ -519,8 +608,19 @@ h2 {
   box-shadow: 0 10px 24px rgba(234, 88, 12, 0.14);
 }
 
+.flow-step.normal.selected-step {
+  border-color: #0f766e;
+  border-left-color: #0f766e;
+  background: #f0fdfa;
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.12);
+}
+
 .flow-step.selected-step .step-index {
   background: #ea580c;
+}
+
+.flow-step.normal.selected-step .step-index {
+  background: #0f766e;
 }
 
 .flow-step:disabled {
@@ -848,6 +948,40 @@ code {
   background: #fff0f0;
 }
 
+.recent-runs-panel {
+  min-height: 100%;
+}
+
+.compact-run-list {
+  gap: 8px;
+}
+
+.page-indicator {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #edf2f7;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.run-pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.run-pager .ghost-button {
+  flex: 1;
+}
+
+.ghost-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     padding: 18px;
@@ -874,6 +1008,23 @@ code {
 
   .ttp-row {
     grid-template-columns: 1fr;
+  }
+
+  .path-map-header {
+    grid-template-columns: 1fr;
+  }
+
+  .path-map-columns {
+    display: none;
+  }
+
+  .path-node {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .path-node-badges {
+    grid-column: 2;
+    justify-content: start;
   }
 
   .panel-header,

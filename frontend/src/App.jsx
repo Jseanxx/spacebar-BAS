@@ -8,6 +8,7 @@ import "./styles.css";
 const API_BASE = "http://127.0.0.1:8000";
 const JOB_POLL_INTERVAL_MS = 1500;
 const JOB_POLL_ATTEMPTS = 40;
+const RUNS_PER_PAGE = 5;
 
 export default function App() {
   const [health, setHealth] = useState(null);
@@ -23,6 +24,7 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
+  const [runPage, setRunPage] = useState(0);
 
   async function fetchJson(path, options) {
     const response = await fetch(`${API_BASE}${path}`, options);
@@ -156,7 +158,7 @@ export default function App() {
     return step.technique_id ? `${order} (${step.technique_id})` : `${order}`;
   }
 
-  function toggleAttackStep(step) {
+  function toggleStep(step) {
     const flow = campaignDetail?.flow || [];
     const requiredOrders = resolveDependencies(step.order, flow);
     const current = new Set(selectedOrders);
@@ -176,9 +178,7 @@ export default function App() {
 
     if (autoIncluded.length > 0) {
       const labels = autoIncluded.map(getStepLabel).join(", ");
-      setNotice(
-        `${step.technique_id} 실행을 위해 선행 단계 ${labels}가 자동 포함되었습니다.`
-      );
+      setNotice(`${step.technique_id || step.name} also selected required steps: ${labels}`);
     } else {
       setNotice("");
     }
@@ -190,8 +190,26 @@ export default function App() {
       .map((step) => step.order)
       .sort((a, b) => a - b);
 
-    setSelectedOrders(attackOrders);
-    setNotice("모든 공격 단계가 선택되었습니다.");
+    setSelectedOrders((currentOrders) => {
+      const mergedOrders = new Set(currentOrders);
+      attackOrders.forEach((order) => mergedOrders.add(order));
+      return Array.from(mergedOrders).sort((a, b) => a - b);
+    });
+    setNotice("All attack steps selected.");
+  }
+
+  function selectAllNormal() {
+    const normalOrders = (campaignDetail?.flow || [])
+      .filter((step) => step.phase === "normal")
+      .map((step) => step.order)
+      .sort((a, b) => a - b);
+
+    setSelectedOrders((currentOrders) => {
+      const mergedOrders = new Set(currentOrders);
+      normalOrders.forEach((order) => mergedOrders.add(order));
+      return Array.from(mergedOrders).sort((a, b) => a - b);
+    });
+    setNotice("All normal steps selected.");
   }
 
   function clearSelection() {
@@ -339,9 +357,14 @@ export default function App() {
   }
 
   const dashboardSummary = buildDashboardSummary(selectedRun);
-  const attackPathSteps = campaignDetail?.flow || [];
+  const attackPathSteps = selectedRun?.steps || campaignDetail?.flow || [];
   const latestJob = jobs[0] || null;
   const selectedAgent = agents.find((agent) => agent.agent_id === selectedAgentId);
+  const runPageCount = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE));
+  const visibleRuns = runs.slice(
+    runPage * RUNS_PER_PAGE,
+    runPage * RUNS_PER_PAGE + RUNS_PER_PAGE
+  );
 
   async function runCampaign() {
     try {
@@ -365,7 +388,7 @@ export default function App() {
             agent_id: selectedAgentId,
             campaign_id: selectedCampaignId,
             selected_orders: selectedOrders.length > 0 ? selectedOrders : null,
-            include_normal: true
+            include_normal: selectedOrders.length === 0
         })
         });
 
@@ -521,6 +544,14 @@ export default function App() {
 
                 <button
                   type="button"
+                  className="secondary-button normal-action"
+                  onClick={selectAllNormal}
+                >
+                  Select All Normal
+                </button>
+
+                <button
+                  type="button"
                   className="ghost-button"
                   onClick={clearSelection}
                 >
@@ -535,8 +566,7 @@ export default function App() {
 
           <div className="flow-list">
             {(campaignDetail?.flow || []).map((step) => {
-              const isAttack = step.phase === "attack";
-              const isSelectedAttack = selectedOrders.includes(step.order);
+              const isSelectedStep = selectedOrders.includes(step.order);
 
               return (
                 <button
@@ -545,14 +575,9 @@ export default function App() {
                   className={[
                     "flow-step",
                     step.phase,
-                    isSelectedAttack ? "selected-step" : ""
+                    isSelectedStep ? "selected-step" : ""
                   ].join(" ")}
-                  onClick={() => {
-                    if (isAttack) {
-                      toggleAttackStep(step);
-                    }
-                  }}
-                  disabled={!isAttack}
+                  onClick={() => toggleStep(step)}
                 >
                   <div className="step-index">{step.order}</div>
 
@@ -564,12 +589,12 @@ export default function App() {
                         <div className="step-meta">
                           <span
                             className={
-                              isAttack
+                              step.phase === "attack"
                                 ? "chip attack-chip"
                                 : "chip normal-chip"
                             }
                           >
-                            {isAttack ? "Attack" : "Normal"}
+                            {step.phase === "attack" ? "Attack" : "Normal"}
                           </span>
 
                           {step.technique_id && (
@@ -642,33 +667,98 @@ export default function App() {
       </section>
 
       <section className="layout analysis-layout">
-        <section className="panel">
-          <div className="section-title">TTP Execution Status</div>
+        <section className="panel recent-runs-panel">
+          <div className="panel-title-row">
+            <div>
+              <div className="section-title">Recent Runs</div>
+              <h3>Run History</h3>
+            </div>
 
-          {!selectedRun && (
-            <p className="empty">Run을 선택하거나 실행하면 TTP 현황이 표시됩니다.</p>
-          )}
+            <span className="page-indicator">
+              {runs.length === 0 ? "0 / 0" : `${runPage + 1} / ${runPageCount}`}
+            </span>
+          </div>
 
-          {selectedRun && (
-            <div className="ttp-table">
-              <div className="ttp-row ttp-header">
-                <span>Technique</span>
-                <span>Step</span>
-                <span>Execution</span>
-                <span>Detection</span>
-                <span>Risk</span>
-              </div>
+          <div className="run-list compact-run-list">
+            {visibleRuns.map((run) => (
+              <button
+                key={run.execution_id}
+                className={
+                  selectedRun?.execution_id === run.execution_id
+                    ? "run-item selected-run"
+                    : "run-item"
+                }
+                onClick={() => loadRun(run.execution_id)}
+              >
+                <strong>{run.execution_id}</strong>
+                <span>{run.campaign_id}</span>
+                <small>{run.started_at}</small>
+              </button>
+            ))}
 
-              {(selectedRun.steps || []).map((step) => {
-                const detectionStatus = getDetectionStatus(step);
-                const riskLevel = getRiskLevel(step);
+            {runs.length === 0 && (
+              <p className="empty">No runs yet.</p>
+            )}
+          </div>
 
-                return (
-                  <div key={`${step.order}-${step.module}`} className="ttp-row">
-                    <span>{step.technique_id || "baseline"}</span>
-                    <span>{step.order}. {step.name}</span>
-                    <span className={`result-badge ${step.status}`}>
-                      {step.status}
+          <div className="run-pager">
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => setRunPage((page) => Math.max(0, page - 1))}
+              disabled={runPage === 0}
+            >
+              Prev
+            </button>
+
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => setRunPage((page) => Math.min(runPageCount - 1, page + 1))}
+              disabled={runPage >= runPageCount - 1}
+            >
+              Next
+            </button>
+          </div>
+        </section>
+
+        <section className="panel attack-map-panel">
+          <div className="path-map-header">
+            <div className="section-title">Attack Path Map</div>
+            <div className="path-map-columns">
+              <span>실행</span>
+              <span>탐지</span>
+              <span>위험도</span>
+            </div>
+          </div>
+
+          <div className="path-map">
+            {attackPathSteps.map((step) => {
+              const detectionStatus = getDetectionStatus(step);
+              const riskLevel = getRiskLevel(step);
+              const isSelectedPath = selectedOrders.includes(step.order)
+                || selectedRun?.final_orders?.includes(step.order);
+
+              return (
+                <div
+                  key={step.order}
+                  className={[
+                    "path-node",
+                    step.phase,
+                    step.status || "",
+                    isSelectedPath ? "selected-path-node" : "",
+                  ].join(" ")}
+                >
+                  <strong>{step.order}</strong>
+
+                  <div className="path-node-main">
+                    <span>{step.name}</span>
+                    <small>{step.technique_id || step.phase}</small>
+                  </div>
+
+                  <div className="path-node-badges">
+                    <span className={`result-badge ${step.status || "unknown"}`}>
+                      {step.status || "pending"}
                     </span>
                     <span className={`status-tag ${detectionStatus}`}>
                       {detectionStatus}
@@ -677,55 +767,14 @@ export default function App() {
                       {riskLevel}
                     </span>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        <section className="panel">
-          <div className="section-title">Attack Path Map</div>
-
-          <div className="path-map">
-            {attackPathSteps.map((step) => (
-              <div
-                key={step.order}
-                className={[
-                  "path-node",
-                  step.phase,
-                  selectedOrders.includes(step.order) ? "selected-path-node" : "",
-                ].join(" ")}
-              >
-                <strong>{step.order}</strong>
-                <span>{step.name}</span>
-                <small>{step.technique_id || step.phase}</small>
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         </section>
       </section>
-      
-      <section className="layout bottom-layout">
-        <section className="panel">
-          <div className="section-title">Recent Runs</div>
 
-          <div className="run-list">
-            {runs.map((run) => (
-              <button
-                key={run.execution_id}
-                className="run-item"
-                onClick={() => loadRun(run.execution_id)}
-              >
-                <strong>{run.execution_id}</strong>
-                <span>{run.campaign_id}</span>
-                <small>
-                    {run.bas_agent?.type || "bas_agent"} · {run.started_at}
-                </small>
-              </button>
-            ))}
-          </div>
-        </section>
-
+      <section className="layout detail-layout">
         <section className="panel">
           <div className="section-title">Run Detail</div>
 
@@ -735,24 +784,8 @@ export default function App() {
             <div className="detail">
               <h3>{selectedRun.execution_id}</h3>
               <p>
-                {selectedRun.campaign_id} · {selectedRun.started_at}
+                {selectedRun.campaign_id} - {selectedRun.started_at}
               </p>
-
-              {selectedRun.bas_agent && (
-                <div className="run-summary">
-                    <strong>BasAgent</strong>
-                    <span>
-                    {selectedRun.bas_agent.type} · {selectedRun.bas_agent.runner}
-                    </span>
-                </div>
-                )}
-
-              {selectedRun.final_orders && (
-                <div className="run-summary">
-                  <strong>Final execution orders</strong>
-                  <span>{selectedRun.final_orders.join(", ")}</span>
-                </div>
-              )}
 
               <div className="result-steps">
                 {(selectedRun.steps || []).map((step) => (

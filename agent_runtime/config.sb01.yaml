@@ -1,0 +1,7 @@
+agent_id: sb01-bas-agent
+campaign_agent_id: SB-01
+display_name: SB-01 BasAgent
+collector_type: filebeat
+controller_url: http://127.0.0.1:8000
+interval_seconds: 5
+execution_mode: simulation

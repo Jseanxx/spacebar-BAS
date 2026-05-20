@@ -1,0 +1,29 @@
+campaign_id: SB-01
+campaign_name: PipelineKey
+description: Jenkins에서 확보한 deploy key를 이용해 App 서버 SSH 접속과 App 운영 경로 탐색 행위를 재현한다.
+
+flow:
+  - order: 1
+    phase: attack
+    module: attack.T1021_004_ssh_remote_service
+    target: SB-01
+    name: Jenkins to App SSH using deploy key
+    technique_id: T1021.004
+    params:
+      behavior: jenkins_to_app_ssh
+      username: deploy
+      command: "hostname"
+
+  - order: 2
+    phase: attack
+    module: attack.T1083_file_directory_discovery
+    target: SB-01
+    name: App directory and config file discovery
+    technique_id: T1083
+    depends_on_orders:
+      - 1
+    params:
+      behavior: app_directory_discovery
+      username: deploy
+      base_path: /opt/spacebar-booking
+      max_depth: 2

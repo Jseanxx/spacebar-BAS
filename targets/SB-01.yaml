@@ -1,0 +1,17 @@
+target_id: SB-01
+name: PipelineKey AWS CI/CD Environment
+description: SB-01 Jenkins/App/PostgreSQL/ELK 기반 CI/CD 환경이다.
+environment_type: aws-cicd
+
+app:
+  host: 172.31.4.70
+  ssh_user: deploy
+  ssh_key_path: /home/ubuntu/.ssh/sb01-app-deploy-key
+
+elk:
+  enabled: false
+  index: logs-*
+
+log_queries:
+  jenkins_to_app_ssh: 'host.name:"ip-172-31-4-70" and log.file.path:"/var/log/auth.log" and message:"Accepted publickey for deploy" and message:"172.31.13.239"'
+  app_directory_discovery: 'event.module:"auditd" and event.original:"sb01_app_path_read" and event.original:"/opt/spacebar-booking"'

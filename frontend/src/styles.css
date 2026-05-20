@@ -1181,9 +1181,47 @@ code {
   width: 100%;
 }
 
+.score-explain {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid #dde6f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #526278;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .notice-wide {
   max-width: none;
   margin-bottom: 18px;
+}
+
+.operator-next-step {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.operator-next-step strong {
+  display: block;
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.operator-next-step p {
+  margin: 5px 0 0;
+  color: #526278;
+}
+
+.operator-next-step .run-button {
+  flex: 0 0 auto;
 }
 
 .operator-grid {
@@ -1333,7 +1371,7 @@ code {
 
 .validation-badges {
   display: grid;
-  grid-template-columns: 82px 104px 78px;
+  grid-template-columns: 82px 118px 78px;
   gap: 8px;
 }
 
@@ -1348,6 +1386,16 @@ code {
 .job-stack {
   display: grid;
   gap: 8px;
+}
+
+.activity-panel {
+  margin-bottom: 18px;
+}
+
+.activity-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr);
+  gap: 18px;
 }
 
 .job-row {
@@ -1408,10 +1456,51 @@ code {
   color: #0f172a;
 }
 
+.elk-validation-card {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.elk-validation-card div {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #dde6f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.elk-validation-card span {
+  display: block;
+  margin-bottom: 5px;
+  color: #66758a;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.elk-validation-card strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.elk-message {
+  margin: 0;
+  color: #66758a;
+  font-size: 12px;
+}
+
+.sample-log-list {
+  display: grid;
+  gap: 8px;
+}
+
 @media (max-width: 1100px) {
   .overview-grid,
   .operator-grid,
-  .history-grid {
+  .activity-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1423,6 +1512,7 @@ code {
 @media (max-width: 700px) {
   .topbar-status,
   .agent-state-row,
+  .operator-next-step,
   .evidence-step-header {
     flex-direction: column;
     align-items: stretch;
@@ -1431,6 +1521,7 @@ code {
   .campaign-selector-row,
   .overview-facts,
   .validation-metrics,
+  .elk-validation-card,
   .technique-row,
   .validation-row {
     grid-template-columns: 1fr;

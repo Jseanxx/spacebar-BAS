@@ -9,6 +9,17 @@ const API_BASE = "http://127.0.0.1:8000";
 const JOB_POLL_INTERVAL_MS = 1500;
 const JOB_POLL_ATTEMPTS = 40;
 const RUNS_PER_PAGE = 5;
+const TECHNIQUE_NAMES = {
+  "T1021.004": "Remote Services: SSH",
+  "T1083": "File and Directory Discovery",
+  "T1098.006": "Additional Container and Cloud Roles",
+  "T1552.007": "Container and Resource Discovery Credentials",
+  "T1560.001": "Archive via Utility",
+  "T1567.002": "Exfiltration to Cloud Storage",
+  "T1609": "Container and Resource Discovery",
+  "T1610": "Deploy Container",
+  "T1613": "Container and Resource Discovery",
+};
 
 export default function App() {
   const [health, setHealth] = useState(null);
@@ -242,10 +253,27 @@ export default function App() {
     return step.elk_check.matched ? "detected" : "missed";
   }
 
+  function getDetectionLabel(step) {
+    if (!step?.elk_check) {
+      return "No query";
+    }
+
+    if (!step.elk_check.checked && step.elk_check.query) {
+      return "Query ready";
+    }
+
+    if (!step.elk_check.checked) {
+      return "Not configured";
+    }
+
+    return step.elk_check.matched ? "Detected" : "Missed";
+  }
+
   function getRiskLevel(step) {
     const detectionStatus = getDetectionStatus(step);
+    const executed = ["success", "simulated"].includes(step.status);
 
-    if (step.status !== "success") {
+    if (!executed) {
       return "low";
     }
 
@@ -263,7 +291,7 @@ export default function App() {
   function buildDashboardSummary(run) {
     const steps = run?.steps || [];
     const attackSteps = steps.filter((step) => step.phase === "attack");
-    const successfulAttacks = attackSteps.filter((step) => step.status === "success");
+    const successfulAttacks = attackSteps.filter((step) => ["success", "simulated"].includes(step.status));
     const detectedSteps = attackSteps.filter((step) => getDetectionStatus(step) === "detected");
     const missedSteps = attackSteps.filter((step) => getDetectionStatus(step) === "missed");
     const notCheckedSteps = attackSteps.filter((step) => getDetectionStatus(step) === "not_checked");
@@ -283,8 +311,17 @@ export default function App() {
       detectedCount: detectedSteps.length,
       missedCount: missedSteps.length,
       notCheckedCount: notCheckedSteps.length,
+      penalty,
       score: steps.length > 0 ? Math.max(0, 100 - penalty) : null,
     };
+  }
+
+  function getTechniqueDisplayName(step) {
+    if (!step.technique_id) {
+      return step.phase === "attack" ? "Attack Step" : "Normal Baseline";
+    }
+
+    return `${step.technique_id} ${TECHNIQUE_NAMES[step.technique_id] || ""}`.trim();
   }
 
   function getStepBehavior(step) {
@@ -309,8 +346,10 @@ export default function App() {
 
   function renderModuleEvidence(step) {
     const result = step.module_result || {};
+    const elkCheck = step.elk_check || {};
     const commands = Array.isArray(result.commands) ? result.commands : [];
     const artifacts = Array.isArray(result.artifacts) ? result.artifacts : [];
+    const sampleEvents = Array.isArray(elkCheck.sample_events) ? elkCheck.sample_events : [];
 
     return (
       <div className="evidence-block">
@@ -366,8 +405,33 @@ export default function App() {
         )}
 
         <div className="query-box">
-          <span>Detection Query</span>
-          <code>{step.elk_check?.query || "No ELK query"}</code>
+          <span>ELK Validation</span>
+          <div className="elk-validation-card">
+            <div>
+              <span>Result</span>
+              <strong>{getDetectionLabel(step)}</strong>
+            </div>
+            <div>
+              <span>Index</span>
+              <strong>{elkCheck.index || "not configured"}</strong>
+            </div>
+            <div>
+              <span>Matched Events</span>
+              <strong>{typeof elkCheck.event_count === "number" ? elkCheck.event_count : "not checked"}</strong>
+            </div>
+          </div>
+          <code>{elkCheck.query || "No ELK query"}</code>
+          {elkCheck.message && <p className="elk-message">{elkCheck.message}</p>}
+          {sampleEvents.length > 0 && (
+            <div className="sample-log-list">
+              <div className="evidence-title">Sample Logs</div>
+              {sampleEvents.map((event, index) => (
+                <pre key={`${step.order}-sample-${index}`}>
+                  {typeof event === "string" ? event : JSON.stringify(event, null, 2)}
+                </pre>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -390,6 +454,12 @@ export default function App() {
   const selectedScopeCount = selectedOrders.length || campaignDetail?.flow?.length || 0;
   const selectedScopeLabel = selectedOrders.length > 0 ? `${selectedOrders.length} selected` : "Full campaign";
   const executedStepCount = selectedRunSteps.filter((step) => ["success", "simulated"].includes(step.status)).length;
+  const nextActionText = selectedAgent
+    ? "Select techniques or run the full campaign, then review Detection Validation and Evidence."
+    : "Start the matching BasAgent for this campaign before queueing a job.";
+  const scoreExplanation = selectedRun
+    ? `100 - risk penalty ${dashboardSummary.penalty}. Missed detections add the highest penalty. Query-ready items are shown until ELK is connected.`
+    : "No score yet. Queue a campaign job to calculate execution and detection coverage.";
 
   async function runCampaign() {
     try {
@@ -488,6 +558,21 @@ export default function App() {
 
       {error && <div className="alert">{error}</div>}
 
+      <section className="operator-next-step">
+        <div>
+          <div className="section-title">Next Action</div>
+          <strong>{selectedAgent ? "Ready to validate" : "Agent required"}</strong>
+          <p>{nextActionText}</p>
+        </div>
+        <button
+          className="run-button"
+          onClick={runCampaign}
+          disabled={isRunning || !selectedAgentId || !selectedCampaignId}
+        >
+          {isRunning ? "Running Job..." : "Queue Campaign Job"}
+        </button>
+      </section>
+
       <section className="overview-grid">
         <div className="panel campaign-overview">
           <div className="section-title">Campaign</div>
@@ -551,14 +636,6 @@ export default function App() {
               <strong>{selectedAgent?.last_heartbeat_at || "none"}</strong>
             </div>
           </div>
-
-          <button
-            className="run-button"
-            onClick={runCampaign}
-            disabled={isRunning || !selectedAgentId || !selectedCampaignId}
-          >
-            {isRunning ? "Running Job..." : "Queue Campaign Job"}
-          </button>
         </div>
 
         <div className="panel score-panel">
@@ -572,6 +649,9 @@ export default function App() {
               ? `${selectedRun.campaign_id} latest selected run`
               : "Run a job to calculate validation score."}
           </p>
+          <div className="score-explain">
+            {scoreExplanation}
+          </div>
         </div>
       </section>
 
@@ -615,7 +695,7 @@ export default function App() {
                   <span className="step-index">{step.order}</span>
                   <span className="technique-main">
                     <strong>{step.name}</strong>
-                    <small>{step.module}</small>
+                    <small>{getTechniqueDisplayName(step)}</small>
                   </span>
                   <span className="technique-tags">
                     <span className={step.phase === "attack" ? "chip attack-chip" : "chip normal-chip"}>
@@ -654,7 +734,7 @@ export default function App() {
               <strong>{dashboardSummary.missedCount}</strong>
             </div>
             <div>
-              <span>Not Checked</span>
+              <span>Query Ready</span>
               <strong>{dashboardSummary.notCheckedCount}</strong>
             </div>
           </div>
@@ -679,11 +759,11 @@ export default function App() {
                 >
                   <div>
                     <strong>{step.order}. {step.name}</strong>
-                    <small>{step.technique_id || step.phase}</small>
+                    <small>{getTechniqueDisplayName(step)}</small>
                   </div>
                   <div className="validation-badges">
                     <span className={`result-badge ${executionStatus}`}>{executionStatus}</span>
-                    <span className={`status-tag ${detectionStatus}`}>{detectionStatus}</span>
+                    <span className={`status-tag ${detectionStatus}`}>{getDetectionLabel(step)}</span>
                     <span className={`status-tag risk-${riskLevel}`}>{riskLevel}</span>
                   </div>
                 </div>
@@ -693,8 +773,17 @@ export default function App() {
         </section>
       </section>
 
-      <section className="operator-grid history-grid">
-        <section className="panel">
+      <section className="panel activity-panel">
+        <div className="panel-title-row">
+          <div>
+            <div className="section-title">Activity</div>
+            <h3>Jobs and Runs</h3>
+          </div>
+          <span className="scope-pill">{jobs.length} jobs / {runs.length} runs</span>
+        </div>
+
+        <div className="activity-grid">
+          <section>
           <div className="panel-title-row">
             <div>
               <div className="section-title">Jobs</div>
@@ -720,9 +809,9 @@ export default function App() {
             ))}
             {recentJobs.length === 0 && <p className="empty">No jobs queued yet.</p>}
           </div>
-        </section>
+          </section>
 
-        <section className="panel">
+          <section>
           <div className="panel-title-row">
             <div>
               <div className="section-title">Runs</div>
@@ -770,7 +859,8 @@ export default function App() {
               Next
             </button>
           </div>
-        </section>
+          </section>
+        </div>
       </section>
 
       <section className="panel evidence-panel" ref={detailRef}>
@@ -799,7 +889,7 @@ export default function App() {
                       {step.phase === "attack" ? "Attack" : "Normal"}
                     </span>
                     {step.technique_id && <span className="chip technique-chip">{step.technique_id}</span>}
-                    <span className={`status-tag ${getDetectionStatus(step)}`}>{getDetectionStatus(step)}</span>
+                    <span className={`status-tag ${getDetectionStatus(step)}`}>{getDetectionLabel(step)}</span>
                   </div>
 
                   <p>{step.module_result?.message}</p>

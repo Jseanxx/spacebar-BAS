@@ -349,6 +349,7 @@ export default function App() {
     const elkCheck = step.elk_check || {};
     const commands = Array.isArray(result.commands) ? result.commands : [];
     const artifacts = Array.isArray(result.artifacts) ? result.artifacts : [];
+    const secrets = Array.isArray(result.secrets) ? result.secrets : [];
     const sampleEvents = Array.isArray(elkCheck.sample_events) ? elkCheck.sample_events : [];
 
     return (
@@ -400,6 +401,28 @@ export default function App() {
               <code key={`${step.order}-artifact-${index}`}>
                 {typeof artifact === "string" ? artifact : JSON.stringify(artifact)}
               </code>
+            ))}
+          </div>
+        )}
+
+        {secrets.length > 0 && (
+          <div className="secret-list">
+            <div className="evidence-title">Decoded Secrets</div>
+            {secrets.map((secret, index) => (
+              <div key={`${step.order}-secret-${index}`} className="secret-item">
+                <div className="secret-header">
+                  <strong>{secret.name}</strong>
+                  <span>{secret.namespace} / {secret.type}</span>
+                </div>
+                <div className="secret-values">
+                  {Object.entries(secret.decoded_values || {}).map(([key, value]) => (
+                    <div key={`${secret.name}-${key}`}>
+                      <span>{key}</span>
+                      <code>{value}</code>
+                    </div>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         )}

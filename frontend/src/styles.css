@@ -778,7 +778,8 @@ h2 {
 }
 
 .command-list,
-.artifact-list {
+.artifact-list,
+.secret-list {
   display: grid;
   gap: 10px;
 }
@@ -801,6 +802,50 @@ h2 {
 
 .command-header code {
   flex: 1;
+}
+
+.secret-item {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #dde6f0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.secret-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.secret-header strong,
+.secret-header span {
+  overflow-wrap: anywhere;
+}
+
+.secret-header span {
+  color: #66758a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.secret-values {
+  display: grid;
+  gap: 8px;
+}
+
+.secret-values > div {
+  display: grid;
+  gap: 5px;
+}
+
+.secret-values span {
+  color: #66758a;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 pre {

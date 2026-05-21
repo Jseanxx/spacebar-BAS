@@ -174,6 +174,7 @@ class BasAgent:
             result, output_path = run_campaign(
                 campaign_id=job["campaign_id"],
                 selected_orders=job.get("selected_orders"),
+                selected_steps=job.get("selected_steps"),
                 include_normal=job.get("include_normal", True),
                 execution_mode=self.execution_mode,
             )

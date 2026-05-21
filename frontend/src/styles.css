@@ -1867,6 +1867,33 @@ code {
   gap: 8px;
 }
 
+.library-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(130px, auto) minmax(120px, auto);
+  gap: 8px;
+  margin: 14px 0 12px;
+}
+
+.library-toolbar input,
+.library-toolbar select {
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid #d1d9e6;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172033;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.library-list {
+  max-height: 620px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
 .technique-row {
   width: 100%;
   min-width: 0;
@@ -1902,6 +1929,141 @@ code {
   border-left-color: #2563eb;
 }
 
+.operation-queue-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.queue-context-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.queue-context-strip div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #dde6f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.queue-context-strip span {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.queue-context-strip strong {
+  display: block;
+  margin-top: 4px;
+  color: #0f172a;
+  font-size: 18px;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.queue-list {
+  display: grid;
+  gap: 8px;
+}
+
+.queue-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 11px;
+  border: 1px solid #dde6f0;
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.queue-item.attack {
+  border-left-color: #ea580c;
+}
+
+.queue-item.normal {
+  border-left-color: #0f766e;
+}
+
+.queue-order {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.queue-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.queue-main strong,
+.queue-main small {
+  overflow-wrap: anywhere;
+}
+
+.queue-main strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.queue-main small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.queue-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.icon-action {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #d1d9e6;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 15px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.icon-action:hover:not(:disabled) {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.icon-action.danger:hover:not(:disabled) {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #dc2626;
+}
+
+.icon-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.queue-result-preview {
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
 .technique-main {
   min-width: 0;
 }
@@ -1928,6 +2090,82 @@ code {
   flex-wrap: wrap;
   gap: 6px;
   justify-content: flex-end;
+}
+
+.compatibility-chip,
+.readiness-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.compatibility-chip.compatible {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.compatibility-chip.partial {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.compatibility-chip.incompatible {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.compatibility-chip.unknown {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.readiness-chip.ready,
+.readiness-chip.compatible {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.readiness-chip.incompatible {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.readiness-chip.unknown {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.queue-item.compatibility-incompatible {
+  background: #fff7f7;
+  border-color: #fecaca;
+}
+
+.queue-item.compatibility-partial {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.queue-item.readiness-ready,
+.queue-item.readiness-compatible {
+  background: #ffffff;
+}
+
+.queue-item.readiness-incompatible {
+  background: #fff7f7;
+  border-color: #fecaca;
+}
+
+.queue-item.readiness-unknown {
+  background: #f8fafc;
+}
+
+.compatibility-note {
+  color: #b91c1c !important;
 }
 
 .validation-metrics {

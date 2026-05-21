@@ -2,6 +2,12 @@ target_id: SB-01
 name: PipelineKey AWS CI/CD Environment
 description: SB-01 Jenkins/App/PostgreSQL/ELK 기반 CI/CD 환경이다.
 environment_type: aws-cicd
+capabilities:
+  - ssh
+  - app_host
+  - deploy_key
+  - linux_filesystem
+  - auditd
 
 app:
   host: 172.31.4.70

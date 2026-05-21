@@ -3,5 +3,5 @@ campaign_agent_id: SB-05
 display_name: SB-05 BasAgent
 collector_type: elastic_agent
 controller_url: http://127.0.0.1:8000
-interval_seconds: 5
+interval_seconds: 2
 execution_mode: simulation

@@ -9,6 +9,10 @@ flow:
     target: SB-01
     name: Jenkins to App SSH using deploy key
     technique_id: T1021.004
+    requires:
+      - ssh
+      - app_host
+      - deploy_key
     params:
       behavior: jenkins_to_app_ssh
       username: deploy
@@ -20,6 +24,10 @@ flow:
     target: SB-01
     name: App directory and config file discovery
     technique_id: T1083
+    requires:
+      - ssh
+      - app_host
+      - linux_filesystem
     depends_on_orders:
       - 1
     params:

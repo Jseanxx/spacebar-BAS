@@ -10,6 +10,9 @@ flow:
     module: normal.kube_get_pods
     target: SB-05
     name: baseline pod inventory check
+    requires:
+      - kubernetes
+      - kubectl
     params:
       behavior: kube_get_pods
 
@@ -18,6 +21,9 @@ flow:
     module: normal.kube_get_services
     target: SB-05
     name: baseline service inventory check
+    requires:
+      - kubernetes
+      - kubectl
     params:
       behavior: kube_get_services
 
@@ -27,6 +33,9 @@ flow:
     target: SB-05
     name: k3s resource discovery
     technique_id: T1613
+    requires:
+      - kubernetes
+      - kubectl
     params:
       behavior: kube_resource_discovery
       namespace: prod-platform
@@ -37,6 +46,9 @@ flow:
     target: SB-05
     name: prod-platform secret access
     technique_id: T1552.007
+    requires:
+      - kubernetes
+      - kubectl
     depends_on_orders:
       - 3
     params:
@@ -49,6 +61,9 @@ flow:
     module: normal.kube_get_deployments
     target: SB-05
     name: post-discovery deployment status check
+    requires:
+      - kubernetes
+      - kubectl
     params:
       behavior: kube_get_deployments
 
@@ -58,6 +73,9 @@ flow:
     target: SB-05
     name: orders-api pod command execution
     technique_id: T1609
+    requires:
+      - kubernetes
+      - kubectl
     depends_on_orders:
       - 3
       - 4
@@ -72,6 +90,9 @@ flow:
     target: SB-05
     name: deploy sb05 collector pod
     technique_id: T1610
+    requires:
+      - kubernetes
+      - kubectl
     depends_on_orders:
       - 3
       - 4
@@ -87,6 +108,9 @@ flow:
     target: SB-05
     name: create service account and rolebinding
     technique_id: T1098.006
+    requires:
+      - kubernetes
+      - kubectl
     depends_on_orders:
       - 3
       - 4
@@ -101,6 +125,9 @@ flow:
     target: SB-05
     name: local data staging
     technique_id: T1074.001
+    requires:
+      - attacker_host
+      - linux_filesystem
     depends_on_orders:
       - 3
       - 4
@@ -117,6 +144,10 @@ flow:
     target: SB-05
     name: archive staged data
     technique_id: T1560.001
+    requires:
+      - attacker_host
+      - linux_filesystem
+      - archive_utility
     depends_on_orders:
       - 9
     params:
@@ -129,6 +160,9 @@ flow:
     target: SB-05
     name: exfiltrate archive to S3
     technique_id: T1567.002
+    requires:
+      - attacker_host
+      - s3
     depends_on_orders:
       - 9
       - 10

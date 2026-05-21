@@ -2,7 +2,7 @@
 // API 상태 확인 , 캠페인 목록, 캠페인 상세 표시, Run Campaign 버튼 처리
 // 실행 결과 목록 표시, 실행 결과 상세 표시 
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import "./styles.css";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -36,7 +36,7 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
   const [runPage, setRunPage] = useState(0);
-  const detailRef = useRef(null);
+  const [activeView, setActiveView] = useState("summary");
 
   async function fetchJson(path, options) {
     const response = await fetch(`${API_BASE}${path}`, options);
@@ -142,6 +142,11 @@ export default function App() {
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  async function selectCampaignAndShow(campaignId, view = "summary") {
+    await loadCampaignDetail(campaignId);
+    setActiveView(view);
   }
 
   function resolveDependencies(order, flow) {
@@ -509,7 +514,7 @@ export default function App() {
   });
 
   const selectedRunMatchesCampaign = selectedRun?.campaign_id === selectedCampaignId;
-  const visibleSummaryRun = selectedRunMatchesCampaign ? selectedRun : latestRunsByCampaign.get(selectedCampaignId);
+  const visibleSummaryRun = latestRunsByCampaign.get(selectedCampaignId);
   const dashboardSummary = buildDashboardSummary(visibleSummaryRun);
   const executionChartStyle = buildDonutStyle(
     [
@@ -530,7 +535,7 @@ export default function App() {
   const campaignSummaryCards = campaigns.map((campaign) => {
     const latestRun = latestRunsByCampaign.get(campaign.campaign_id);
     const isSelectedCampaign = campaign.campaign_id === selectedCampaignId;
-    const summaryRun = isSelectedCampaign ? visibleSummaryRun : latestRun;
+    const summaryRun = latestRun;
     const summary = buildDashboardSummary(summaryRun);
     const flowCount = isSelectedCampaign ? (campaignDetail?.flow || []).length : 0;
     const techniqueCount = flowCount || summaryRun?.steps?.length || 0;
@@ -550,7 +555,6 @@ export default function App() {
   const attackPathSteps = selectedRunMatchesCampaign ? selectedRun.steps : campaignDetail?.flow || [];
   const latestJob = jobs[0] || null;
   const recentJobs = jobs.slice(0, 4);
-  const selectedAgent = agents.find((agent) => agent.agent_id === selectedAgentId);
   const runPageCount = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE));
   const visibleRuns = runs.slice(
     runPage * RUNS_PER_PAGE,
@@ -565,18 +569,10 @@ export default function App() {
     ? Math.round((dashboardSummary.detectedCount / dashboardSummary.successfulAttackCount) * 100)
     : null;
   const selectedRunSteps = selectedRunMatchesCampaign ? selectedRun.steps : [];
+  const selectedRunSummary = buildDashboardSummary(selectedRunMatchesCampaign ? selectedRun : null);
   const selectedRunAttackSteps = selectedRunSteps.filter((step) => step.phase === "attack");
-  const campaignAttackCount = (campaignDetail?.flow || []).filter((step) => step.phase === "attack").length;
-  const campaignNormalCount = (campaignDetail?.flow || []).filter((step) => step.phase === "normal").length;
-  const selectedScopeCount = selectedOrders.length || campaignDetail?.flow?.length || 0;
   const selectedScopeLabel = selectedOrders.length > 0 ? `${selectedOrders.length}개 선택됨` : "전체 캠페인";
   const executedStepCount = selectedRunSteps.filter((step) => ["success", "simulated"].includes(step.status)).length;
-  const nextActionText = selectedAgent
-    ? "실행할 Technique을 선택하거나 전체 캠페인을 실행한 뒤, 탐지 검증과 증거 로그를 확인하세요."
-    : "Job을 실행하기 전에 이 캠페인에 맞는 BasAgent를 먼저 실행해야 합니다.";
-  const scoreExplanation = visibleSummaryRun
-    ? `100점에서 위험 패널티 ${dashboardSummary.penalty}점을 차감했습니다. 미탐지 25점, 실행 실패 15점, 미확인 8점 기준입니다.`
-    : "아직 점수가 없습니다. 캠페인 Job을 실행하면 실행 결과와 탐지 커버리지를 기준으로 점수를 계산합니다.";
 
   async function runCampaign() {
     try {
@@ -620,32 +616,11 @@ export default function App() {
       const data = await fetchJson(`/runs/${executionId}`);
       setSelectedRun(data);
       setNotice(`Run detail opened: ${executionId}`);
-      window.setTimeout(() => {
-        detailRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-      }, 0);
+      setActiveView("evidence");
     } catch (err) {
       setError(err.message);
     }
   }
-
-  async function refreshAgentJobs() {
-    try {
-        setError("");
-
-        const { jobs: loadedJobs } = await refreshDashboardData();
-
-        const completedJob = loadedJobs.find((job) => job.execution_id);
-        if (completedJob?.execution_id) {
-        const run = await fetchJson(`/runs/${completedJob.execution_id}`);
-        setSelectedRun(run);
-        }
-    } catch (err) {
-        setError(err.message);
-    }
-    }
 
   useEffect(() => {
     loadInitialData();
@@ -667,37 +642,20 @@ export default function App() {
           <div className={`status-pill ${health ? "online" : "offline"}`}>
             {health ? "API 연결됨" : "API 연결 안 됨"}
           </div>
-          <button type="button" className="ghost-button" onClick={refreshAgentJobs}>
-            새로고침
-          </button>
         </div>
       </section>
 
       {error && <div className="alert">{error}</div>}
 
-      <section className="operator-next-step">
-        <div>
-          <div className="section-title">다음 작업</div>
-          <strong>{selectedAgent ? "검증 준비 완료" : "Agent 필요"}</strong>
-          <p>{nextActionText}</p>
-        </div>
-        <button
-          className="run-button"
-          onClick={runCampaign}
-          disabled={isRunning || !selectedAgentId || !selectedCampaignId}
-        >
-          {isRunning ? "Job 실행 중..." : "캠페인 Job 실행"}
-        </button>
-      </section>
-
-      <section className="overview-grid">
-        <div className="panel campaign-overview">
-          <div className="section-title">캠페인</div>
-          <div className="campaign-selector-row">
+      <section className="workspace-frame">
+        <div className="workspace-topnav">
+          <div className="topnav-primary">
+            <label className="topnav-campaign">
+              <span>검증 캠페인</span>
             <select
               aria-label="Campaign"
               value={selectedCampaignId}
-              onChange={(event) => loadCampaignDetail(event.target.value)}
+              onChange={(event) => selectCampaignAndShow(event.target.value, "summary")}
             >
               {campaigns.map((campaign) => (
                 <option key={campaign.campaign_id} value={campaign.campaign_id}>
@@ -705,75 +663,81 @@ export default function App() {
                 </option>
               ))}
             </select>
-            <span className="scope-pill">{selectedScopeLabel}</span>
+            </label>
+
+            <div className="topnav-context">
+              <strong>{campaignDetail?.campaign_name || selectedCampaignId}</strong>
+              <small>{selectedScopeLabel}</small>
+            </div>
+
+            <div className="topnav-score">
+              <span>Score</span>
+              <strong>{visibleSummaryRun ? `${dashboardSummary.score ?? "--"}` : "--"}</strong>
+              <small>탐지율 {visibleDetectionRate === null ? "--" : `${visibleDetectionRate}%`} · 갭 {dashboardSummary.missedCount}</small>
+            </div>
+
+            <button
+              className="run-button topnav-run-button"
+              onClick={runCampaign}
+              disabled={isRunning || !selectedAgentId || !selectedCampaignId}
+            >
+              {isRunning ? "실행 중..." : "검증 실행"}
+            </button>
           </div>
 
-          <h2>{campaignDetail?.campaign_name || "선택된 캠페인 없음"}</h2>
-          <p>{campaignDetail?.description || "캠페인을 선택하면 실행 범위를 불러옵니다."}</p>
-
-          <div className="overview-facts">
-            <div>
-              <span>공격 단계</span>
-              <strong>{campaignAttackCount}</strong>
-            </div>
-            <div>
-              <span>정상 단계</span>
-              <strong>{campaignNormalCount}</strong>
-            </div>
-            <div>
-              <span>실행 범위</span>
-              <strong>{selectedScopeCount}</strong>
-            </div>
-          </div>
+          <nav className="workspace-tabs" aria-label="Dashboard sections">
+            <button
+              type="button"
+              className={activeView === "summary" ? "active-view" : ""}
+              onClick={() => setActiveView("summary")}
+            >
+              <span>요약</span>
+              <small>점검 현황과 그래프</small>
+            </button>
+            <button
+              type="button"
+              className={activeView === "scope" ? "active-view" : ""}
+              onClick={() => setActiveView("scope")}
+            >
+              <span>실행하기</span>
+              <small>검증할 기법 선택</small>
+            </button>
+            <button
+              type="button"
+              className={activeView === "history" ? "active-view" : ""}
+              onClick={() => setActiveView("history")}
+            >
+              <span>결과 기록</span>
+              <small>이전 실행 열람</small>
+            </button>
+            <button
+              type="button"
+              className={activeView === "evidence" ? "active-view" : ""}
+              onClick={() => setActiveView("evidence")}
+            >
+              <span>증거 확인</span>
+              <small>명령과 ELK 근거</small>
+            </button>
+          </nav>
         </div>
 
-        <div className="panel agent-card">
-          <div className="section-title">BasAgent</div>
-          <div className="agent-state-row">
-            <div>
-              <h3>{selectedAgent?.display_name || "매칭되는 BasAgent 없음"}</h3>
-              <p>{selectedAgent?.agent_id || `${selectedCampaignId} agent가 등록되지 않았습니다`}</p>
-            </div>
-            <span className={`job-badge ${selectedAgent?.status || "offline"}`}>
-              {selectedAgent?.status || "offline"}
-            </span>
-          </div>
+        <section className="workspace-main">
+          {notice && <div className="notice notice-wide">{notice}</div>}
 
-          <div className="agent-meta-grid">
-            <div>
-              <span>캠페인</span>
-              <strong>{selectedAgent?.campaign_agent_id || selectedCampaignId}</strong>
-            </div>
-            <div>
-              <span>수집기</span>
-              <strong>{selectedAgent?.collector_type || "unknown"}</strong>
-            </div>
-            <div>
-              <span>상태 수신</span>
-              <strong>{selectedAgent?.last_heartbeat_at || "none"}</strong>
-            </div>
-          </div>
+      {activeView === "summary" && (
+      <>
+      <section className="view-header">
+        <div>
+          <span>요약</span>
+          <h2>{campaignDetail?.campaign_name || selectedCampaignId} 보안 검증 현황</h2>
+          <p>캠페인별 탐지 상태와 현재 선택한 캠페인의 실행률, 탐지율을 한 번에 확인합니다.</p>
         </div>
-
-        <div className="panel score-panel">
-          <div className="section-title">검증 점수</div>
-          <div className="score-value">
-            {dashboardSummary.score === null ? "--" : dashboardSummary.score}
-            <span>/100</span>
-          </div>
-          <p>
-            {visibleSummaryRun
-              ? `${visibleSummaryRun.campaign_id} 기준 검증 결과`
-              : "Job을 실행하면 검증 점수를 계산합니다."}
-          </p>
-          <div className="score-explain">
-            {scoreExplanation}
-          </div>
+        <div className="view-header-metrics">
+          <span>Score <strong>{visibleSummaryRun ? dashboardSummary.score ?? "--" : "--"}</strong></span>
+          <span>Detection <strong>{visibleDetectionRate === null ? "--" : `${visibleDetectionRate}%`}</strong></span>
+          <span>Gap <strong>{dashboardSummary.missedCount}</strong></span>
         </div>
       </section>
-
-      {notice && <div className="notice notice-wide">{notice}</div>}
-
       <section className="campaign-health-grid">
         <div className="panel campaign-health-panel">
           <div className="panel-title-row">
@@ -816,7 +780,7 @@ export default function App() {
                     card.isSelectedCampaign ? "selected-campaign-summary" : "",
                     missed > 0 ? "has-gap" : "",
                   ].join(" ")}
-                  onClick={() => loadCampaignDetail(card.campaign.campaign_id)}
+                  onClick={() => selectCampaignAndShow(card.campaign.campaign_id, "scope")}
                 >
                   <span className="campaign-summary-head">
                     <strong>{card.campaign.campaign_id}</strong>
@@ -911,7 +875,25 @@ export default function App() {
           </div>
         </div>
       </section>
+      </>
+      )}
 
+      {activeView === "scope" && (
+      <>
+      <section className="view-header">
+        <div>
+          <span>실행하기</span>
+          <h2>검증할 기법 선택</h2>
+          <p>전체 캠페인을 실행하거나 필요한 공격/정상 단계만 골라 실행합니다.</p>
+        </div>
+        <button
+          className="run-button"
+          onClick={runCampaign}
+          disabled={isRunning || !selectedAgentId || !selectedCampaignId}
+        >
+          {isRunning ? "실행 중..." : "선택 범위 실행"}
+        </button>
+      </section>
       <section className="operator-grid">
         <section className="panel technique-panel">
           <div className="panel-title-row">
@@ -982,15 +964,15 @@ export default function App() {
             </div>
             <div>
               <span>탐지</span>
-              <strong>{dashboardSummary.detectedCount}</strong>
+              <strong>{selectedRunSummary.detectedCount}</strong>
             </div>
             <div>
               <span>미탐</span>
-              <strong>{dashboardSummary.missedCount}</strong>
+              <strong>{selectedRunSummary.missedCount}</strong>
             </div>
             <div>
               <span>쿼리 준비</span>
-              <strong>{dashboardSummary.notCheckedCount}</strong>
+              <strong>{selectedRunSummary.notCheckedCount}</strong>
             </div>
           </div>
 
@@ -1027,7 +1009,18 @@ export default function App() {
           </div>
         </section>
       </section>
+      </>
+      )}
 
+      {activeView === "history" && (
+      <>
+      <section className="view-header">
+        <div>
+          <span>결과 기록</span>
+          <h2>이전 실행 결과</h2>
+          <p>완료된 실행을 열면 증거 확인 화면에서 상세 로그와 ELK 검증 결과를 볼 수 있습니다.</p>
+        </div>
+      </section>
       <section className="panel activity-panel">
         <div className="panel-title-row">
           <div>
@@ -1117,8 +1110,19 @@ export default function App() {
           </section>
         </div>
       </section>
+      </>
+      )}
 
-      <section className="panel evidence-panel" ref={detailRef}>
+      {activeView === "evidence" && (
+      <>
+      <section className="view-header">
+        <div>
+          <span>증거 확인</span>
+          <h2>{selectedRun ? "실행 증거" : "확인할 실행 선택"}</h2>
+          <p>명령 결과, 수집된 아티팩트, ELK 쿼리와 샘플 로그를 확인합니다.</p>
+        </div>
+      </section>
+      <section className="panel evidence-panel">
         <div className="panel-title-row">
           <div>
             <div className="section-title">증거</div>
@@ -1154,6 +1158,10 @@ export default function App() {
             ))}
           </div>
         )}
+      </section>
+      </>
+      )}
+        </section>
       </section>
     </main>
   );

@@ -332,7 +332,7 @@ export default function App() {
     return step.module_result?.execution_mode || selectedRun?.bas_agent?.mode || "simulation";
   }
 
-  function formatCommandStatus(command) {
+  function getCommandStatus(command) {
     if (command.returncode === 0) {
       return "success";
     }
@@ -342,6 +342,20 @@ export default function App() {
     }
 
     return "unknown";
+  }
+
+  function formatCommandStatus(command) {
+    const status = getCommandStatus(command);
+
+    if (status === "success") {
+      return "성공";
+    }
+
+    if (status === "failed") {
+      return "실패";
+    }
+
+    return "알 수 없음";
   }
 
   function renderModuleEvidence(step) {
@@ -356,28 +370,28 @@ export default function App() {
       <div className="evidence-block">
         <div className="evidence-grid">
           <div>
-            <span>Behavior</span>
+            <span>행위 유형</span>
             <strong>{getStepBehavior(step)}</strong>
           </div>
           <div>
-            <span>Mode</span>
+            <span>실행 모드</span>
             <strong>{getExecutionMode(step)}</strong>
           </div>
           <div>
-            <span>Evidence Key</span>
-            <strong>{result.evidence_key || "none"}</strong>
+            <span>증거 키</span>
+            <strong>{result.evidence_key || "없음"}</strong>
           </div>
         </div>
 
         {commands.length > 0 && (
           <div className="command-list">
-            <div className="evidence-title">Command Results</div>
+            <div className="evidence-title">명령 실행 결과</div>
 
             {commands.map((command, index) => (
               <div key={`${step.order}-command-${index}`} className="command-item">
                 <div className="command-header">
                   <code>{command.command}</code>
-                  <span className={`result-badge ${formatCommandStatus(command)}`}>
+                  <span className={`result-badge ${getCommandStatus(command)}`}>
                     rc {command.returncode}
                   </span>
                 </div>
@@ -396,7 +410,7 @@ export default function App() {
 
         {artifacts.length > 0 && (
           <div className="artifact-list">
-            <div className="evidence-title">Artifacts</div>
+            <div className="evidence-title">아티팩트</div>
             {artifacts.map((artifact, index) => (
               <code key={`${step.order}-artifact-${index}`}>
                 {typeof artifact === "string" ? artifact : JSON.stringify(artifact)}
@@ -428,26 +442,26 @@ export default function App() {
         )}
 
         <div className="query-box">
-          <span>ELK Validation</span>
+          <span>ELK 탐지 검증</span>
           <div className="elk-validation-card">
             <div>
-              <span>Result</span>
+              <span>결과</span>
               <strong>{getDetectionLabel(step)}</strong>
             </div>
             <div>
-              <span>Index</span>
-              <strong>{elkCheck.index || "not configured"}</strong>
+              <span>인덱스</span>
+              <strong>{elkCheck.index || "설정 안 됨"}</strong>
             </div>
             <div>
-              <span>Matched Events</span>
-              <strong>{typeof elkCheck.event_count === "number" ? elkCheck.event_count : "not checked"}</strong>
+              <span>매칭 이벤트</span>
+              <strong>{typeof elkCheck.event_count === "number" ? elkCheck.event_count : "미확인"}</strong>
             </div>
           </div>
-          <code>{elkCheck.query || "No ELK query"}</code>
+          <code>{elkCheck.query || "ELK 쿼리 없음"}</code>
           {elkCheck.message && <p className="elk-message">{elkCheck.message}</p>}
           {sampleEvents.length > 0 && (
             <div className="sample-log-list">
-              <div className="evidence-title">Sample Logs</div>
+              <div className="evidence-title">샘플 로그</div>
               {sampleEvents.map((event, index) => (
                 <pre key={`${step.order}-sample-${index}`}>
                   {typeof event === "string" ? event : JSON.stringify(event, null, 2)}
@@ -475,14 +489,14 @@ export default function App() {
   const campaignAttackCount = (campaignDetail?.flow || []).filter((step) => step.phase === "attack").length;
   const campaignNormalCount = (campaignDetail?.flow || []).filter((step) => step.phase === "normal").length;
   const selectedScopeCount = selectedOrders.length || campaignDetail?.flow?.length || 0;
-  const selectedScopeLabel = selectedOrders.length > 0 ? `${selectedOrders.length} selected` : "Full campaign";
+  const selectedScopeLabel = selectedOrders.length > 0 ? `${selectedOrders.length}개 선택됨` : "전체 캠페인";
   const executedStepCount = selectedRunSteps.filter((step) => ["success", "simulated"].includes(step.status)).length;
   const nextActionText = selectedAgent
-    ? "Select techniques or run the full campaign, then review Detection Validation and Evidence."
-    : "Start the matching BasAgent for this campaign before queueing a job.";
+    ? "실행할 Technique을 선택하거나 전체 캠페인을 실행한 뒤, 탐지 검증과 증거 로그를 확인하세요."
+    : "Job을 실행하기 전에 이 캠페인에 맞는 BasAgent를 먼저 실행해야 합니다.";
   const scoreExplanation = selectedRun
-    ? `100 - risk penalty ${dashboardSummary.penalty}. Missed detections add the highest penalty. Query-ready items are shown until ELK is connected.`
-    : "No score yet. Queue a campaign job to calculate execution and detection coverage.";
+    ? `100점에서 위험 패널티 ${dashboardSummary.penalty}점을 차감했습니다. 미탐지는 가장 큰 패널티로 계산하고, ELK 연동 전 항목은 쿼리 준비 상태로 표시합니다.`
+    : "아직 점수가 없습니다. 캠페인 Job을 실행하면 실행 결과와 탐지 커버리지를 기준으로 점수를 계산합니다.";
 
   async function runCampaign() {
     try {
@@ -563,18 +577,18 @@ export default function App() {
       <section className="topbar product-topbar">
         <div>
           <p className="eyebrow">Spacebar BAS</p>
-          <h1>Campaign Validation Console</h1>
+          <h1>캠페인 검증 콘솔</h1>
           <p className="topbar-copy">
-            Execute campaign techniques, verify expected telemetry, and review evidence from one operator view.
+            캠페인 Technique을 실행하고, 예상 로그가 수집됐는지 확인하며, 실행 증거를 한 화면에서 검토합니다.
           </p>
         </div>
 
         <div className="topbar-status">
           <div className={`status-pill ${health ? "online" : "offline"}`}>
-            {health ? "API Online" : "API Offline"}
+            {health ? "API 연결됨" : "API 연결 안 됨"}
           </div>
           <button type="button" className="ghost-button" onClick={refreshAgentJobs}>
-            Refresh
+            새로고침
           </button>
         </div>
       </section>
@@ -583,8 +597,8 @@ export default function App() {
 
       <section className="operator-next-step">
         <div>
-          <div className="section-title">Next Action</div>
-          <strong>{selectedAgent ? "Ready to validate" : "Agent required"}</strong>
+          <div className="section-title">다음 작업</div>
+          <strong>{selectedAgent ? "검증 준비 완료" : "Agent 필요"}</strong>
           <p>{nextActionText}</p>
         </div>
         <button
@@ -592,13 +606,13 @@ export default function App() {
           onClick={runCampaign}
           disabled={isRunning || !selectedAgentId || !selectedCampaignId}
         >
-          {isRunning ? "Running Job..." : "Queue Campaign Job"}
+          {isRunning ? "Job 실행 중..." : "캠페인 Job 실행"}
         </button>
       </section>
 
       <section className="overview-grid">
         <div className="panel campaign-overview">
-          <div className="section-title">Campaign</div>
+          <div className="section-title">캠페인</div>
           <div className="campaign-selector-row">
             <select
               aria-label="Campaign"
@@ -614,20 +628,20 @@ export default function App() {
             <span className="scope-pill">{selectedScopeLabel}</span>
           </div>
 
-          <h2>{campaignDetail?.campaign_name || "No campaign selected"}</h2>
-          <p>{campaignDetail?.description || "Select a campaign to load its execution scope."}</p>
+          <h2>{campaignDetail?.campaign_name || "선택된 캠페인 없음"}</h2>
+          <p>{campaignDetail?.description || "캠페인을 선택하면 실행 범위를 불러옵니다."}</p>
 
           <div className="overview-facts">
             <div>
-              <span>Attack Steps</span>
+              <span>공격 단계</span>
               <strong>{campaignAttackCount}</strong>
             </div>
             <div>
-              <span>Normal Steps</span>
+              <span>정상 단계</span>
               <strong>{campaignNormalCount}</strong>
             </div>
             <div>
-              <span>Execution Scope</span>
+              <span>실행 범위</span>
               <strong>{selectedScopeCount}</strong>
             </div>
           </div>
@@ -637,8 +651,8 @@ export default function App() {
           <div className="section-title">BasAgent</div>
           <div className="agent-state-row">
             <div>
-              <h3>{selectedAgent?.display_name || "No matching BasAgent"}</h3>
-              <p>{selectedAgent?.agent_id || `${selectedCampaignId} agent is not registered`}</p>
+              <h3>{selectedAgent?.display_name || "매칭되는 BasAgent 없음"}</h3>
+              <p>{selectedAgent?.agent_id || `${selectedCampaignId} agent가 등록되지 않았습니다`}</p>
             </div>
             <span className={`job-badge ${selectedAgent?.status || "offline"}`}>
               {selectedAgent?.status || "offline"}
@@ -647,30 +661,30 @@ export default function App() {
 
           <div className="agent-meta-grid">
             <div>
-              <span>Campaign</span>
+              <span>캠페인</span>
               <strong>{selectedAgent?.campaign_agent_id || selectedCampaignId}</strong>
             </div>
             <div>
-              <span>Collector</span>
+              <span>수집기</span>
               <strong>{selectedAgent?.collector_type || "unknown"}</strong>
             </div>
             <div>
-              <span>Heartbeat</span>
+              <span>상태 수신</span>
               <strong>{selectedAgent?.last_heartbeat_at || "none"}</strong>
             </div>
           </div>
         </div>
 
         <div className="panel score-panel">
-          <div className="section-title">Validation Score</div>
+          <div className="section-title">검증 점수</div>
           <div className="score-value">
             {dashboardSummary.score === null ? "--" : dashboardSummary.score}
             <span>/100</span>
           </div>
           <p>
             {selectedRun
-              ? `${selectedRun.campaign_id} latest selected run`
-              : "Run a job to calculate validation score."}
+              ? `${selectedRun.campaign_id} 선택된 최근 실행 결과`
+              : "Job을 실행하면 검증 점수를 계산합니다."}
           </p>
           <div className="score-explain">
             {scoreExplanation}
@@ -684,7 +698,7 @@ export default function App() {
         <section className="panel technique-panel">
           <div className="panel-title-row">
             <div>
-              <div className="section-title">Execution Scope</div>
+              <div className="section-title">실행 범위</div>
               <h3>Techniques</h3>
             </div>
             <div className="selection-actions compact-actions">
@@ -695,7 +709,7 @@ export default function App() {
                 Normal
               </button>
               <button type="button" className="ghost-button" onClick={clearSelection}>
-                Clear
+                선택 해제
               </button>
             </div>
           </div>
@@ -737,27 +751,27 @@ export default function App() {
         <section className="panel validation-panel">
           <div className="panel-title-row">
             <div>
-              <div className="section-title">Detection Validation</div>
-              <h3>{selectedRun ? selectedRun.execution_id : "No run selected"}</h3>
+              <div className="section-title">탐지 검증</div>
+              <h3>{selectedRun ? selectedRun.execution_id : "선택된 실행 없음"}</h3>
             </div>
-            <span className="page-indicator">{executedStepCount} executed</span>
+            <span className="page-indicator">{executedStepCount}개 실행됨</span>
           </div>
 
           <div className="validation-metrics">
             <div>
-              <span>Attack</span>
+              <span>공격</span>
               <strong>{selectedRunAttackSteps.length}</strong>
             </div>
             <div>
-              <span>Detected</span>
+              <span>탐지</span>
               <strong>{dashboardSummary.detectedCount}</strong>
             </div>
             <div>
-              <span>Missed</span>
+              <span>미탐</span>
               <strong>{dashboardSummary.missedCount}</strong>
             </div>
             <div>
-              <span>Query Ready</span>
+              <span>쿼리 준비</span>
               <strong>{dashboardSummary.notCheckedCount}</strong>
             </div>
           </div>
@@ -799,8 +813,8 @@ export default function App() {
       <section className="panel activity-panel">
         <div className="panel-title-row">
           <div>
-            <div className="section-title">Activity</div>
-            <h3>Jobs and Runs</h3>
+            <div className="section-title">실행 내역</div>
+            <h3>Jobs / Runs</h3>
           </div>
           <span className="scope-pill">{jobs.length} jobs / {runs.length} runs</span>
         </div>
@@ -810,7 +824,7 @@ export default function App() {
           <div className="panel-title-row">
             <div>
               <div className="section-title">Jobs</div>
-              <h3>Queue</h3>
+              <h3>대기열</h3>
             </div>
             {latestJob && <span className={`job-badge ${latestJob.status}`}>{latestJob.status}</span>}
           </div>
@@ -830,7 +844,7 @@ export default function App() {
                 <span className={`job-badge ${job.status}`}>{job.status}</span>
               </button>
             ))}
-            {recentJobs.length === 0 && <p className="empty">No jobs queued yet.</p>}
+            {recentJobs.length === 0 && <p className="empty">아직 실행 대기 중인 Job이 없습니다.</p>}
           </div>
           </section>
 
@@ -838,7 +852,7 @@ export default function App() {
           <div className="panel-title-row">
             <div>
               <div className="section-title">Runs</div>
-              <h3>History</h3>
+              <h3>기록</h3>
             </div>
             <span className="page-indicator">
               {runs.length === 0 ? "0 / 0" : `${runPage + 1} / ${runPageCount}`}
@@ -861,7 +875,7 @@ export default function App() {
                 <small>{run.started_at}</small>
               </button>
             ))}
-            {runs.length === 0 && <p className="empty">No runs yet.</p>}
+            {runs.length === 0 && <p className="empty">아직 실행 기록이 없습니다.</p>}
           </div>
 
           <div className="run-pager">
@@ -871,7 +885,7 @@ export default function App() {
               onClick={() => setRunPage((page) => Math.max(0, page - 1))}
               disabled={runPage === 0}
             >
-              Prev
+              이전
             </button>
             <button
               type="button"
@@ -879,7 +893,7 @@ export default function App() {
               onClick={() => setRunPage((page) => Math.min(runPageCount - 1, page + 1))}
               disabled={runPage >= runPageCount - 1}
             >
-              Next
+              다음
             </button>
           </div>
           </section>
@@ -889,13 +903,13 @@ export default function App() {
       <section className="panel evidence-panel" ref={detailRef}>
         <div className="panel-title-row">
           <div>
-            <div className="section-title">Evidence</div>
-            <h3>{selectedRun ? selectedRun.execution_id : "Select or execute a run"}</h3>
+            <div className="section-title">증거</div>
+            <h3>{selectedRun ? selectedRun.execution_id : "실행 결과를 선택하거나 새로 실행하세요"}</h3>
           </div>
           {selectedRun && <span className="scope-pill">{selectedRun.campaign_id}</span>}
         </div>
 
-        {!selectedRun && <p className="empty">Run detail will show commands, artifacts, and expected detection queries.</p>}
+        {!selectedRun && <p className="empty">실행 상세에는 명령, 생성 아티팩트, 예상 탐지 쿼리가 표시됩니다.</p>}
 
         {selectedRun && (
           <div className="result-steps evidence-list">

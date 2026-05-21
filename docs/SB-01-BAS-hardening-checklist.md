@@ -43,6 +43,155 @@
 
 ## 2. 가장 먼저 해야 할 핵심 작업
 
+### 2.0 1차 실전형 전환 작업
+
+이번 단계의 목표는 BAS를 “로컬에서 실행 결과를 보여주는 도구”에서 **VM 안의 Agent가 Controller job을 가져가 실행하고, ELK에서 해당 실행을 검증하는 구조**로 바꾸는 것이다.
+
+1차 구현 범위:
+
+| 묶음 | 구현 항목 | 우선순위 |
+|---|---|---:|
+| Agent 운영 | offline 판정, heartbeat metadata, capability 표시 | 1 |
+| Job 운영 | job timeout, running job 유실 처리 | 2 |
+| SB-01 Agent 설치 | Jenkins 또는 App VM에 `sb01-bas-agent` 설치, systemd 등록 | 3 |
+| 실행 검증 | `run_id marker`, ELK marker 1:1 검증, fallback query 분리 | 4 |
+
+#### 2.0.1 Agent 운영 체계 고도화
+
+목표:
+
+- VM이 꺼지면 Dashboard에서 자동으로 offline처럼 보인다.
+- VM이 다시 켜지고 Agent가 heartbeat를 보내면 같은 `agent_id`로 online 복귀한다.
+- IP가 바뀌어도 Agent ID 기준으로 식별한다.
+
+구현 체크리스트:
+
+- [ ] `AgentHeartbeatRequest`에 metadata 필드를 추가한다.
+- [ ] BasAgent가 heartbeat마다 현재 host 정보를 보낸다.
+- [ ] Controller가 `last_heartbeat_at` 기준으로 online/offline을 계산한다.
+- [ ] UI가 저장된 `status`만 믿지 않고 `last_heartbeat_at` 기준 상태를 표시한다.
+- [ ] Agent 목록에 capability와 execution mode를 표시한다.
+
+heartbeat metadata 권장 필드:
+
+```json
+{
+  "status": "online",
+  "hostname": "ip-172-31-13-239",
+  "private_ip": "172.31.13.239",
+  "public_ip": "3.x.x.x",
+  "platform": "linux",
+  "os": "Ubuntu 24.04",
+  "execution_mode": "simulation",
+  "capabilities": ["jenkins", "linux", "filebeat"]
+}
+```
+
+완료 기준:
+
+- [ ] Agent가 꺼진 뒤 일정 시간 지나면 UI에서 offline으로 보인다.
+- [ ] Agent를 다시 실행하면 같은 `agent_id`로 online 복귀한다.
+- [ ] UI에서 `agent_id`, campaign, host, IP, mode, capabilities를 확인할 수 있다.
+
+#### 2.0.2 Job timeout 및 유실 처리
+
+목표:
+
+- Agent가 job을 가져간 뒤 VM이 꺼져도 job이 영원히 `running`으로 남지 않는다.
+
+구현 체크리스트:
+
+- [ ] Job에 `timeout_seconds` 필드를 추가한다.
+- [ ] `/jobs` 목록 조회 시 오래된 `running` job을 `timeout` 또는 `lost`로 표시한다.
+- [ ] Agent heartbeat가 끊긴 상태에서 running job이 있으면 `agent_offline` 상태로 분리한다.
+- [ ] UI에서 `queued`, `running`, `completed`, `failed`, `timeout`, `agent_offline`을 구분 표시한다.
+
+완료 기준:
+
+- [ ] running job이 timeout을 넘기면 자동으로 timeout 처리된다.
+- [ ] Agent가 offline이면 새 job 실행 전에 경고가 표시된다.
+- [ ] timeout job은 history에 남아 원인 추적이 가능하다.
+
+#### 2.0.3 SB-01 VM에 실제 Agent 설치
+
+목표:
+
+- SB-01 Jenkins 또는 App VM 안에서 `sb01-bas-agent`가 자동 실행된다.
+- Dashboard에서 job을 만들면 VM 내부 Agent가 job을 가져가 실행한다.
+
+설치 대상 후보:
+
+| 위치 | 장점 | 단점 | 추천 |
+|---|---|---|---|
+| Jenkins VM | Jenkins 관련 Technique 실행에 자연스러움 | App/DB 행위는 SSH로 추가 접근 필요 | 1순위 |
+| App VM | App auditd/staging/exfil 실행에 자연스러움 | Jenkins 내부 파일 접근은 어려움 | 2순위 |
+| 별도 BAS Runner VM | 운영상 깔끔함 | 현재 프로젝트에는 추가 비용/복잡도 | 보류 |
+
+구현 체크리스트:
+
+- [ ] SB-01 Jenkins VM에 repo 또는 agent runtime을 배치한다.
+- [ ] `agent_runtime/config.sb01.yaml`의 `controller_url`을 실제 Controller 주소로 바꾼다.
+- [ ] `agent_id: sb01-bas-agent`를 고정한다.
+- [ ] `execution_mode`를 우선 `simulation`으로 검증한다.
+- [ ] systemd service 파일을 작성한다.
+- [ ] `systemctl enable --now sb01-bas-agent`로 자동 실행한다.
+- [ ] VM 재부팅 후 Agent가 자동 online 되는지 확인한다.
+
+systemd 서비스 예시:
+
+```ini
+[Unit]
+Description=Spacebar SB-01 BAS Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/spacebar-BAS
+ExecStart=/usr/bin/python3 /opt/spacebar-BAS/agent_runtime/bas_agent.py --config /opt/spacebar-BAS/agent_runtime/config.sb01.yaml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+완료 기준:
+
+- [ ] Jenkins VM에서 service 상태가 `active (running)`이다.
+- [ ] Dashboard Agent 목록에 `sb01-bas-agent`가 online으로 표시된다.
+- [ ] VM을 껐다 켜도 Agent가 자동 복귀한다.
+- [ ] Dashboard에서 job queue 후 Agent가 가져가 실행한다.
+
+#### 2.0.4 실행 검증 구조 강화
+
+목표:
+
+- 실행 결과와 ELK 로그가 “시간상 비슷함”이 아니라 marker로 직접 연결된다.
+
+구현 체크리스트:
+
+- [ ] `CampaignRunner`가 `execution_id`, `technique_id`, `order`를 module params에 주입한다.
+- [ ] 각 module이 marker를 stdout/artifact에 반환한다.
+- [ ] ELK checker가 marker query를 먼저 수행한다.
+- [ ] marker query 실패 시 fallback query를 수행한다.
+- [ ] 결과에 `validation_strength`를 추가한다.
+
+권장 `validation_strength`:
+
+| 값 | 의미 |
+|---|---|
+| `strong` | marker가 ELK에서 직접 매칭됨 |
+| `fallback` | marker는 없지만 기존 query로 유사 로그 확인 |
+| `weak` | 로그는 있으나 시간/행위 연결이 약함 |
+| `none` | 탐지 근거 없음 |
+
+완료 기준:
+
+- [ ] Evidence 영역에서 marker가 보인다.
+- [ ] ELK sample event에서 marker가 보인다.
+- [ ] marker 미탐 시 fallback 여부가 구분된다.
+
 ### 2.1 run_id marker 기반 1:1 검증
 
 현재 가장 큰 부족점이다.
@@ -369,23 +518,27 @@ Python BasAgent + PowerShell 실행 모듈
 
 가장 효율적인 순서:
 
-1. `CampaignRunner`에서 `execution_id`를 각 module에 주입
-2. SB-01 신규/기존 module에 marker 통일 적용
-3. ELK checker를 marker 우선 검증으로 개선
-4. App auditd `/tmp` staging rule 추가
-5. PostgreSQL 안전 조회 모듈 추가
-6. Jenkins Docker/container log 수집 보완
-7. UI 실행 모드 `Atomic / Chain / Full Campaign` 분리
-8. Detection Gap reason 출력
-9. Markdown report export 추가
-10. AD/Windows module template 작성
+1. Agent heartbeat metadata 확장
+2. Controller/UI의 offline 판정 구현
+3. Job timeout 및 `agent_offline` 상태 구현
+4. SB-01 Jenkins VM에 `sb01-bas-agent` systemd 설치
+5. `CampaignRunner`에서 `execution_id`를 각 module에 주입
+6. SB-01 신규/기존 module에 marker 통일 적용
+7. ELK checker를 marker 우선 검증으로 개선
+8. App auditd `/tmp` staging rule 추가
+9. PostgreSQL 안전 조회 모듈 추가
+10. Jenkins Docker/container log 수집 보완
+11. UI 실행 모드 `Atomic / Chain / Full Campaign` 분리
+12. Detection Gap reason 출력
+13. Markdown report export 추가
+14. AD/Windows module template 작성
 
 ## 11. 오늘 당장 착수할 3개
 
 우선순위를 줄이면 아래 3개부터 한다.
 
-- [ ] `execution_id` marker를 모든 module에 자동 주입한다.
-- [ ] `T1213.006` PostgreSQL 안전 조회 모듈을 만든다.
-- [ ] ELK checker에서 marker query와 fallback query를 분리한다.
+- [ ] Agent heartbeat metadata 확장 및 offline 판정을 구현한다.
+- [ ] Job timeout 및 agent offline job 상태를 구현한다.
+- [ ] `execution_id` marker를 모든 module에 자동 주입하고 ELK marker/fallback 검증을 분리한다.
 
-이 3개가 끝나면 SB-01 BAS는 “실행과 탐지 검증이 연결된다”는 설득력이 크게 올라간다.
+이 3개가 끝나면 SB-01 BAS는 “VM 안의 Agent가 실제로 살아 있고, Dashboard job을 가져가 실행하며, 실행 로그가 ELK 검증과 연결된다”는 설득력이 크게 올라간다.

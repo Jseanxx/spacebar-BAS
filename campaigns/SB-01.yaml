@@ -118,6 +118,10 @@ flow:
     technique_id: T1021.004
     depends_on_orders:
       - 6
+    requires:
+      - ssh
+      - app_host
+      - deploy_key
     params:
       behavior: jenkins_to_app_ssh
       username: deploy
@@ -129,6 +133,10 @@ flow:
     target: SB-01
     name: App directory and config file discovery
     technique_id: T1083
+    requires:
+      - ssh
+      - app_host
+      - linux_filesystem
     depends_on_orders:
       - 7
     params:

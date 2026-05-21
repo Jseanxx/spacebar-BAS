@@ -35,12 +35,19 @@ export default function App() {
   const [campaigns, setCampaigns] = useState([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState("SB-01");
   const [campaignDetail, setCampaignDetail] = useState(null);
+  const [targetDetail, setTargetDetail] = useState(null);
+  const [techniqueCompatibility, setTechniqueCompatibility] = useState({});
   const [runs, setRuns] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [agents, setAgents] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedOrders, setSelectedOrders] = useState([]);
+  const [techniqueLibrary, setTechniqueLibrary] = useState([]);
+  const [selectedTechniqueIds, setSelectedTechniqueIds] = useState([]);
+  const [techniqueQuery, setTechniqueQuery] = useState("");
+  const [techniquePhaseFilter, setTechniquePhaseFilter] = useState("all");
+  const [techniqueSourceFilter, setTechniqueSourceFilter] = useState("all");
   const [notice, setNotice] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
@@ -103,8 +110,14 @@ export default function App() {
         if (job.execution_id) {
           const run = await fetchJson(`/runs/${job.execution_id}`);
           setSelectedRun(run);
+          setRuns((currentRuns) => {
+            const withoutCurrentRun = currentRuns.filter((item) => item.execution_id !== run.execution_id);
+            return [run, ...withoutCurrentRun];
+          });
         }
 
+        setSelectedOrders([]);
+        setSelectedTechniqueIds([]);
         return job;
       }
 
@@ -130,6 +143,9 @@ export default function App() {
       const campaignData = await fetchJson("/campaigns");
       setCampaigns(campaignData.campaigns || []);
 
+      const techniqueData = await fetchJson("/techniques");
+      setTechniqueLibrary(techniqueData.techniques || []);
+
       await refreshDashboardData();
 
     } catch (err) {
@@ -140,11 +156,14 @@ export default function App() {
   async function loadCampaignDetail(campaignId) {
     try {
       setError("");
-      setSelectedOrders([]);
       setNotice("");
 
       const data = await fetchJson(`/campaigns/${campaignId}`);
+      const targetData = await fetchJson(`/targets/${campaignId}`);
+      const compatibilityData = await fetchJson(`/campaigns/${campaignId}/technique-compatibility`);
       setCampaignDetail(data);
+      setTargetDetail(targetData);
+      setTechniqueCompatibility(compatibilityData.compatibility || {});
       setSelectedCampaignId(campaignId);
       const campaignAgent = findAgentForCampaign(agents, campaignId);
       setSelectedAgentId(campaignAgent?.agent_id || "");
@@ -155,7 +174,149 @@ export default function App() {
 
   async function selectCampaignAndShow(campaignId, view = "summary") {
     await loadCampaignDetail(campaignId);
-    setActiveView(view);
+    if (view) {
+      setActiveView(view);
+    }
+  }
+
+  function getTechniqueSelectionId(step) {
+    return step.selection_id || `${step.source_campaign_id || selectedCampaignId}:${step.order}`;
+  }
+
+  function getTechniqueSourceId(step) {
+    return step.source_campaign_id || selectedCampaignId;
+  }
+
+  function getTechniqueCompatibility(step) {
+    const dryRun = techniqueCompatibility[getTechniqueSelectionId(step)];
+    if (dryRun) {
+      return {
+        status: dryRun.status,
+        label: dryRun.label,
+        matched: [],
+        missing: dryRun.missing_capabilities || [],
+        querySource: dryRun.query_source,
+      };
+    }
+
+    const requires = Array.isArray(step.requires) ? step.requires : [];
+    const capabilities = new Set(Array.isArray(targetDetail?.capabilities) ? targetDetail.capabilities : []);
+    const matched = requires.filter((item) => capabilities.has(item));
+    const missing = requires.filter((item) => !capabilities.has(item));
+
+    if (requires.length === 0) {
+      return {
+        status: "incompatible",
+        label: "비호환",
+        matched,
+        missing,
+      };
+    }
+
+    if (missing.length === 0) {
+      return {
+        status: "compatible",
+        label: "호환",
+        matched,
+        missing,
+      };
+    }
+
+    if (matched.length > 0) {
+      return {
+        status: "partial",
+        label: "비호환",
+        matched,
+        missing,
+      };
+    }
+
+    return {
+      status: "incompatible",
+      label: "비호환",
+      matched,
+      missing,
+    };
+  }
+
+  function getOperationReadiness(step) {
+    const compatibility = getTechniqueCompatibility(step);
+
+    if (compatibility.status === "compatible") {
+      return {
+        status: "compatible",
+        label: "호환",
+        compatibility,
+      };
+    }
+
+    if (compatibility.status === "partial" || compatibility.status === "incompatible") {
+      return {
+        status: "incompatible",
+        label: "비호환",
+        compatibility,
+      };
+    }
+
+    return {
+      status: "incompatible",
+      label: "비호환",
+      compatibility,
+    };
+  }
+
+  function toggleTechnique(step) {
+    const selectionId = getTechniqueSelectionId(step);
+
+    setSelectedTechniqueIds((currentIds) => {
+      if (currentIds.includes(selectionId)) {
+        return currentIds.filter((id) => id !== selectionId);
+      }
+
+      return [...currentIds, selectionId];
+    });
+
+    setNotice("");
+  }
+
+  function removeQueuedTechnique(selectionId) {
+    setSelectedTechniqueIds((currentIds) => currentIds.filter((id) => id !== selectionId));
+  }
+
+  function moveQueuedTechnique(selectionId, direction) {
+    setSelectedTechniqueIds((currentIds) => {
+      const index = currentIds.indexOf(selectionId);
+      const nextIndex = index + direction;
+
+      if (index < 0 || nextIndex < 0 || nextIndex >= currentIds.length) {
+        return currentIds;
+      }
+
+      const nextIds = [...currentIds];
+      [nextIds[index], nextIds[nextIndex]] = [nextIds[nextIndex], nextIds[index]];
+      return nextIds;
+    });
+  }
+
+  function loadCampaignPreset() {
+    const presetIds = (campaignDetail?.flow || []).map((step) => `${selectedCampaignId}:${step.order}`);
+    setSelectedTechniqueIds(presetIds);
+    setNotice(`${selectedCampaignId} 기본 시나리오를 실행 큐에 담았습니다.`);
+  }
+
+  function loadCampaignAttacksOnly() {
+    const attackIds = (campaignDetail?.flow || [])
+      .filter((step) => step.phase === "attack")
+      .map((step) => `${selectedCampaignId}:${step.order}`);
+
+    setSelectedTechniqueIds(attackIds);
+    setNotice(`${selectedCampaignId} 공격 테크닉만 실행 큐에 담았습니다.`);
+  }
+
+  function clearOperationQueue() {
+    setSelectedOrders([]);
+    setSelectedTechniqueIds([]);
+    setNotice("");
   }
 
   function resolveDependencies(order, flow) {
@@ -522,11 +683,7 @@ export default function App() {
   }
 
   const latestRunsByCampaign = new Map();
-  function rememberLatestRun(run) {
-    if (!run?.campaign_id) {
-      return;
-    }
-
+  runs.forEach((run) => {
     const currentRun = latestRunsByCampaign.get(run.campaign_id);
     const currentTime = currentRun?.started_at ? new Date(currentRun.started_at).getTime() : 0;
     const runTime = run.started_at ? new Date(run.started_at).getTime() : 0;
@@ -534,25 +691,10 @@ export default function App() {
     if (!currentRun || runTime >= currentTime) {
       latestRunsByCampaign.set(run.campaign_id, run);
     }
-  }
-
-  runs.forEach((run) => {
-    rememberLatestRun(run);
-  });
-
-  jobs.forEach((job) => {
-    if (job.status === "completed" && job.result) {
-      rememberLatestRun(job.result);
-    }
   });
 
   const selectedRunMatchesCampaign = selectedRun?.campaign_id === selectedCampaignId;
-  const visibleSummaryRun = selectedRunMatchesCampaign
-    ? selectedRun
-    : latestRunsByCampaign.get(selectedCampaignId);
-  const activeRun = visibleSummaryRun?.campaign_id === selectedCampaignId
-    ? visibleSummaryRun
-    : null;
+  const visibleSummaryRun = latestRunsByCampaign.get(selectedCampaignId);
   const dashboardSummary = buildDashboardSummary(visibleSummaryRun);
   const executionChartStyle = buildDonutStyle(
     [
@@ -575,7 +717,7 @@ export default function App() {
     const isSelectedCampaign = campaign.campaign_id === selectedCampaignId;
     const summaryRun = latestRun;
     const summary = buildDashboardSummary(summaryRun);
-    const flowCount = isSelectedCampaign ? (campaignDetail?.flow || []).length : 0;
+    const flowCount = isSelectedCampaign ? (campaignDetail?.flow || []).length : campaign.step_count;
     const techniqueCount = flowCount || summaryRun?.steps?.length || 0;
     const defenseRate = summary.successfulAttackCount > 0
       ? Math.round((summary.detectedCount / summary.successfulAttackCount) * 100)
@@ -590,7 +732,34 @@ export default function App() {
       isSelectedCampaign,
     };
   });
-  const attackPathSteps = activeRun?.steps || campaignDetail?.flow || [];
+  const techniqueById = new Map();
+  techniqueLibrary.forEach((step) => {
+    techniqueById.set(getTechniqueSelectionId(step), step);
+  });
+  const selectedOperationSteps = selectedTechniqueIds
+    .map((selectionId) => techniqueById.get(selectionId))
+    .filter(Boolean);
+  const queuedAttackCount = selectedOperationSteps.filter((step) => step.phase === "attack").length;
+  const librarySourceIds = Array.from(
+    new Set(techniqueLibrary.map((step) => getTechniqueSourceId(step)))
+  ).sort();
+  const normalizedTechniqueQuery = techniqueQuery.trim().toLowerCase();
+  const filteredTechniqueLibrary = techniqueLibrary.filter((step) => {
+    const sourceId = getTechniqueSourceId(step);
+    const matchesSource = techniqueSourceFilter === "all" || sourceId === techniqueSourceFilter;
+    const matchesPhase = techniquePhaseFilter === "all" || step.phase === techniquePhaseFilter;
+    const searchableText = [
+      step.name,
+      step.technique_id,
+      step.module,
+      sourceId,
+      step.source_campaign_name,
+    ].filter(Boolean).join(" ").toLowerCase();
+    const matchesQuery = !normalizedTechniqueQuery || searchableText.includes(normalizedTechniqueQuery);
+
+    return matchesSource && matchesPhase && matchesQuery;
+  });
+  const attackPathSteps = selectedRunMatchesCampaign ? selectedRun.steps : selectedOperationSteps;
   const latestJob = jobs[0] || null;
   const recentJobs = jobs.slice(0, 4);
   const runPageCount = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE));
@@ -606,10 +775,12 @@ export default function App() {
   const visibleDetectionRate = dashboardSummary.successfulAttackCount > 0
     ? Math.round((dashboardSummary.detectedCount / dashboardSummary.successfulAttackCount) * 100)
     : null;
-  const selectedRunSteps = activeRun?.steps || [];
-  const selectedRunSummary = buildDashboardSummary(activeRun);
+  const selectedRunSteps = selectedRunMatchesCampaign ? selectedRun.steps : [];
+  const selectedRunSummary = buildDashboardSummary(selectedRunMatchesCampaign ? selectedRun : null);
   const selectedRunAttackSteps = selectedRunSteps.filter((step) => step.phase === "attack");
-  const selectedScopeLabel = selectedOrders.length > 0 ? `${selectedOrders.length}개 선택됨` : "전체 캠페인";
+  const selectedScopeLabel = selectedOperationSteps.length > 0
+    ? `${selectedOperationSteps.length}개 큐에 있음`
+    : "큐 비어 있음";
   const executedStepCount = selectedRunSteps.filter((step) => ["success", "simulated"].includes(step.status)).length;
 
   async function runCampaign() {
@@ -625,6 +796,10 @@ export default function App() {
             throw new Error("Select a BasAgent before queueing a job.");
         }
 
+        if (selectedOperationSteps.length === 0) {
+            throw new Error("실행 큐에 테크닉을 먼저 담아주세요.");
+        }
+
         const data = await fetchJson("/jobs", {
         method: "POST",
         headers: {
@@ -633,8 +808,11 @@ export default function App() {
         body: JSON.stringify({
             agent_id: selectedAgentId,
             campaign_id: selectedCampaignId,
-            selected_orders: selectedOrders.length > 0 ? selectedOrders : null,
-            include_normal: selectedOrders.length === 0
+            selected_steps: selectedOperationSteps.map((step) => ({
+              campaign_id: getTechniqueSourceId(step),
+              order: step.order,
+            })),
+            include_normal: false
         })
         });
 
@@ -723,7 +901,7 @@ export default function App() {
             <select
               aria-label="Campaign"
               value={selectedCampaignId}
-              onChange={(event) => selectCampaignAndShow(event.target.value, "summary")}
+              onChange={(event) => loadCampaignDetail(event.target.value)}
             >
               {campaigns.map((campaign) => (
                 <option key={campaign.campaign_id} value={campaign.campaign_id}>
@@ -747,7 +925,7 @@ export default function App() {
             <button
               className="run-button topnav-run-button"
               onClick={runCampaign}
-              disabled={isRunning || !selectedAgentId || !selectedCampaignId}
+              disabled={isRunning || !selectedAgentId || !selectedCampaignId || selectedOperationSteps.length === 0}
             >
               {isRunning ? "실행 중..." : "검증 실행"}
             </button>
@@ -848,7 +1026,7 @@ export default function App() {
                     card.isSelectedCampaign ? "selected-campaign-summary" : "",
                     missed > 0 ? "has-gap" : "",
                   ].join(" ")}
-                  onClick={() => selectCampaignAndShow(card.campaign.campaign_id, "scope")}
+                  onClick={() => selectCampaignAndShow(card.campaign.campaign_id, null)}
                 >
                   <span className="campaign-summary-head">
                     <strong>{card.campaign.campaign_id}</strong>
@@ -950,59 +1128,97 @@ export default function App() {
       <>
       <section className="view-header">
         <div>
-          <span>실행하기</span>
-          <h2>검증할 기법 선택</h2>
-          <p>전체 캠페인을 실행하거나 필요한 공격/정상 단계만 골라 실행합니다.</p>
+          <span>Operation Builder</span>
+          <h2>캠페인 컨텍스트와 테크닉을 조합</h2>
+          <p>캠페인은 실행 컨텍스트로 두고, 전체 테크닉 라이브러리에서 필요한 능력을 큐에 담아 검증합니다.</p>
         </div>
         <button
           className="run-button"
           onClick={runCampaign}
-          disabled={isRunning || !selectedAgentId || !selectedCampaignId}
+          disabled={isRunning || !selectedAgentId || !selectedCampaignId || selectedOperationSteps.length === 0}
         >
-          {isRunning ? "실행 중..." : "선택 범위 실행"}
+          {isRunning ? "실행 중..." : "큐 실행"}
         </button>
       </section>
       <section className="operator-grid">
         <section className="panel technique-panel">
           <div className="panel-title-row">
             <div>
-              <div className="section-title">실행 범위</div>
-              <h3>Techniques</h3>
+              <div className="section-title">Technique Library</div>
+              <h3>능력 선택</h3>
             </div>
             <div className="selection-actions compact-actions">
-              <button type="button" className="secondary-button" onClick={selectAllAttacks}>
-                Attacks
+              <button type="button" className="secondary-button" onClick={loadCampaignPreset}>
+                캠페인 기본값
               </button>
-              <button type="button" className="secondary-button normal-action" onClick={selectAllNormal}>
-                Normal
+              <button type="button" className="secondary-button normal-action" onClick={loadCampaignAttacksOnly}>
+                공격만
               </button>
-              <button type="button" className="ghost-button" onClick={clearSelection}>
-                선택 해제
+              <button type="button" className="ghost-button" onClick={clearOperationQueue}>
+                큐 비우기
               </button>
             </div>
           </div>
 
-          <div className="technique-list">
-            {(campaignDetail?.flow || []).map((step) => {
-              const isSelectedStep = selectedOrders.includes(step.order);
+          <div className="library-toolbar">
+            <input
+              type="search"
+              value={techniqueQuery}
+              onChange={(event) => setTechniqueQuery(event.target.value)}
+              placeholder="T1609, secret, kube..."
+            />
+            <select
+              value={techniqueSourceFilter}
+              onChange={(event) => setTechniqueSourceFilter(event.target.value)}
+            >
+              <option value="all">전체 캠페인</option>
+              {librarySourceIds.map((sourceId) => (
+                <option key={sourceId} value={sourceId}>{sourceId}</option>
+              ))}
+            </select>
+            <select
+              value={techniquePhaseFilter}
+              onChange={(event) => setTechniquePhaseFilter(event.target.value)}
+            >
+              <option value="all">전체 단계</option>
+              <option value="attack">Attack</option>
+              <option value="normal">Normal</option>
+            </select>
+          </div>
+
+          <div className="technique-list library-list">
+            {filteredTechniqueLibrary.map((step) => {
+              const selectionId = getTechniqueSelectionId(step);
+              const isSelectedStep = selectedTechniqueIds.includes(selectionId);
+              const sourceId = getTechniqueSourceId(step);
+              const readiness = getOperationReadiness(step);
+              const compatibility = readiness.compatibility;
 
               return (
                 <button
-                  key={step.order}
+                  key={selectionId}
                   type="button"
                   className={[
                     "technique-row",
                     step.phase,
                     isSelectedStep ? "selected-step" : "",
                   ].join(" ")}
-                  onClick={() => toggleStep(step)}
+                  onClick={() => toggleTechnique(step)}
                 >
-                  <span className="step-index">{step.order}</span>
+                  <span className="step-index">{sourceId.replace("SB-", "")}.{step.order}</span>
                   <span className="technique-main">
                     <strong>{step.name}</strong>
-                    <small>{getTechniqueDisplayName(step)}</small>
+                    <small>{sourceId} · {getTechniqueDisplayName(step)}</small>
                   </span>
                   <span className="technique-tags">
+                    <span
+                      className={`readiness-chip ${readiness.status}`}
+                      title={[
+                        compatibility.missing.length > 0 ? `환경에서 확인할 항목: ${compatibility.missing.join(", ")}` : "",
+                      ].filter(Boolean).join(" / ") || "선택한 환경에서 바로 검증할 수 있습니다."}
+                    >
+                      {readiness.label}
+                    </span>
                     <span className={step.phase === "attack" ? "chip attack-chip" : "chip normal-chip"}>
                       {step.phase === "attack" ? "Attack" : "Normal"}
                     </span>
@@ -1013,49 +1229,132 @@ export default function App() {
                 </button>
               );
             })}
+            {filteredTechniqueLibrary.length === 0 && <p className="empty">조건에 맞는 테크닉이 없습니다.</p>}
           </div>
         </section>
 
-        <section className="panel validation-panel">
+        <section className="panel operation-queue-panel">
           <div className="panel-title-row">
             <div>
-              <div className="section-title">탐지 검증</div>
-              <h3>{selectedRun ? selectedRun.execution_id : "선택된 실행 없음"}</h3>
+              <div className="section-title">Execution Queue</div>
+              <h3>{selectedOperationSteps.length}개 테크닉</h3>
             </div>
-            <span className="page-indicator">{executedStepCount}개 실행됨</span>
+            <span className="page-indicator">Attack {queuedAttackCount}</span>
           </div>
 
-          <div className="validation-metrics">
+          <div className="queue-context-strip">
             <div>
-              <span>공격</span>
-              <strong>{selectedRunAttackSteps.length}</strong>
+              <span>컨텍스트</span>
+              <strong>{selectedCampaignId}</strong>
             </div>
             <div>
-              <span>탐지</span>
-              <strong>{selectedRunSummary.detectedCount}</strong>
+              <span>실행 방식</span>
+              <strong>사용자 조합</strong>
             </div>
             <div>
-              <span>미탐</span>
-              <strong>{selectedRunSummary.missedCount}</strong>
+              <span>검증 대상</span>
+              <strong>{selectedOperationSteps.length || "--"}</strong>
             </div>
-            <div>
-              <span>쿼리 준비</span>
-              <strong>{selectedRunSummary.notCheckedCount}</strong>
+          </div>
+
+          <div className="queue-list">
+            {selectedOperationSteps.map((step, index) => {
+              const selectionId = getTechniqueSelectionId(step);
+              const sourceId = getTechniqueSourceId(step);
+              const readiness = getOperationReadiness(step);
+              const compatibility = readiness.compatibility;
+
+              return (
+                <div key={selectionId} className={`queue-item ${step.phase} readiness-${readiness.status}`}>
+                  <span className="queue-order">{index + 1}</span>
+                  <div className="queue-main">
+                    <strong>{step.name}</strong>
+                    <small>{sourceId} · 실행 target {selectedCampaignId} · {getTechniqueDisplayName(step)}</small>
+                    {compatibility.missing.length > 0 && (
+                      <small className="compatibility-note">현재 환경에 없는 구성: {compatibility.missing.join(", ")}</small>
+                    )}
+                  </div>
+                  <div className="queue-actions">
+                    <span className={`readiness-chip ${readiness.status}`}>
+                      {readiness.label}
+                    </span>
+                    <button
+                      type="button"
+                      className="icon-action"
+                      onClick={() => moveQueuedTechnique(selectionId, -1)}
+                      disabled={index === 0}
+                      aria-label="위로 이동"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-action"
+                      onClick={() => moveQueuedTechnique(selectionId, 1)}
+                      disabled={index === selectedOperationSteps.length - 1}
+                      aria-label="아래로 이동"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-action danger"
+                      onClick={() => removeQueuedTechnique(selectionId)}
+                      aria-label="큐에서 제거"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {selectedOperationSteps.length === 0 && (
+              <p className="empty">왼쪽 라이브러리에서 테크닉을 클릭하면 실행 큐에 들어갑니다.</p>
+            )}
+          </div>
+
+          <div className="queue-result-preview">
+            <div className="panel-title-row">
+              <div>
+                <div className="section-title">최근 검증</div>
+                <h3>{selectedRun ? selectedRun.execution_id : "선택된 실행 없음"}</h3>
+              </div>
+              <span className="page-indicator">{executedStepCount}개 실행됨</span>
+            </div>
+
+            <div className="validation-metrics">
+              <div>
+                <span>공격</span>
+                <strong>{selectedRunAttackSteps.length}</strong>
+              </div>
+              <div>
+                <span>탐지</span>
+                <strong>{selectedRunSummary.detectedCount}</strong>
+              </div>
+              <div>
+                <span>미탐</span>
+                <strong>{selectedRunSummary.missedCount}</strong>
+              </div>
+              <div>
+                <span>미확인</span>
+                <strong>{selectedRunSummary.notCheckedCount}</strong>
+              </div>
             </div>
           </div>
 
           <div className="path-map compact-path-map">
             {attackPathSteps.map((step) => {
               const hasRunResult = Boolean(step.status);
-              const executionStatus = step.status || "not_run";
+              const executionStatus = step.status || "queued";
               const detectionStatus = hasRunResult ? getDetectionStatus(step) : "not_run";
               const riskLevel = hasRunResult ? getRiskLevel(step) : "not_run";
-              const isSelectedPath = selectedOrders.includes(step.order)
-                || selectedRun?.final_orders?.includes(step.order);
+              const selectionId = step.selection_id || `${step.source_campaign_id || selectedCampaignId}:${step.order}`;
+              const isSelectedPath = selectedTechniqueIds.includes(selectionId)
+                || selectedRun?.requested_steps?.some((item) => `${item.campaign_id}:${item.order}` === selectionId);
 
               return (
                 <div
-                  key={step.order}
+                  key={selectionId}
                   className={[
                     "validation-row",
                     step.phase,
@@ -1063,12 +1362,12 @@ export default function App() {
                   ].join(" ")}
                 >
                   <div>
-                    <strong>{step.order}. {step.name}</strong>
+                    <strong>{step.source_campaign_id || selectedCampaignId}.{step.order} {step.name}</strong>
                     <small>{getTechniqueDisplayName(step)}</small>
                   </div>
                   <div className="validation-badges">
                     <span className={`result-badge ${executionStatus}`}>{executionStatus}</span>
-                    <span className={`status-tag ${detectionStatus}`}>{getDetectionLabel(step)}</span>
+                    <span className={`status-tag ${detectionStatus}`}>{hasRunResult ? getDetectionLabel(step) : "대기"}</span>
                     <span className={`status-tag risk-${riskLevel}`}>{riskLevel}</span>
                   </div>
                 </div>
@@ -1194,7 +1493,7 @@ export default function App() {
       <section className="view-header">
         <div>
           <span>증거 확인</span>
-          <h2>{activeRun ? "실행 증거" : "확인할 실행 선택"}</h2>
+          <h2>{selectedRun ? "실행 증거" : "확인할 실행 선택"}</h2>
           <p>명령 결과, 수집된 아티팩트, ELK 쿼리와 샘플 로그를 확인합니다.</p>
         </div>
       </section>
@@ -1202,16 +1501,16 @@ export default function App() {
         <div className="panel-title-row">
           <div>
             <div className="section-title">증거</div>
-            <h3>{activeRun ? activeRun.execution_id : "실행 결과를 선택하거나 새로 실행하세요"}</h3>
+            <h3>{selectedRun ? selectedRun.execution_id : "실행 결과를 선택하거나 새로 실행하세요"}</h3>
           </div>
-          {activeRun && <span className="scope-pill">{activeRun.campaign_id}</span>}
+          {selectedRun && <span className="scope-pill">{selectedRun.campaign_id}</span>}
         </div>
 
-        {!activeRun && <p className="empty">실행 상세에는 명령, 생성 아티팩트, 예상 탐지 쿼리가 표시됩니다.</p>}
+        {!selectedRun && <p className="empty">실행 상세에는 명령, 생성 아티팩트, 탐지 근거가 표시됩니다.</p>}
 
-        {activeRun && (
+        {selectedRun && (
           <div className="result-steps evidence-list">
-            {(activeRun.steps || []).map((step) => (
+            {(selectedRun.steps || []).map((step) => (
               <div key={`${step.order}-${step.module}`} className="result-step evidence-step">
                 <div>
                   <div className="evidence-step-header">

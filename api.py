@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from bas.controller import run_campaign
+from bas.elk_checker import resolve_query
 from bas.loader import load_campaign, load_target
 
 
@@ -40,6 +41,11 @@ app.add_middleware(
 )
 
 
+class StepSelection(BaseModel):
+    campaign_id: str
+    order: int
+
+
 class RunRequest(BaseModel):
     """
     캠페인 실행 요청 모델입니다.
@@ -50,6 +56,7 @@ class RunRequest(BaseModel):
 
     campaign_id: str = "SB-05"
     selected_orders: list[int] | None = None
+    selected_steps: list[StepSelection] | None = None
     include_normal: bool = True
 
 
@@ -60,6 +67,7 @@ class PreviewRequest(BaseModel):
 
     campaign_id: str = "SB-05"
     selected_orders: list[int] | None = None
+    selected_steps: list[StepSelection] | None = None
     include_normal: bool = True
 
 class AgentRegisterRequest(BaseModel):
@@ -92,6 +100,7 @@ class JobRequest(BaseModel):
     agent_id: str
     campaign_id: str = "SB-05"
     selected_orders: list[int] | None = None
+    selected_steps: list[StepSelection] | None = None
     include_normal: bool = True
 
 
@@ -145,6 +154,121 @@ def load_sorted_steps(campaign):
     return sorted(campaign.get("flow", []), key=lambda item: item.get("order", 0))
 
 
+def load_technique_library():
+    """
+    모든 campaign YAML의 flow를 독립 실행 가능한 technique library로 모읍니다.
+
+    campaign은 실행 컨텍스트로 남기고, 사용자는 여기서 원하는 step을 큐에 담아
+    조합형 operation을 만들 수 있습니다.
+    """
+
+    techniques = []
+
+    for path in sorted(CAMPAIGNS_DIR.glob("*.yaml")):
+        campaign = load_campaign(path.stem)
+        campaign_id = campaign.get("campaign_id") or path.stem
+
+        for step in load_sorted_steps(campaign):
+            step_copy = dict(step)
+            step_copy["source_campaign_id"] = campaign_id
+            step_copy["source_campaign_name"] = campaign.get("campaign_name")
+            step_copy["selection_id"] = f"{campaign_id}:{step.get('order')}"
+            techniques.append(step_copy)
+
+    return techniques
+
+
+def resolve_selected_steps(selected_steps):
+    """
+    selected_steps payload를 실제 step 객체 목록으로 변환합니다.
+    """
+
+    if not selected_steps:
+        return None
+
+    library = {
+        technique["selection_id"]: technique
+        for technique in load_technique_library()
+    }
+
+    resolved = []
+    invalid_steps = []
+
+    for selection in selected_steps:
+        selection_id = f"{selection.campaign_id}:{selection.order}"
+        step = library.get(selection_id)
+
+        if not step:
+            invalid_steps.append({
+                "campaign_id": selection.campaign_id,
+                "order": selection.order,
+            })
+            continue
+
+        resolved.append(dict(step))
+
+    if invalid_steps:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Invalid selected_steps",
+                "invalid_steps": invalid_steps,
+            },
+        )
+
+    return resolved
+
+
+def get_step_behavior(step):
+    return step.get("params", {}).get("behavior")
+
+
+def build_technique_compatibility(campaign_id):
+    """
+    선택한 campaign target 기준으로 전체 technique library를 dry-run 판정합니다.
+
+    실제 공격이나 ELK 검색은 수행하지 않고:
+    - 실행 구성: step.requires가 target.capabilities에 모두 있는지
+    - 탐지 기준: exact query 또는 자동 생성 query를 만들 수 있는지
+    를 계산합니다.
+    """
+
+    target = load_target(campaign_id)
+    capabilities = set(target.get("capabilities", []))
+    compatibility = {}
+
+    for step in load_technique_library():
+        selection_id = step.get("selection_id")
+        requires = step.get("requires", [])
+        missing_capabilities = [
+            requirement
+            for requirement in requires
+            if requirement not in capabilities
+        ]
+
+        behavior = get_step_behavior(step)
+        query_source = "not_applicable"
+        query = None
+
+        if behavior:
+            query, query_source = resolve_query(target, behavior)
+
+        query_ready = query_source in ("configured", "generated", "not_applicable")
+        is_compatible = not missing_capabilities and query_ready
+
+        compatibility[selection_id] = {
+            "selection_id": selection_id,
+            "status": "compatible" if is_compatible else "incompatible",
+            "label": "호환" if is_compatible else "비호환",
+            "missing_capabilities": missing_capabilities,
+            "behavior": behavior,
+            "query_source": query_source,
+            "query_preview": query,
+        }
+
+    return compatibility
+
+
 def resolve_dependencies(steps, requested_orders):
     """
     selected_orders의 depends_on_orders를 따라가며 필요한 선행 단계를 자동 포함합니다.
@@ -174,7 +298,7 @@ def resolve_dependencies(steps, requested_orders):
     return sorted(resolved)
 
 
-def build_execution_plan(campaign_id, selected_orders=None, include_normal=True):
+def build_execution_plan(campaign_id, selected_orders=None, selected_steps=None, include_normal=True):
     """
     실제 모듈 실행 없이 최종 실행 계획만 계산합니다.
 
@@ -184,6 +308,29 @@ def build_execution_plan(campaign_id, selected_orders=None, include_normal=True)
     """
 
     campaign = load_campaign(campaign_id)
+
+    custom_steps = resolve_selected_steps(selected_steps)
+    if custom_steps is not None:
+        return {
+            "campaign_id": campaign.get("campaign_id"),
+            "campaign_name": campaign.get("campaign_name"),
+            "requested_orders": [],
+            "requested_steps": [
+                {
+                    "campaign_id": step.get("source_campaign_id"),
+                    "order": step.get("order"),
+                }
+                for step in custom_steps
+            ],
+            "auto_included_orders": [],
+            "final_orders": [
+                step.get("order")
+                for step in custom_steps
+            ],
+            "steps": custom_steps,
+            "operation_mode": "custom",
+        }
+
     steps = load_sorted_steps(campaign)
 
     requested_orders = sorted(selected_orders or [])
@@ -218,9 +365,11 @@ def build_execution_plan(campaign_id, selected_orders=None, include_normal=True)
             "campaign_id": campaign.get("campaign_id"),
             "campaign_name": campaign.get("campaign_name"),
             "requested_orders": [],
+            "requested_steps": [],
             "auto_included_orders": [],
             "final_orders": final_orders,
             "steps": steps,
+            "operation_mode": "campaign",
         }
 
     resolved_attack_orders = resolve_dependencies(steps, requested_orders)
@@ -248,12 +397,14 @@ def build_execution_plan(campaign_id, selected_orders=None, include_normal=True)
         "campaign_id": campaign.get("campaign_id"),
         "campaign_name": campaign.get("campaign_name"),
         "requested_orders": requested_orders,
+        "requested_steps": [],
         "auto_included_orders": auto_included_orders,
         "final_orders": final_orders,
         "steps": [
             step for step in steps
             if step.get("order") in final_orders
         ],
+        "operation_mode": "campaign",
     }
 
 def read_json_file(path, default):
@@ -271,6 +422,13 @@ def write_json_file(path, data):
 
     with path.open("w", encoding="utf-8") as file:
         json.dump(data, file, indent=2, ensure_ascii=False)
+
+
+def dump_step_selection(selection):
+    return {
+        "campaign_id": selection.campaign_id,
+        "order": selection.order,
+    }
 
 
 def get_agent_path(agent_id):
@@ -425,6 +583,7 @@ def create_job(request: JobRequest):
         build_execution_plan(
             campaign_id=request.campaign_id,
             selected_orders=request.selected_orders,
+            selected_steps=request.selected_steps,
             include_normal=request.include_normal,
         )
     except HTTPException:
@@ -439,6 +598,10 @@ def create_job(request: JobRequest):
         "agent_id": request.agent_id,
         "campaign_id": request.campaign_id,
         "selected_orders": request.selected_orders,
+        "selected_steps": [
+            dump_step_selection(selection)
+            for selection in request.selected_steps or []
+        ],
         "include_normal": request.include_normal,
         "status": "queued",
         "created_at": now_kst(),
@@ -561,6 +724,24 @@ def list_campaigns():
     }
 
 
+@app.get("/techniques")
+def list_techniques():
+    return {
+        "techniques": load_technique_library()
+    }
+
+
+@app.get("/campaigns/{campaign_id}/technique-compatibility")
+def get_technique_compatibility(campaign_id: str):
+    try:
+        return {
+            "campaign_id": campaign_id,
+            "compatibility": build_technique_compatibility(campaign_id),
+        }
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Campaign or target not found")
+
+
 @app.get("/campaigns/{campaign_id}")
 def get_campaign(campaign_id: str):
     try:
@@ -626,6 +807,7 @@ def preview_run(request: PreviewRequest):
         return build_execution_plan(
             campaign_id=request.campaign_id,
             selected_orders=request.selected_orders,
+            selected_steps=request.selected_steps,
             include_normal=request.include_normal,
         )
     except HTTPException:
@@ -641,12 +823,17 @@ def create_run(request: RunRequest):
         build_execution_plan(
             campaign_id=request.campaign_id,
             selected_orders=request.selected_orders,
+            selected_steps=request.selected_steps,
             include_normal=request.include_normal,
         )
 
         result, output_path = run_campaign(
             campaign_id=request.campaign_id,
             selected_orders=request.selected_orders,
+            selected_steps=[
+                dump_step_selection(selection)
+                for selection in request.selected_steps or []
+            ],
             include_normal=request.include_normal,
         )
 
@@ -670,6 +857,7 @@ def create_run(request: RunRequest):
         "result_path": str(output_path),
         "step_count": len(result.get("steps", [])),
         "requested_orders": result.get("requested_orders"),
+        "requested_steps": result.get("requested_steps"),
         "auto_included_orders": result.get("auto_included_orders"),
         "final_orders": result.get("final_orders"),
         "result": result,
@@ -700,9 +888,11 @@ def list_runs():
             "agent": bas_agent,
 
             "requested_orders": data.get("requested_orders"),
+            "requested_steps": data.get("requested_steps"),
             "auto_included_orders": data.get("auto_included_orders"),
             "final_orders": data.get("final_orders"),
             "step_count": len(data.get("steps", [])),
+            "steps": data.get("steps", []),
             "file": str(path),
         })
 

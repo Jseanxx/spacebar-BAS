@@ -1,4 +1,5 @@
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 import uuid
 
 from bas.loader import load_campaign, load_target
@@ -8,6 +9,8 @@ from bas.elk_checker import check_elk
 
 
 KST = timezone(timedelta(hours=9))
+BASE_DIR = Path(__file__).resolve().parent.parent
+CAMPAIGNS_DIR = BASE_DIR / "campaigns"
 
 
 def now_kst():
@@ -36,11 +39,13 @@ class CampaignRunner:
         self,
         campaign_id,
         selected_orders=None,
+        selected_steps=None,
         include_normal=True,
         execution_mode="simulation",
     ):
         self.campaign_id = campaign_id
         self.selected_orders = sorted(selected_orders or [])
+        self.selected_step_refs = selected_steps or []
         self.include_normal = include_normal
         self.execution_mode = execution_mode
         self.execution_id = self._create_execution_id()
@@ -53,14 +58,21 @@ class CampaignRunner:
         최종 구조에서는 BasAgent가 Job을 받은 뒤 이 메서드를 호출하게 됩니다.
         """
         campaign = load_campaign(self.campaign_id)
-        all_steps = self._load_sorted_steps(campaign)
-
-        selected_steps, auto_included_orders, final_orders = self._select_steps(all_steps)
+        if self.selected_step_refs:
+            selected_steps = self._resolve_selected_steps(self.selected_step_refs)
+            auto_included_orders = []
+            final_orders = [step.get("order") for step in selected_steps]
+            operation_mode = "custom"
+        else:
+            all_steps = self._load_sorted_steps(campaign)
+            selected_steps, auto_included_orders, final_orders = self._select_steps(all_steps)
+            operation_mode = "campaign"
 
         run_result = self._build_initial_result(
             campaign=campaign,
             auto_included_orders=auto_included_orders,
             final_orders=final_orders,
+            operation_mode=operation_mode,
         )
 
         for step in selected_steps:
@@ -81,6 +93,45 @@ class CampaignRunner:
     def _load_sorted_steps(self, campaign):
         # 중요한 줄: YAML 작성 순서가 아니라 order 값을 기준으로 실행 순서를 고정합니다.
         return sorted(campaign.get("flow", []), key=lambda item: item.get("order", 0))
+
+    def _load_step_library(self):
+        library = {}
+
+        for path in sorted(CAMPAIGNS_DIR.glob("*.yaml")):
+            campaign = load_campaign(path.stem)
+            campaign_id = campaign.get("campaign_id") or path.stem
+
+            for step in self._load_sorted_steps(campaign):
+                step_copy = dict(step)
+                step_copy["source_campaign_id"] = campaign_id
+                step_copy["source_campaign_name"] = campaign.get("campaign_name")
+                step_copy["selection_id"] = f"{campaign_id}:{step.get('order')}"
+                library[step_copy["selection_id"]] = step_copy
+
+        return library
+
+    def _resolve_selected_steps(self, selected_step_refs):
+        library = self._load_step_library()
+        resolved = []
+        invalid_steps = []
+
+        for selection in selected_step_refs:
+            selection_id = f"{selection.get('campaign_id')}:{selection.get('order')}"
+            step = library.get(selection_id)
+
+            if not step:
+                invalid_steps.append(selection_id)
+                continue
+
+            step_copy = dict(step)
+            step_copy["source_target_id"] = step.get("target")
+            step_copy["target"] = self.campaign_id
+            resolved.append(step_copy)
+
+        if invalid_steps:
+            raise ValueError(f"Invalid selected_steps: {', '.join(invalid_steps)}")
+
+        return resolved
 
     def _select_steps(self, steps):
         """
@@ -148,7 +199,7 @@ class CampaignRunner:
 
         return sorted(resolved)
 
-    def _build_initial_result(self, campaign, auto_included_orders, final_orders):
+    def _build_initial_result(self, campaign, auto_included_orders, final_orders, operation_mode):
         bas_agent = self._build_bas_agent_metadata()
 
         return {
@@ -164,9 +215,11 @@ class CampaignRunner:
             "agent": bas_agent,
 
             "requested_orders": self.selected_orders,
+            "requested_steps": self.selected_step_refs,
             "auto_included_orders": auto_included_orders,
             "final_orders": final_orders,
             "include_normal": self.include_normal,
+            "operation_mode": operation_mode,
             "steps": [],
         }
 
@@ -229,8 +282,12 @@ class CampaignRunner:
             "phase": step.get("phase"),
             "name": step.get("name"),
             "target_id": step.get("target"),
+            "source_target_id": step.get("source_target_id"),
             "module": step.get("module"),
             "technique_id": step.get("technique_id"),
+            "source_campaign_id": step.get("source_campaign_id", self.campaign_id),
+            "source_campaign_name": step.get("source_campaign_name"),
+            "selection_id": step.get("selection_id"),
             "started_at": step_started_at,
             "finished_at": now_kst(),
             "status": status,

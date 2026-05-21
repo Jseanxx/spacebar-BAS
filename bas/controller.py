@@ -4,6 +4,7 @@ from bas.campaign_runner import CampaignRunner
 def run_campaign(
     campaign_id,
     selected_orders=None,
+    selected_steps=None,
     include_normal=True,
     execution_mode="simulation",
 ):
@@ -18,6 +19,7 @@ def run_campaign(
     runner = CampaignRunner(
         campaign_id=campaign_id,
         selected_orders=selected_orders,
+        selected_steps=selected_steps,
         include_normal=include_normal,
         execution_mode=execution_mode,
     )

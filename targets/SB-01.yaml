@@ -8,6 +8,27 @@ capabilities:
   - deploy_key
   - linux_filesystem
   - auditd
+  - jenkins_cli
+  - jenkins_controller
+  - jenkins_home
+  - credential_metadata
+  - private_key_metadata
+  - app_staging
+  - outbound_https
+
+jenkins:
+  url: http://127.0.0.1:8080
+  home_path: /var/jenkins_home
+  home_paths:
+    - /var/jenkins_home
+    - /var/lib/docker/volumes/jenkins_jenkins_home/_data
+  cli_jar_path: /tmp/jenkins-cli.jar
+  safe_read_path: /tmp/sb01-bas-cli-read-canary.txt
+  credential_paths:
+    - /var/jenkins_home/credentials.xml
+    - /var/jenkins_home/secrets
+    - /var/lib/docker/volumes/jenkins_jenkins_home/_data/credentials.xml
+    - /var/lib/docker/volumes/jenkins_jenkins_home/_data/secrets
 
 app:
   host: 172.31.4.70

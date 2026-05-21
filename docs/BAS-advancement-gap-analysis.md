@@ -53,6 +53,22 @@
 - `T1074.001` local data staging
 - `T1048.002` outbound exfiltration simulation
 
+2026-05-21 반영:
+
+| Technique | 신규 모듈 | 실행 방식 |
+|---|---|---|
+| `T1190` | `attack.T1190_jenkins_cli_file_read` | Jenkins CLI endpoint에 canary 파일 기반 file-read probe를 실행한다. 민감 파일은 읽지 않는다. |
+| `T1552.001` | `attack.T1552_001_jenkins_credential_file_access` | `credentials.xml`, `secrets` 경로의 존재 여부와 메타데이터만 확인한다. credential 값은 출력하지 않는다. |
+| `T1552.004` | `attack.T1552_004_jenkins_private_key_discovery` | Jenkins 홈에서 private key 후보 경로와 mode/size만 확인한다. key 본문은 출력하지 않는다. |
+| `T1074.001` | `attack.T1074_001_sb01_app_local_staging` | App 서버 `/tmp` 아래에 marker/listing/candidate path 파일을 생성한다. 민감 원문은 복사하지 않는다. |
+| `T1048.002` | `attack.T1048_002_https_exfil_simulation` | App 서버에서 `example.com`으로 HTTPS outbound flow만 만든다. 데이터 업로드는 하지 않는다. |
+
+주의:
+
+- 기본 Agent 설정이 `execution_mode: simulation`이면 위 모듈도 실제 명령 대신 시뮬레이션 결과를 반환한다.
+- 실제 환경에서 실행하려면 BasAgent 설정을 `execution_mode: real`로 바꾼 뒤 대상 서버에서 실행해야 한다.
+- real mode에서도 민감 파일 출력, private key 출력, 실제 데이터 exfiltration은 수행하지 않도록 제한했다.
+
 ### 2. 개별 Technique 실행 모드가 명확하지 않음
 
 현재 UI는 선택한 Technique과 필요한 선행 단계를 함께 실행하는 **Campaign Chain 방식**에 가깝다.

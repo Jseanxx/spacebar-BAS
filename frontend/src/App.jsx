@@ -255,18 +255,18 @@ export default function App() {
 
   function getDetectionLabel(step) {
     if (!step?.elk_check) {
-      return "No query";
+      return "쿼리 없음";
     }
 
     if (!step.elk_check.checked && step.elk_check.query) {
-      return "Query ready";
+      return "미확인";
     }
 
     if (!step.elk_check.checked) {
-      return "Not configured";
+      return "미설정";
     }
 
-    return step.elk_check.matched ? "Detected" : "Missed";
+    return step.elk_check.matched ? "탐지됨" : "미탐지";
   }
 
   function getRiskLevel(step) {
@@ -292,27 +292,50 @@ export default function App() {
     const steps = run?.steps || [];
     const attackSteps = steps.filter((step) => step.phase === "attack");
     const successfulAttacks = attackSteps.filter((step) => ["success", "simulated"].includes(step.status));
-    const detectedSteps = attackSteps.filter((step) => getDetectionStatus(step) === "detected");
-    const missedSteps = attackSteps.filter((step) => getDetectionStatus(step) === "missed");
-    const notCheckedSteps = attackSteps.filter((step) => getDetectionStatus(step) === "not_checked");
+    const failedAttacks = attackSteps.filter((step) => !["success", "simulated"].includes(step.status));
+    const successSteps = steps.filter((step) => step.status === "success");
+    const simulatedSteps = steps.filter((step) => step.status === "simulated");
+    const failedSteps = steps.filter((step) => step.status && !["success", "simulated"].includes(step.status));
+    const detectedSteps = successfulAttacks.filter((step) => getDetectionStatus(step) === "detected");
+    const missedSteps = successfulAttacks.filter((step) => getDetectionStatus(step) === "missed");
+    const notCheckedSteps = successfulAttacks.filter((step) => getDetectionStatus(step) === "not_checked");
 
-    const penalty = attackSteps.reduce((total, step) => {
-      const risk = getRiskLevel(step);
-
-      if (risk === "high") return total + 25;
-      if (risk === "medium") return total + 10;
-      return total + 3;
-    }, 0);
+    const penalty = (missedSteps.length * 25)
+      + (failedAttacks.length * 15)
+      + (notCheckedSteps.length * 8);
 
     return {
       totalSteps: steps.length,
       attackCount: attackSteps.length,
+      successCount: successSteps.length,
+      simulatedCount: simulatedSteps.length,
+      failedCount: failedSteps.length,
       successfulAttackCount: successfulAttacks.length,
+      failedAttackCount: failedAttacks.length,
       detectedCount: detectedSteps.length,
       missedCount: missedSteps.length,
       notCheckedCount: notCheckedSteps.length,
       penalty,
       score: steps.length > 0 ? Math.max(0, 100 - penalty) : null,
+    };
+  }
+
+  function buildDonutStyle(segments, hasData) {
+    if (!hasData) {
+      return { background: "conic-gradient(#cbd5e1 0 360deg)" };
+    }
+
+    const total = Math.max(1, segments.reduce((sum, segment) => sum + segment.value, 0));
+    let cursor = 0;
+    const gradientStops = segments.map((segment) => {
+      const next = cursor + ((segment.value / total) * 360);
+      const stop = `${segment.color} ${cursor}deg ${next}deg`;
+      cursor = next;
+      return stop;
+    });
+
+    return {
+      background: `conic-gradient(${gradientStops.join(", ")})`,
     };
   }
 
@@ -474,8 +497,57 @@ export default function App() {
     );
   }
 
-  const dashboardSummary = buildDashboardSummary(selectedRun);
-  const attackPathSteps = selectedRun?.steps || campaignDetail?.flow || [];
+  const latestRunsByCampaign = new Map();
+  runs.forEach((run) => {
+    const currentRun = latestRunsByCampaign.get(run.campaign_id);
+    const currentTime = currentRun?.started_at ? new Date(currentRun.started_at).getTime() : 0;
+    const runTime = run.started_at ? new Date(run.started_at).getTime() : 0;
+
+    if (!currentRun || runTime >= currentTime) {
+      latestRunsByCampaign.set(run.campaign_id, run);
+    }
+  });
+
+  const selectedRunMatchesCampaign = selectedRun?.campaign_id === selectedCampaignId;
+  const visibleSummaryRun = selectedRunMatchesCampaign ? selectedRun : latestRunsByCampaign.get(selectedCampaignId);
+  const dashboardSummary = buildDashboardSummary(visibleSummaryRun);
+  const executionChartStyle = buildDonutStyle(
+    [
+      { value: dashboardSummary.successCount, color: "#16a34a" },
+      { value: dashboardSummary.simulatedCount, color: "#2563eb" },
+      { value: dashboardSummary.failedCount, color: "#dc2626" },
+    ],
+    Boolean(visibleSummaryRun)
+  );
+  const detectionChartStyle = buildDonutStyle(
+    [
+      { value: dashboardSummary.detectedCount, color: "#16a34a" },
+      { value: dashboardSummary.missedCount, color: "#dc2626" },
+      { value: dashboardSummary.notCheckedCount, color: "#f59e0b" },
+    ],
+    Boolean(visibleSummaryRun) && dashboardSummary.successfulAttackCount > 0
+  );
+  const campaignSummaryCards = campaigns.map((campaign) => {
+    const latestRun = latestRunsByCampaign.get(campaign.campaign_id);
+    const isSelectedCampaign = campaign.campaign_id === selectedCampaignId;
+    const summaryRun = isSelectedCampaign ? visibleSummaryRun : latestRun;
+    const summary = buildDashboardSummary(summaryRun);
+    const flowCount = isSelectedCampaign ? (campaignDetail?.flow || []).length : 0;
+    const techniqueCount = flowCount || summaryRun?.steps?.length || 0;
+    const defenseRate = summary.successfulAttackCount > 0
+      ? Math.round((summary.detectedCount / summary.successfulAttackCount) * 100)
+      : 0;
+
+    return {
+      campaign,
+      latestRun: summaryRun,
+      summary,
+      techniqueCount,
+      defenseRate,
+      isSelectedCampaign,
+    };
+  });
+  const attackPathSteps = selectedRunMatchesCampaign ? selectedRun.steps : campaignDetail?.flow || [];
   const latestJob = jobs[0] || null;
   const recentJobs = jobs.slice(0, 4);
   const selectedAgent = agents.find((agent) => agent.agent_id === selectedAgentId);
@@ -484,7 +556,15 @@ export default function App() {
     runPage * RUNS_PER_PAGE,
     runPage * RUNS_PER_PAGE + RUNS_PER_PAGE
   );
-  const selectedRunSteps = selectedRun?.steps || [];
+  const visibleSummarySteps = visibleSummaryRun?.steps || [];
+  const visibleExecutedStepCount = visibleSummarySteps.filter((step) => ["success", "simulated"].includes(step.status)).length;
+  const visibleExecutionRate = dashboardSummary.totalSteps > 0
+    ? Math.round((visibleExecutedStepCount / dashboardSummary.totalSteps) * 100)
+    : null;
+  const visibleDetectionRate = dashboardSummary.successfulAttackCount > 0
+    ? Math.round((dashboardSummary.detectedCount / dashboardSummary.successfulAttackCount) * 100)
+    : null;
+  const selectedRunSteps = selectedRunMatchesCampaign ? selectedRun.steps : [];
   const selectedRunAttackSteps = selectedRunSteps.filter((step) => step.phase === "attack");
   const campaignAttackCount = (campaignDetail?.flow || []).filter((step) => step.phase === "attack").length;
   const campaignNormalCount = (campaignDetail?.flow || []).filter((step) => step.phase === "normal").length;
@@ -494,8 +574,8 @@ export default function App() {
   const nextActionText = selectedAgent
     ? "실행할 Technique을 선택하거나 전체 캠페인을 실행한 뒤, 탐지 검증과 증거 로그를 확인하세요."
     : "Job을 실행하기 전에 이 캠페인에 맞는 BasAgent를 먼저 실행해야 합니다.";
-  const scoreExplanation = selectedRun
-    ? `100점에서 위험 패널티 ${dashboardSummary.penalty}점을 차감했습니다. 미탐지는 가장 큰 패널티로 계산하고, ELK 연동 전 항목은 쿼리 준비 상태로 표시합니다.`
+  const scoreExplanation = visibleSummaryRun
+    ? `100점에서 위험 패널티 ${dashboardSummary.penalty}점을 차감했습니다. 미탐지 25점, 실행 실패 15점, 미확인 8점 기준입니다.`
     : "아직 점수가 없습니다. 캠페인 Job을 실행하면 실행 결과와 탐지 커버리지를 기준으로 점수를 계산합니다.";
 
   async function runCampaign() {
@@ -682,8 +762,8 @@ export default function App() {
             <span>/100</span>
           </div>
           <p>
-            {selectedRun
-              ? `${selectedRun.campaign_id} 선택된 최근 실행 결과`
+            {visibleSummaryRun
+              ? `${visibleSummaryRun.campaign_id} 기준 검증 결과`
               : "Job을 실행하면 검증 점수를 계산합니다."}
           </p>
           <div className="score-explain">
@@ -693,6 +773,144 @@ export default function App() {
       </section>
 
       {notice && <div className="notice notice-wide">{notice}</div>}
+
+      <section className="campaign-health-grid">
+        <div className="panel campaign-health-panel">
+          <div className="panel-title-row">
+            <div>
+              <div className="section-title">캠페인별 점검 현황</div>
+              <h3>보안 검증 요약</h3>
+            </div>
+            <span className="scope-pill">{campaignSummaryCards.length} campaigns</span>
+          </div>
+
+          <div className="campaign-summary-list">
+            {campaignSummaryCards.map((card) => {
+              const hasRun = Boolean(card.latestRun);
+              const missed = card.summary.missedCount;
+              const detected = card.summary.detectedCount;
+              const checkedAttackCount = card.summary.successfulAttackCount;
+              const detectedWidth = checkedAttackCount > 0
+                ? (card.summary.detectedCount / checkedAttackCount) * 100
+                : 0;
+              const missedWidth = checkedAttackCount > 0
+                ? (card.summary.missedCount / checkedAttackCount) * 100
+                : 0;
+              const notCheckedWidth = checkedAttackCount > 0
+                ? (card.summary.notCheckedCount / checkedAttackCount) * 100
+                : 0;
+              const cardLabel = !hasRun
+                ? "미점검"
+                : missed > 0
+                  ? "탐지 갭"
+                  : detected > 0
+                    ? "탐지 양호"
+                    : "탐지 미확인";
+
+              return (
+                <button
+                  key={card.campaign.campaign_id}
+                  type="button"
+                  className={[
+                    "campaign-summary-card",
+                    card.isSelectedCampaign ? "selected-campaign-summary" : "",
+                    missed > 0 ? "has-gap" : "",
+                  ].join(" ")}
+                  onClick={() => loadCampaignDetail(card.campaign.campaign_id)}
+                >
+                  <span className="campaign-summary-head">
+                    <strong>{card.campaign.campaign_id}</strong>
+                    <span className={`status-tag ${missed > 0 ? "missed" : detected > 0 ? "detected" : "not_checked"}`}>
+                      {cardLabel}
+                    </span>
+                  </span>
+                  <small>{card.campaign.campaign_name}</small>
+                  <span className="campaign-summary-metrics">
+                    <span>
+                      <em>테크닉</em>
+                      <strong>{card.techniqueCount || "--"}</strong>
+                    </span>
+                    <span>
+                      <em>탐지율</em>
+                      <strong>{hasRun && checkedAttackCount > 0 ? `${card.defenseRate}%` : "--"}</strong>
+                    </span>
+                    <span>
+                      <em>탐지 갭</em>
+                      <strong>{card.summary.missedCount}</strong>
+                    </span>
+                    <span>
+                      <em>미확인</em>
+                      <strong>{card.summary.notCheckedCount}</strong>
+                    </span>
+                  </span>
+                  <span className="campaign-card-footer">
+                    <span>
+                      점수 <strong>{card.summary.score ?? "--"}</strong>
+                    </span>
+                    <span>
+                      검증 대상 <strong>{checkedAttackCount || "--"}</strong>
+                    </span>
+                  </span>
+                  <span
+                    className="detection-stack"
+                    aria-label={`탐지 ${card.summary.detectedCount}, 탐지 갭 ${card.summary.missedCount}, 미확인 ${card.summary.notCheckedCount}`}
+                  >
+                    <span className="detected-segment" style={{ width: `${detectedWidth}%` }} />
+                    <span className="missed-segment" style={{ width: `${missedWidth}%` }} />
+                    <span className="unknown-segment" style={{ width: `${notCheckedWidth}%` }} />
+                  </span>
+                  <span className="stack-caption">초록 탐지 / 빨강 갭 / 주황 미확인</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="panel execution-chart-panel">
+          <div className="section-title">실행 결과 그래프</div>
+          <h3>{visibleSummaryRun ? visibleSummaryRun.campaign_id : selectedCampaignId}</h3>
+          <p className="chart-helper">
+            선택한 캠페인에서 실제로 실행된 단계 비율입니다.
+          </p>
+          <div className="chart-content">
+            <div className="donut-chart" style={executionChartStyle}>
+              <div>
+                <strong>{visibleExecutionRate === null ? "--" : `${visibleExecutionRate}%`}</strong>
+                <span>실행률</span>
+              </div>
+            </div>
+
+            <div className="chart-legend">
+              <span><i className="legend-total" />전체 단계 <strong>{dashboardSummary.totalSteps || "--"}</strong></span>
+              <span><i className="legend-success" />성공 <strong>{dashboardSummary.successCount}</strong></span>
+              <span><i className="legend-simulated" />시뮬레이션 <strong>{dashboardSummary.simulatedCount}</strong></span>
+              <span><i className="legend-failed" />실패 <strong>{dashboardSummary.failedCount}</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel detection-chart-panel">
+          <div className="section-title">탐지 검증 그래프</div>
+          <h3>{dashboardSummary.successfulAttackCount}개 공격 검증</h3>
+          <p className="chart-helper">
+            실행된 공격 중 ELK에서 잡힌 것과 놓친 것을 나눠 보여줍니다.
+          </p>
+          <div className="chart-content">
+            <div className="donut-chart" style={detectionChartStyle}>
+              <div>
+                <strong>{visibleDetectionRate === null ? "--" : `${visibleDetectionRate}%`}</strong>
+                <span>탐지율</span>
+              </div>
+            </div>
+
+            <div className="chart-legend">
+              <span><i className="legend-detected" />탐지됨 <strong>{dashboardSummary.detectedCount}</strong></span>
+              <span><i className="legend-missed" />미탐지 <strong>{dashboardSummary.missedCount}</strong></span>
+              <span><i className="legend-ready" />미확인 <strong>{dashboardSummary.notCheckedCount}</strong></span>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section className="operator-grid">
         <section className="panel technique-panel">

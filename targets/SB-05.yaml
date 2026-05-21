@@ -7,7 +7,7 @@ environment_type: k3s
 primary_namespace: prod-platform
 
 elk:
-  enabled: false
+  enabled: true
   index: logs-*
   datasets:
     kubernetes_audit: sb05.kubernetes_audit

@@ -12,15 +12,23 @@ elk:
   enabled: true
   url: http://localhost:9200
   index: filebeat-*,sb01-awsl-001-vpc-flowlogs
-  lookback: now-2h
+  lookback: now-24h
   sample_size: 3
   timeout_seconds: 10
 
 log_queries:
+  jenkins_host_recon: 'sb01_server:jenkins AND sb01_log_type:jenkins_access'
+  jenkins_valid_account: 'sb01_server:jenkins AND sb01_log_type:jenkins_access'
+  jenkins_cli_file_read: 'sb01_server:jenkins AND sb01_log_type:jenkins_access'
+  jenkins_repository_read: 'sb01_server:jenkins AND sb01_log_type:jenkins_build'
+  jenkins_credentials_file_access: 'sb01_server:jenkins AND sb01_log_type:jenkins_build'
+  jenkins_private_key_discovery: 'sb01_server:jenkins AND sb01_log_type:jenkins_build'
   jenkins_to_app_ssh: 'host.name:"ip-172-31-4-70" AND log.file.path:"/var/log/auth.log" AND message:"Accepted publickey for deploy" AND message:"172.31.13.239"'
   app_directory_discovery: 'event.module:auditd AND process.executable:"/usr/bin/ls" AND auditd.log.key:*sb01_app_path_read*'
+  app_local_data_staging: 'event.module:auditd AND auditd.log.name:"/opt/spacebar-booking"'
   jenkins_access_log: 'sb01_server:jenkins AND sb01_log_type:jenkins_access'
   jenkins_cli_access: 'sb01_server:jenkins AND sb01_log_type:jenkins_access AND message:"POST /cli"'
   jenkins_build_log: 'sb01_server:jenkins AND sb01_log_type:jenkins_build'
   db_postgresql_access: 'sb01_server:db AND sb01_log_type:postgresql AND message:"database=spacebar_booking"'
   aws_vpc_jenkins_to_app_ssh: 'source.ip:"172.31.13.239" AND destination.ip:"172.31.4.70" AND destination.port:22 AND event.action:ACCEPT'
+  aws_vpc_app_outbound_443: 'source.ip:"172.31.4.70" AND destination.port:443 AND event.action:ACCEPT'

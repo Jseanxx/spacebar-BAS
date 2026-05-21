@@ -30,8 +30,15 @@ def _compact_event(source):
         "event.dataset",
         "process.executable",
         "process.args",
+        "source.ip",
+        "source.port",
+        "destination.ip",
+        "destination.port",
+        "network.bytes",
+        "network.transport",
         "auditd.log.record_type",
         "auditd.log.key",
+        "auditd.log.name",
         "auditd.log.sequence",
     ]
 

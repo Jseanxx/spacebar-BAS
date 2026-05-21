@@ -523,7 +523,8 @@ h2 {
 }
 
 .secondary-button,
-.ghost-button {
+.ghost-button,
+.danger-button {
   border-radius: 8px;
   padding: 10px 13px;
   font-size: 13px;
@@ -549,10 +550,26 @@ h2 {
   color: #64748b;
 }
 
+.danger-button {
+  border: 1px solid #fecaca;
+  background: #fff1f2;
+  color: #be123c;
+}
+
 .secondary-button:hover,
 .ghost-button:hover {
   border-color: #ea580c;
   background: #fff7ed;
+}
+
+.danger-button:hover {
+  border-color: #f43f5e;
+  background: #ffe4e6;
+}
+
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .notice {

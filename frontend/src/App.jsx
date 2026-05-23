@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import "./styles.css";
 
 const API_BASE = "http://127.0.0.1:8000";
-const JOB_POLL_INTERVAL_MS = 1500;
+const JOB_POLL_INTERVAL_MS = 800;
 const JOB_POLL_ATTEMPTS = 40;
 const RUNS_PER_PAGE = 5;
 const TECHNIQUE_NAMES = {
@@ -36,6 +36,8 @@ export default function App() {
   const [selectedOrders, setSelectedOrders] = useState([]);
   const [techniqueLibrary, setTechniqueLibrary] = useState([]);
   const [selectedTechniqueIds, setSelectedTechniqueIds] = useState([]);
+  const [techniqueInputs, setTechniqueInputs] = useState({});
+  const [expandedTechniqueInputIds, setExpandedTechniqueInputIds] = useState([]);
   const [techniqueQuery, setTechniqueQuery] = useState("");
   const [techniquePhaseFilter, setTechniquePhaseFilter] = useState("all");
   const [techniqueSourceFilter, setTechniqueSourceFilter] = useState("all");
@@ -93,10 +95,14 @@ export default function App() {
   async function pollJobUntilFinished(jobId) {
     for (let attempt = 0; attempt < JOB_POLL_ATTEMPTS; attempt += 1) {
       const job = await fetchJson(`/jobs/${jobId}`);
-      await refreshDashboardData();
+      setJobs((currentJobs) => {
+        const withoutCurrentJob = currentJobs.filter((item) => item.job_id !== job.job_id);
+        return [job, ...withoutCurrentJob];
+      });
 
       if (job.status === "completed") {
         setNotice(`Job completed: ${jobId}`);
+        setIsRunning(false);
 
         if (job.execution_id) {
           const run = await fetchJson(`/runs/${job.execution_id}`);
@@ -107,8 +113,7 @@ export default function App() {
           });
         }
 
-        setSelectedOrders([]);
-        setSelectedTechniqueIds([]);
+        await refreshDashboardData();
         return job;
       }
 
@@ -256,14 +261,95 @@ export default function App() {
     };
   }
 
+  function getTechniqueInputDefinitions(step) {
+    return Array.isArray(step.inputs) ? step.inputs : [];
+  }
+
+  function getNestedValue(data, path) {
+    if (!path) {
+      return undefined;
+    }
+
+    return String(path).split(".").reduce((current, key) => {
+      if (!current || typeof current !== "object") {
+        return undefined;
+      }
+
+      return current[key];
+    }, data);
+  }
+
+  function getDefaultTechniqueInputs(step) {
+    return getTechniqueInputDefinitions(step).reduce((values, input) => {
+      if (!input.name) {
+        return values;
+      }
+
+      const params = step.params || {};
+      const targetValue = getNestedValue(targetDetail, input.source);
+      const defaultValue = targetValue ?? input.default ?? params[input.name] ?? "";
+      values[input.name] = String(defaultValue);
+      return values;
+    }, {});
+  }
+
+  function initializeTechniqueInputs(steps) {
+    const nextInputs = {};
+
+    steps.forEach((step) => {
+      const selectionId = getTechniqueSelectionId(step);
+      nextInputs[selectionId] = {};
+    });
+
+    setTechniqueInputs(nextInputs);
+  }
+
+  function updateTechniqueInput(selectionId, name, value) {
+    setTechniqueInputs((currentInputs) => ({
+      ...currentInputs,
+      [selectionId]: {
+        ...(currentInputs[selectionId] || {}),
+        [name]: value,
+      },
+    }));
+  }
+
+  function toggleTechniqueInputs(selectionId) {
+    setExpandedTechniqueInputIds((currentIds) => (
+      currentIds.includes(selectionId)
+        ? currentIds.filter((id) => id !== selectionId)
+        : [...currentIds, selectionId]
+    ));
+  }
+
+  function getTechniqueInputSummary(step, selectionId) {
+    const definitions = getTechniqueInputDefinitions(step);
+    const values = techniqueInputs[selectionId] || getDefaultTechniqueInputs(step);
+
+    return definitions
+      .slice(0, 2)
+      .map((input) => `${input.label || input.name} ${values[input.name] ?? ""}`)
+      .join(" · ");
+  }
+
   function toggleTechnique(step) {
     const selectionId = getTechniqueSelectionId(step);
 
     setSelectedTechniqueIds((currentIds) => {
       if (currentIds.includes(selectionId)) {
+        setTechniqueInputs((currentInputs) => {
+          const nextInputs = { ...currentInputs };
+          delete nextInputs[selectionId];
+          return nextInputs;
+        });
+        setExpandedTechniqueInputIds((currentIds) => currentIds.filter((id) => id !== selectionId));
         return currentIds.filter((id) => id !== selectionId);
       }
 
+      setTechniqueInputs((currentInputs) => ({
+        ...currentInputs,
+        [selectionId]: currentInputs[selectionId] || {},
+      }));
       return [...currentIds, selectionId];
     });
 
@@ -272,6 +358,12 @@ export default function App() {
 
   function removeQueuedTechnique(selectionId) {
     setSelectedTechniqueIds((currentIds) => currentIds.filter((id) => id !== selectionId));
+    setTechniqueInputs((currentInputs) => {
+      const nextInputs = { ...currentInputs };
+      delete nextInputs[selectionId];
+      return nextInputs;
+    });
+    setExpandedTechniqueInputIds((currentIds) => currentIds.filter((id) => id !== selectionId));
   }
 
   function moveQueuedTechnique(selectionId, direction) {
@@ -290,23 +382,28 @@ export default function App() {
   }
 
   function loadCampaignPreset() {
-    const presetIds = (campaignDetail?.flow || []).map((step) => `${selectedCampaignId}:${step.order}`);
+    const presetSteps = campaignDetail?.flow || [];
+    const presetIds = presetSteps.map((step) => `${selectedCampaignId}:${step.order}`);
     setSelectedTechniqueIds(presetIds);
+    initializeTechniqueInputs(presetSteps);
     setNotice(`${selectedCampaignId} 기본 시나리오를 실행 큐에 담았습니다.`);
   }
 
   function loadCampaignAttacksOnly() {
-    const attackIds = (campaignDetail?.flow || [])
-      .filter((step) => step.phase === "attack")
-      .map((step) => `${selectedCampaignId}:${step.order}`);
+    const attackSteps = (campaignDetail?.flow || [])
+      .filter((step) => step.phase === "attack");
+    const attackIds = attackSteps.map((step) => `${selectedCampaignId}:${step.order}`);
 
     setSelectedTechniqueIds(attackIds);
+    initializeTechniqueInputs(attackSteps);
     setNotice(`${selectedCampaignId} 공격 테크닉만 실행 큐에 담았습니다.`);
   }
 
   function clearOperationQueue() {
     setSelectedOrders([]);
     setSelectedTechniqueIds([]);
+    setTechniqueInputs({});
+    setExpandedTechniqueInputIds([]);
     setNotice("");
   }
 
@@ -554,6 +651,7 @@ export default function App() {
     const artifacts = Array.isArray(result.artifacts) ? result.artifacts : [];
     const secrets = Array.isArray(result.secrets) ? result.secrets : [];
     const sampleEvents = Array.isArray(elkCheck.sample_events) ? elkCheck.sample_events : [];
+    const inputEntries = Object.entries(step.inputs_used || {});
 
     return (
       <div className="evidence-block">
@@ -571,6 +669,20 @@ export default function App() {
             <strong>{result.evidence_key || "없음"}</strong>
           </div>
         </div>
+
+        {inputEntries.length > 0 && (
+          <div className="evidence-inputs">
+            <div className="evidence-title">Input values</div>
+            <div className="evidence-input-grid">
+              {inputEntries.map(([name, value]) => (
+                <span key={`${step.order}-${name}`}>
+                  <em>{name}</em>
+                  <strong>{String(value)}</strong>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {commands.length > 0 && (
           <div className="command-list">
@@ -794,13 +906,14 @@ export default function App() {
             selected_steps: selectedOperationSteps.map((step) => ({
               campaign_id: getTechniqueSourceId(step),
               order: step.order,
+              inputs: techniqueInputs[getTechniqueSelectionId(step)] || {},
             })),
             include_normal: false
         })
         });
 
         setNotice(`Job queued: ${data.job.job_id}`);
-        await refreshDashboardData();
+        setJobs((currentJobs) => [data.job, ...currentJobs]);
         await pollJobUntilFinished(data.job.job_id);
     } catch (err) {
         setError(err.message);
@@ -1146,7 +1259,6 @@ export default function App() {
               const sourceId = getTechniqueSourceId(step);
               const readiness = getOperationReadiness(step);
               const compatibility = readiness.compatibility;
-
               return (
                 <button
                   key={selectionId}
@@ -1216,6 +1328,10 @@ export default function App() {
               const sourceId = getTechniqueSourceId(step);
               const readiness = getOperationReadiness(step);
               const compatibility = readiness.compatibility;
+              const inputDefinitions = getTechniqueInputDefinitions(step);
+              const hasInputs = inputDefinitions.length > 0;
+              const isInputExpanded = expandedTechniqueInputIds.includes(selectionId);
+              const inputSummary = getTechniqueInputSummary(step, selectionId);
 
               return (
                 <div key={selectionId} className={`queue-item ${step.phase} readiness-${readiness.status}`}>
@@ -1225,6 +1341,49 @@ export default function App() {
                     <small>{sourceId} · 실행 target {selectedCampaignId} · {getTechniqueDisplayName(step)}</small>
                     {compatibility.missing.length > 0 && (
                       <small className="compatibility-note">현재 환경에 없는 구성: {compatibility.missing.join(", ")}</small>
+                    )}
+                    {hasInputs && (
+                      <div className="queue-input-summary">
+                        <span>자동 설정</span>
+                        <strong>{inputSummary}</strong>
+                        <button
+                          type="button"
+                          className="inline-tune-button"
+                          onClick={() => toggleTechniqueInputs(selectionId)}
+                        >
+                          {isInputExpanded ? "닫기" : "조정"}
+                        </button>
+                      </div>
+                    )}
+                    {hasInputs && isInputExpanded && (
+                      <div className="queue-input-grid">
+                        {inputDefinitions.map((input) => {
+                          const inputValue = techniqueInputs[selectionId]?.[input.name] ?? String(input.default ?? step.params?.[input.name] ?? "");
+
+                          return (
+                            <label key={`${selectionId}-${input.name}`} className="queue-input-field">
+                              <span>{input.label || input.name}</span>
+                              {Array.isArray(input.options) ? (
+                                <select
+                                  value={inputValue}
+                                  onChange={(event) => updateTechniqueInput(selectionId, input.name, event.target.value)}
+                                >
+                                  {input.options.map((option) => (
+                                    <option key={option} value={option}>{option}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  type={input.type === "number" || input.type === "integer" ? "number" : "text"}
+                                  value={inputValue}
+                                  placeholder={input.placeholder || ""}
+                                  onChange={(event) => updateTechniqueInput(selectionId, input.name, event.target.value)}
+                                />
+                              )}
+                            </label>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
                   <div className="queue-actions">

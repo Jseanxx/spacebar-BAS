@@ -5,6 +5,13 @@ name: ClusterDrain k3s Environment
 description: k3s 기반 Kubernetes 클러스터와 공격자 EC2, AWS S3 유출 경로를 포함한 SB-05 대상 환경이다.
 environment_type: k3s
 primary_namespace: prod-platform
+operation_defaults:
+  pod_selector: orders-api
+  collector_pod: sb05-collector
+  service_account: sb05-reader
+  staging_dir: /tmp/sb05_stage
+  archive_name: sb05_archive.zip
+  destination: private_s3_bucket
 capabilities:
   - kubernetes
   - kubectl

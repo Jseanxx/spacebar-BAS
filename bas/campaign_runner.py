@@ -116,7 +116,9 @@ class CampaignRunner:
         invalid_steps = []
 
         for selection in selected_step_refs:
-            selection_id = f"{selection.get('campaign_id')}:{selection.get('order')}"
+            campaign_id = self._selection_value(selection, "campaign_id")
+            order = self._selection_value(selection, "order")
+            selection_id = f"{campaign_id}:{order}"
             step = library.get(selection_id)
 
             if not step:
@@ -126,12 +128,19 @@ class CampaignRunner:
             step_copy = dict(step)
             step_copy["source_target_id"] = step.get("target")
             step_copy["target"] = self.campaign_id
+            step_copy["selected_inputs"] = self._selection_value(selection, "inputs", {}) or {}
             resolved.append(step_copy)
 
         if invalid_steps:
             raise ValueError(f"Invalid selected_steps: {', '.join(invalid_steps)}")
 
         return resolved
+
+    def _selection_value(self, selection, key, default=None):
+        if isinstance(selection, dict):
+            return selection.get(key, default)
+
+        return getattr(selection, key, default)
 
     def _select_steps(self, steps):
         """
@@ -243,6 +252,7 @@ class CampaignRunner:
         target 로딩, module import, module.run(), ELK 확인, 결과 정리를 처리합니다.
         """
         step_started_at = now_kst()
+        input_values = {}
 
         try:
             target = load_target(step["target"])
@@ -250,6 +260,8 @@ class CampaignRunner:
 
             # 중요한 줄: 각 공격/정상 행위 모듈의 run()이 실제로 호출되는 지점입니다.
             module_params = dict(step.get("params", {}))
+            input_values = self._resolve_input_values(step, target)
+            module_params.update(input_values)
             module_params["_execution_mode"] = self.execution_mode
 
             module_result = module.run(
@@ -288,6 +300,7 @@ class CampaignRunner:
             "source_campaign_id": step.get("source_campaign_id", self.campaign_id),
             "source_campaign_name": step.get("source_campaign_name"),
             "selection_id": step.get("selection_id"),
+            "inputs_used": input_values,
             "started_at": step_started_at,
             "finished_at": now_kst(),
             "status": status,
@@ -299,3 +312,60 @@ class CampaignRunner:
     def _is_simulated_result(self, module_result):
         message = str(module_result.get("message", "")).lower()
         return "simulated" in message or module_result.get("simulated") is True
+
+    def _resolve_input_values(self, step, target):
+        input_definitions = step.get("inputs") or []
+        selected_inputs = step.get("selected_inputs") or {}
+        params = step.get("params") or {}
+        values = {}
+
+        for definition in input_definitions:
+            name = definition.get("name")
+            if not name:
+                continue
+
+            fallback = self._resolve_input_fallback(definition, params, target)
+            raw_value = selected_inputs.get(name, fallback)
+
+            if raw_value in (None, ""):
+                if fallback in (None, ""):
+                    continue
+                raw_value = fallback
+
+            values[name] = self._coerce_input_value(raw_value, definition.get("type"))
+
+        return values
+
+    def _resolve_input_fallback(self, definition, params, target):
+        source_path = definition.get("source")
+
+        if source_path:
+            source_value = self._get_nested_value(target, source_path)
+            if source_value not in (None, ""):
+                return source_value
+
+        return definition.get("default", params.get(definition.get("name")))
+
+    def _get_nested_value(self, data, path):
+        current = data
+
+        for key in str(path).split("."):
+            if not isinstance(current, dict):
+                return None
+            current = current.get(key)
+
+        return current
+
+    def _coerce_input_value(self, value, input_type):
+        if input_type in ("number", "integer"):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return value
+
+        if input_type == "boolean":
+            if isinstance(value, bool):
+                return value
+            return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+        return value

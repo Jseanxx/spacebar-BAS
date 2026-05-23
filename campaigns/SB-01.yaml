@@ -13,6 +13,14 @@ flow:
       - ssh
       - app_host
       - deploy_key
+    inputs:
+      - name: username
+        label: SSH user
+        source: app.ssh_user
+        default: deploy
+      - name: command
+        label: Remote command
+        default: hostname
     params:
       behavior: jenkins_to_app_ssh
       username: deploy
@@ -30,6 +38,19 @@ flow:
       - linux_filesystem
     depends_on_orders:
       - 1
+    inputs:
+      - name: username
+        label: SSH user
+        source: app.ssh_user
+        default: deploy
+      - name: base_path
+        label: Base path
+        source: app.base_path
+        default: /opt/spacebar-booking
+      - name: max_depth
+        label: Max depth
+        type: number
+        default: 2
     params:
       behavior: app_directory_discovery
       username: deploy

@@ -44,6 +44,7 @@ app.add_middleware(
 class StepSelection(BaseModel):
     campaign_id: str
     order: int
+    inputs: dict[str, object] | None = None
 
 
 class RunRequest(BaseModel):
@@ -205,7 +206,9 @@ def resolve_selected_steps(selected_steps):
             })
             continue
 
-        resolved.append(dict(step))
+        step_copy = dict(step)
+        step_copy["selected_inputs"] = selection.inputs or {}
+        resolved.append(step_copy)
 
     if invalid_steps:
         raise HTTPException(
@@ -319,6 +322,7 @@ def build_execution_plan(campaign_id, selected_orders=None, selected_steps=None,
                 {
                     "campaign_id": step.get("source_campaign_id"),
                     "order": step.get("order"),
+                    "inputs": step.get("selected_inputs", {}),
                 }
                 for step in custom_steps
             ],
@@ -428,6 +432,7 @@ def dump_step_selection(selection):
     return {
         "campaign_id": selection.campaign_id,
         "order": selection.order,
+        "inputs": selection.inputs or {},
     }
 
 

@@ -693,7 +693,9 @@ export default function App() {
     ],
     Boolean(visibleSummaryRun) && dashboardSummary.successfulAttackCount > 0
   );
-  const campaignSummaryCards = campaigns.map((campaign) => {
+  const campaignSummaryCards = campaigns
+  .filter((campaign) => campaign.campaign_id === selectedCampaignId)
+  .map((campaign) => {
     const latestRun = latestRunsByCampaign.get(campaign.campaign_id);
     const isSelectedCampaign = campaign.campaign_id === selectedCampaignId;
     const summaryRun = latestRun;
@@ -942,7 +944,7 @@ export default function App() {
               <div className="section-title">캠페인별 점검 현황</div>
               <h3>보안 검증 요약</h3>
             </div>
-            <span className="scope-pill">{campaignSummaryCards.length} campaigns</span>
+            <span className="scope-pill">{selectedCampaignId || "--"}</span>
           </div>
 
           <div className="campaign-summary-list">

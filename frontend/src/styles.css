@@ -1579,7 +1579,7 @@ code {
 
 .campaign-health-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.55fr) minmax(260px, 0.55fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
   align-items: stretch;
   margin-bottom: 18px;
@@ -1593,7 +1593,7 @@ code {
 
 .campaign-summary-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -1601,10 +1601,10 @@ code {
   width: 100%;
   min-width: 0;
   display: grid;
-  gap: 10px;
-  padding: 13px;
+  gap: 9px;
+  padding: 14px;
   border: 1px solid #dde6f0;
-  border-left: 4px solid #94a3b8;
+  border-left: 3px solid #94a3b8;
   border-radius: 8px;
   background: #fbfdff;
   text-align: left;
@@ -1642,7 +1642,7 @@ code {
 
 .campaign-summary-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1670,7 +1670,7 @@ code {
 }
 
 .campaign-card-footer {
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -1710,6 +1710,7 @@ code {
 }
 
 .stack-caption {
+  display: none;
   color: #66758a;
   font-size: 11px;
   font-weight: 800;

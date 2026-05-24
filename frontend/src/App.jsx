@@ -3,6 +3,7 @@
 // 실행 결과 목록 표시, 실행 결과 상세 표시 
 
 import { useEffect, useState } from "react";
+import spacebarLogo from "./assets/spacebar-logo.png";
 import "./styles.css";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -41,7 +42,7 @@ export default function App() {
   const [expandedTechniqueInputIds, setExpandedTechniqueInputIds] = useState([]);
   const [techniqueQuery, setTechniqueQuery] = useState("");
   const [techniquePhaseFilter, setTechniquePhaseFilter] = useState("all");
-  const [techniqueSourceFilter, setTechniqueSourceFilter] = useState("all");
+  const [techniqueSourceFilter, setTechniqueSourceFilter] = useState("SB-05");
   const [notice, setNotice] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
@@ -167,6 +168,9 @@ export default function App() {
       setAgents(loadedAgents);
       const campaignAgent = findAgentForCampaign(loadedAgents, campaignId);
       setSelectedAgentId(campaignAgent?.agent_id || "");
+      setTechniqueSourceFilter(campaignId);
+      setTechniquePhaseFilter("all");
+      setTechniqueQuery("");
     } catch (err) {
       setError(err.message);
     }
@@ -960,12 +964,23 @@ export default function App() {
   return (
     <main className="app-shell">
       <section className="topbar product-topbar">
-        <div>
-          <p className="eyebrow">Spacebar BAS</p>
-          <h1>캠페인 검증 콘솔</h1>
-          <p className="topbar-copy">
-            캠페인 Technique을 실행하고, 예상 로그가 수집됐는지 확인하며, 실행 증거를 한 화면에서 검토합니다.
-          </p>
+        <div className="brand-heading">
+          <button
+            type="button"
+            className="brand-home-button"
+            onClick={() => setActiveView("summary")}
+            aria-label="요약 페이지로 이동"
+            title="요약 페이지로 이동"
+          >
+            <img src={spacebarLogo} alt="Spacebar" />
+          </button>
+          <div>
+            <p className="eyebrow">Spacebar BAS</p>
+            <h1>Security Control Validation Console</h1>
+            <p className="topbar-copy">
+              캠페인 Technique을 실행하고, 예상 로그가 수집됐는지 확인하며, 실행 증거를 한 화면에서 검토합니다.
+            </p>
+          </div>
         </div>
 
         <div className="topbar-status">
@@ -1217,7 +1232,7 @@ export default function App() {
         <div>
           <span>Operation Builder</span>
           <h2>캠페인 컨텍스트와 테크닉을 조합</h2>
-          <p>캠페인은 실행 컨텍스트로 두고, 전체 테크닉 라이브러리에서 필요한 능력을 큐에 담아 검증합니다.</p>
+          <p>선택한 캠페인의 Technique을 기본으로 보여주고, 필요한 검증 항목을 큐에 담아 실행합니다.</p>
         </div>
         <button
           className="run-button"
@@ -1232,7 +1247,7 @@ export default function App() {
           <div className="panel-title-row">
             <div>
               <div className="section-title">Technique Library</div>
-              <h3>능력 선택</h3>
+              <h3>Technique Selection</h3>
             </div>
             <div className="selection-actions compact-actions">
               <button type="button" className="secondary-button" onClick={loadCampaignPreset}>
@@ -1257,8 +1272,9 @@ export default function App() {
             <select
               value={techniqueSourceFilter}
               onChange={(event) => setTechniqueSourceFilter(event.target.value)}
+              aria-label="Technique source campaign"
             >
-              <option value="all">전체 캠페인</option>
+              <option value="all">All campaigns</option>
               {librarySourceIds.map((sourceId) => (
                 <option key={sourceId} value={sourceId}>{sourceId}</option>
               ))}

@@ -1170,6 +1170,10 @@ code {
     align-items: stretch;
   }
 
+  .brand-heading {
+    align-items: flex-start;
+  }
+
   .run-button {
     width: 100%;
   }
@@ -1177,6 +1181,44 @@ code {
 
 .product-topbar {
   align-items: flex-start;
+}
+
+.brand-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.brand-home-button {
+  flex: 0 0 auto;
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #d7e1ee;
+  border-radius: 8px;
+  background: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 10px 22px rgba(20, 37, 63, 0.08);
+}
+
+.brand-home-button:hover {
+  border-color: #93c5fd;
+  background: #f8fbff;
+}
+
+.brand-home-button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.22);
+  outline-offset: 3px;
+}
+
+.brand-home-button img {
+  width: 42px;
+  height: 42px;
+  display: block;
+  object-fit: contain;
 }
 
 .topbar-copy {

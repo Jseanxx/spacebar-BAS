@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import "./styles.css";
 
 const API_BASE = "http://127.0.0.1:8000";
+const REPORT_MOCKUP_URL = "/mockups/sb-ad-report.html";
 const JOB_POLL_INTERVAL_MS = 800;
 const JOB_POLL_ATTEMPTS = 40;
 const RUNS_PER_PAGE = 5;
@@ -157,11 +158,14 @@ export default function App() {
       const data = await fetchJson(`/campaigns/${campaignId}`);
       const targetData = await fetchJson(`/targets/${campaignId}`);
       const compatibilityData = await fetchJson(`/campaigns/${campaignId}/technique-compatibility`);
+      const agentData = await fetchJson("/agents");
+      const loadedAgents = agentData.agents || [];
       setCampaignDetail(data);
       setTargetDetail(targetData);
       setTechniqueCompatibility(compatibilityData.compatibility || {});
       setSelectedCampaignId(campaignId);
-      const campaignAgent = findAgentForCampaign(agents, campaignId);
+      setAgents(loadedAgents);
+      const campaignAgent = findAgentForCampaign(loadedAgents, campaignId);
       setSelectedAgentId(campaignAgent?.agent_id || "");
     } catch (err) {
       setError(err.message);
@@ -939,6 +943,20 @@ export default function App() {
     loadCampaignDetail(selectedCampaignId);
   }, []);
 
+  useEffect(() => {
+    if (!notice) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setNotice("");
+    }, 3200);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [notice]);
+
   return (
     <main className="app-shell">
       <section className="topbar product-topbar">
@@ -958,6 +976,11 @@ export default function App() {
       </section>
 
       {error && <div className="alert">{error}</div>}
+      {notice && (
+        <div className="toast-region" aria-live="polite" aria-atomic="true">
+          <div className="notice-toast">{notice}</div>
+        </div>
+      )}
 
       <section className="workspace-frame">
         <div className="workspace-topnav">
@@ -1034,8 +1057,6 @@ export default function App() {
         </div>
 
         <section className="workspace-main">
-          {notice && <div className="notice notice-wide">{notice}</div>}
-
       {activeView === "summary" && (
       <>
       <section className="view-header">
@@ -1607,7 +1628,19 @@ export default function App() {
             <div className="section-title">증거</div>
             <h3>{selectedRun ? selectedRun.execution_id : "실행 결과를 선택하거나 새로 실행하세요"}</h3>
           </div>
-          {selectedRun && <span className="scope-pill">{selectedRun.campaign_id}</span>}
+          {selectedRun && (
+            <div className="run-detail-actions">
+              <span className="scope-pill">{selectedRun.campaign_id}</span>
+              <a
+                className="report-link-button"
+                href={REPORT_MOCKUP_URL}
+                target="_blank"
+                rel="noreferrer"
+              >
+                HTML 보고서 보기
+              </a>
+            </div>
+          )}
         </div>
 
         {!selectedRun && <p className="empty">실행 상세에는 명령, 생성 아티팩트, 탐지 근거가 표시됩니다.</p>}

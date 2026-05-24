@@ -92,6 +92,20 @@ def resolve_query(target, evidence_key):
     return None, "missing"
 
 
+def resolve_alert_query(target, evidence_key):
+    queries = target.get("alert_queries", {})
+    configured_query = queries.get(evidence_key)
+
+    if configured_query:
+        return configured_query, "configured"
+
+    rule_prefix = target.get("elk", {}).get("alert_rule_prefix")
+    if rule_prefix and evidence_key:
+        return f'kibana.alert.rule.name:"{rule_prefix}*" AND kibana.alert.rule.tags:"{evidence_key}"', "generated"
+
+    return None, "missing"
+
+
 def normalize_query(query):
     if not query:
         return query
@@ -151,38 +165,27 @@ def format_sample_events(hits):
 
     for hit in hits:
         source = hit.get("_source", {})
+        winlog = source.get("winlog", {}).get("event_data", {})
         samples.append({
             "@timestamp": source.get("@timestamp"),
             "host": source.get("host", {}).get("name"),
             "agent": source.get("agent", {}).get("name"),
             "event": source.get("event", {}).get("action") or source.get("verb"),
+            "event_code": source.get("event", {}).get("code"),
+            "rule": source.get("kibana", {}).get("alert", {}).get("rule", {}).get("name"),
             "resource": source.get("objectRef", {}).get("resource"),
             "namespace": source.get("objectRef", {}).get("namespace"),
             "requestURI": source.get("requestURI"),
             "user": source.get("user", {}).get("username"),
+            "image": winlog.get("Image") or winlog.get("NewProcessName") or winlog.get("SourceImage"),
+            "command_line": winlog.get("CommandLine") or winlog.get("ProcessCommandLine"),
+            "target": winlog.get("TargetImage") or winlog.get("TargetFilename"),
         })
 
     return samples
 
 
-def check_elk(target, evidence_key):
-    elk_config = target.get("elk", {})
-
-    query, query_source = resolve_query(target, evidence_key)
-    index = elk_config.get("index", "logs-*")
-
-    if not elk_config.get("enabled", False):
-        return {
-            "checked": False,
-            "matched": None,
-            "event_count": None,
-            "index": index,
-            "query": query,
-            "query_source": query_source,
-            "sample_events": [],
-            "message": "ELK check is disabled. Query is ready, but no live Elasticsearch check was performed.",
-        }
-
+def run_live_check(elk_config, index, query, query_source):
     if not query:
         return {
             "checked": False,
@@ -192,7 +195,7 @@ def check_elk(target, evidence_key):
             "query": query,
             "query_source": query_source,
             "sample_events": [],
-            "message": f"No ELK query configured for evidence key: {evidence_key}",
+            "message": "No query configured.",
         }
 
     elk_url = os.environ.get("BAS_ELK_URL", DEFAULT_ELK_URL)
@@ -226,3 +229,79 @@ def check_elk(target, evidence_key):
             "sample_events": [],
             "message": f"Elasticsearch live check failed: {exc}",
         }
+
+
+def check_elk(target, evidence_key):
+    elk_config = target.get("elk", {})
+
+    query, query_source = resolve_query(target, evidence_key)
+    index = elk_config.get("index", "logs-*")
+    alert_query, alert_query_source = resolve_alert_query(target, evidence_key)
+    alert_index = elk_config.get("alert_index", ".alerts-security.alerts-default")
+
+    if not elk_config.get("enabled", False):
+        return {
+            "checked": False,
+            "matched": None,
+            "event_count": None,
+            "index": index,
+            "query": query,
+            "query_source": query_source,
+            "alert_check": {
+                "checked": False,
+                "matched": None,
+                "event_count": None,
+                "index": alert_index,
+                "query": alert_query,
+                "query_source": alert_query_source,
+                "sample_events": [],
+                "message": "ELK check is disabled.",
+            },
+            "sample_events": [],
+            "message": "ELK check is disabled. Query is ready, but no live Elasticsearch check was performed.",
+        }
+
+    if not query:
+        return {
+            "checked": False,
+            "matched": None,
+            "event_count": None,
+            "index": index,
+            "query": query,
+            "query_source": query_source,
+            "alert_check": {
+                "checked": False,
+                "matched": None,
+                "event_count": None,
+                "index": alert_index,
+                "query": alert_query,
+                "query_source": alert_query_source,
+                "sample_events": [],
+                "message": "Source query is missing, alert query was not executed.",
+            },
+            "sample_events": [],
+            "message": f"No ELK query configured for evidence key: {evidence_key}",
+        }
+
+    source_check = run_live_check(elk_config, index, query, query_source)
+
+    if alert_query:
+        source_check["alert_check"] = run_live_check(
+            elk_config,
+            alert_index,
+            alert_query,
+            alert_query_source,
+        )
+    else:
+        source_check["alert_check"] = {
+            "checked": False,
+            "matched": None,
+            "event_count": None,
+            "index": alert_index,
+            "query": alert_query,
+            "query_source": alert_query_source,
+            "sample_events": [],
+            "message": f"No alert query configured for evidence key: {evidence_key}",
+        }
+
+    return source_check

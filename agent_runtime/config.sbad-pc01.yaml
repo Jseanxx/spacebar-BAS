@@ -1,0 +1,7 @@
+agent_id: sbad-pc01-bas-agent
+campaign_agent_id: SB-AD
+display_name: SB-AD PC01 BasAgent
+collector_type: winlogbeat
+controller_url: http://127.0.0.1:8000
+interval_seconds: 2
+execution_mode: simulation

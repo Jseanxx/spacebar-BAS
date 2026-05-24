@@ -1,7 +1,15 @@
 agent_id: sbad-pc01-bas-agent
 campaign_agent_id: SB-AD
+agent_role: pc01
+asset_id: pc01
+segment_id: user-subnet
 display_name: SB-AD PC01 BasAgent
+hostname: PC01.mycompany.local
+platform: windows
 collector_type: winlogbeat
 controller_url: http://127.0.0.1:8000
 interval_seconds: 2
 execution_mode: simulation
+safety_mode: approval_required
+capabilities: windows,cmd,powershell,winrm,network,active_directory,sysmon,windows_security
+controls: sysmon,windows_security_log,powershell_logging,winlogbeat,kibana_rules

@@ -18,15 +18,15 @@ SB-AD 환경에 BAS 에이전트를 설치하고 실제 Kibana Security 탐지 �
 
 ## 2. 현재 확인된 환경
 
-AWS 인스턴스는 읽기 전용으로 다음 상태를 확인했다.
+AWS 인스턴스 정보는 다음 기준으로 정리한다. 인스턴스 실행 상태는 실습 시점에 따라 바뀌므로, Agent 설치 직전에 AWS에서 다시 확인해야 한다.
 
 | 자산 | OS 계열 | Private IP | Public IP | 상태 |
 | --- | --- | --- | --- | --- |
-| MyCompany-PC01 | Windows | `10.0.4.216` | `43.201.217.167` | running |
-| MyCompany-FS01 | Windows | `10.0.10.77` | `3.36.156.17` | running |
-| MyCompany-DC01 | Windows | `10.0.13.205` | `52.78.216.139` | running |
-| Attacker-Ubuntu | Linux | `10.0.1.194` | `54.180.55.229` | running |
-| elk-gh | Linux | `10.0.4.30` | `54.116.120.198` | running |
+| MyCompany-PC01 | Windows | `10.0.4.216` | `43.201.217.167` | 설치 전 확인 |
+| MyCompany-FS01 | Windows | `10.0.10.77` | `3.36.156.17` | 설치 전 확인 |
+| MyCompany-DC01 | Windows | `10.0.13.205` | `52.78.216.139` | 설치 전 확인 |
+| Attacker-Ubuntu | Linux | `10.0.1.194` | `54.180.55.229` | 설치 전 확인 |
+| elk-gh | Linux | `10.0.4.30` | `54.116.120.198` | 설치 전 확인 |
 
 도메인/호스트 기준값은 `targets/SB-AD.yaml`을 기준으로 한다.
 
@@ -1005,4 +1005,3 @@ operation step result에 저장
 - safety gate 없이는 13, 19가 실행되지 않는다.
 - 비밀번호/해시/토큰은 config, repo, output에 평문 저장되지 않는다.
 - 테스트 후 LSASS dump와 임시 artifact cleanup 절차가 있다.
-

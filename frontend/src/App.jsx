@@ -11,6 +11,7 @@ const REPORT_MOCKUP_URL = "/mockups/sb-ad-report.html";
 const JOB_POLL_INTERVAL_MS = 800;
 const JOB_POLL_ATTEMPTS = 40;
 const RUNS_PER_PAGE = 5;
+const VALID_VIEWS = new Set(["summary", "validation", "scope", "assets", "history", "evidence"]);
 const TECHNIQUE_NAMES = {
   "T1021.004": "Remote Services: SSH",
   "T1083": "File and Directory Discovery",
@@ -23,10 +24,19 @@ const TECHNIQUE_NAMES = {
   "T1613": "Container and Resource Discovery",
 };
 
+function getInitialView() {
+  if (typeof window === "undefined") {
+    return "summary";
+  }
+
+  const hashView = window.location.hash.replace("#", "");
+  return VALID_VIEWS.has(hashView) ? hashView : "summary";
+}
+
 export default function App() {
   const [health, setHealth] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
-  const [selectedCampaignId, setSelectedCampaignId] = useState("SB-05");
+  const [selectedCampaignId, setSelectedCampaignId] = useState("SB-AD");
   const [campaignDetail, setCampaignDetail] = useState(null);
   const [targetDetail, setTargetDetail] = useState(null);
   const [techniqueCompatibility, setTechniqueCompatibility] = useState({});
@@ -47,7 +57,7 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
   const [runPage, setRunPage] = useState(0);
-  const [activeView, setActiveView] = useState("summary");
+  const [activeView, setActiveView] = useState(getInitialView);
 
   async function fetchJson(path, options) {
     const response = await fetch(`${API_BASE}${path}`, options);
@@ -179,7 +189,7 @@ export default function App() {
   async function selectCampaignAndShow(campaignId, view = "summary") {
     await loadCampaignDetail(campaignId);
     if (view) {
-      setActiveView(view);
+      showView(view);
     }
   }
 
@@ -415,6 +425,14 @@ export default function App() {
     setNotice("");
   }
 
+  function showView(view) {
+    setActiveView(view);
+
+    if (typeof window !== "undefined" && VALID_VIEWS.has(view)) {
+      window.history.replaceState(null, "", `#${view}`);
+    }
+  }
+
   function resolveDependencies(order, flow) {
     const stepByOrder = new Map(flow.map((step) => [step.order, step]));
     const resolved = new Set([order]);
@@ -608,6 +626,287 @@ export default function App() {
     return {
       background: `conic-gradient(${gradientStops.join(", ")})`,
     };
+  }
+
+  function normalizeList(value) {
+    if (Array.isArray(value)) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      return value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    return [];
+  }
+
+  function getAgentForAsset(asset) {
+    const assetId = String(asset.asset_id || "").toLowerCase();
+    const agentRole = String(asset.agent_role || assetId).toLowerCase();
+
+    return agents.find((agent) => {
+      const candidateValues = [
+        agent.asset_id,
+        agent.agent_role,
+        agent.campaign_agent_id,
+        agent.agent_id,
+      ].map((value) => String(value || "").toLowerCase());
+
+      return (
+        candidateValues.includes(assetId)
+        || candidateValues.includes(agentRole)
+        || String(agent.agent_id || "").toLowerCase().includes(assetId)
+      );
+    });
+  }
+
+  function getAgentStatus(asset, agent) {
+    if (!asset.agent_required) {
+      return "observe";
+    }
+
+    if (!agent) {
+      return "offline";
+    }
+
+    return agent.status || "registered";
+  }
+
+  function getAgentStatusLabel(status) {
+    const labels = {
+      online: "Online",
+      registered: "Registered",
+      running: "Running",
+      offline: "Agent 필요",
+      observe: "Log source",
+    };
+
+    return labels[status] || status;
+  }
+
+  function getCriticalityLabel(criticality) {
+    const labels = {
+      critical: "Critical",
+      high: "High",
+      medium: "Medium",
+      low: "Low",
+    };
+
+    return labels[criticality] || criticality || "Medium";
+  }
+
+  function buildAssetInventory() {
+    const configuredAssets = Array.isArray(targetDetail?.assets) ? targetDetail.assets : [];
+    const hosts = targetDetail?.hosts || {};
+    const fallbackAssets = [
+      {
+        asset_id: "attacker",
+        name: "Attacker",
+        hostname: "Attacker-Ubuntu",
+        private_ip: hosts.attacker_private_ip,
+        public_ip: hosts.attacker_public_ip,
+        segment_id: "attacker-subnet",
+        platform: "Linux",
+        role: "공격자 서버",
+        agent_role: "attacker",
+        agent_required: true,
+        criticality: "medium",
+        controls: ["aws_security_group", "manual_response"],
+      },
+      {
+        asset_id: "pc01",
+        name: "PC01",
+        hostname: hosts.pc01,
+        private_ip: hosts.pc01_private_ip,
+        segment_id: "user-subnet",
+        platform: "Windows",
+        role: "직원 PC",
+        agent_role: "pc01",
+        agent_required: true,
+        criticality: "high",
+        controls: ["sysmon", "windows_security_log", "powershell_logging", "winlogbeat", "kibana_rules"],
+      },
+      {
+        asset_id: "fs01",
+        name: "FS01",
+        hostname: hosts.fs01,
+        private_ip: hosts.fs01_private_ip,
+        segment_id: "server-subnet",
+        platform: "Windows",
+        role: "파일 서버",
+        agent_role: "fs01",
+        agent_required: true,
+        criticality: "critical",
+        controls: ["sysmon", "windows_security_log", "winlogbeat", "kibana_rules"],
+      },
+      {
+        asset_id: "dc01",
+        name: "DC01",
+        hostname: hosts.dc01,
+        private_ip: hosts.dc01_private_ip,
+        segment_id: "domain-subnet",
+        platform: "Windows",
+        role: "도메인 컨트롤러",
+        agent_role: "log_source",
+        agent_required: false,
+        criticality: "critical",
+        controls: ["windows_security_log", "winlogbeat", "kibana_rules"],
+      },
+      {
+        asset_id: "elk",
+        name: "ELK",
+        hostname: "elk-gh",
+        private_ip: hosts.elk_private_ip,
+        segment_id: "server-subnet",
+        platform: "Linux",
+        role: "탐지 백엔드",
+        agent_role: "detection_backend",
+        agent_required: false,
+        criticality: "high",
+        controls: ["kibana_rules"],
+      },
+    ];
+
+    return (configuredAssets.length > 0 ? configuredAssets : fallbackAssets).map((asset) => {
+      const agent = getAgentForAsset(asset);
+      const agentStatus = getAgentStatus(asset, agent);
+
+      return {
+        ...asset,
+        controls: normalizeList(asset.controls),
+        agent,
+        agentStatus,
+        agentLabel: getAgentStatusLabel(agentStatus),
+        criticalityLabel: getCriticalityLabel(asset.criticality),
+      };
+    });
+  }
+
+  function buildSegmentInventory(assets) {
+    const configuredSegments = Array.isArray(targetDetail?.segments) ? targetDetail.segments : [];
+    const fallbackSegments = [
+      { segment_id: "attacker-subnet", name: "Attacker Zone", type: "external" },
+      { segment_id: "user-subnet", name: "User Endpoint Zone", type: "internal" },
+      { segment_id: "server-subnet", name: "Server Zone", type: "internal" },
+      { segment_id: "domain-subnet", name: "Domain Core Zone", type: "critical" },
+    ];
+
+    return (configuredSegments.length > 0 ? configuredSegments : fallbackSegments).map((segment) => ({
+      ...segment,
+      assets: assets.filter((asset) => asset.segment_id === segment.segment_id),
+    }));
+  }
+
+  function buildSecurityControls(assets) {
+    const configuredControls = Array.isArray(targetDetail?.security_controls)
+      ? targetDetail.security_controls
+      : [];
+    const controlIds = new Set();
+
+    assets.forEach((asset) => {
+      asset.controls.forEach((controlId) => controlIds.add(controlId));
+    });
+
+    const fallbackControls = Array.from(controlIds).map((controlId) => ({
+      control_id: controlId,
+      name: controlId,
+      category: "configured control",
+      status: "configured",
+    }));
+
+    return (configuredControls.length > 0 ? configuredControls : fallbackControls).map((control) => {
+      const coveredAssets = assets.filter((asset) => asset.controls.includes(control.control_id));
+
+      return {
+        ...control,
+        coveredAssets,
+      };
+    });
+  }
+
+  function buildAttackPaths(assets) {
+    const configuredPaths = Array.isArray(targetDetail?.attack_paths) ? targetDetail.attack_paths : [];
+    const assetById = new Map(assets.map((asset) => [asset.asset_id, asset]));
+
+    return configuredPaths.map((path) => ({
+      ...path,
+      sourceAsset: assetById.get(path.source_asset_id),
+      targetAsset: assetById.get(path.target_asset_id),
+      techniques: normalizeList(path.techniques),
+    }));
+  }
+
+  function getControlById(controls) {
+    return new Map(controls.map((control) => [control.control_id, control]));
+  }
+
+  function getPathValidationStatus(path) {
+    const sourceStatus = path.sourceAsset?.agentStatus || "offline";
+    const targetStatus = path.targetAsset?.agentStatus || "observe";
+
+    if (sourceStatus === "online" && ["online", "observe"].includes(targetStatus)) {
+      return {
+        status: "ready",
+        label: "검증 가능",
+      };
+    }
+
+    if (sourceStatus === "offline" || targetStatus === "offline") {
+      return {
+        status: "blocked",
+        label: "Agent 필요",
+      };
+    }
+
+    return {
+      status: "partial",
+      label: "수동 확인",
+    };
+  }
+
+  function buildValidationGates(controls) {
+    const controlById = getControlById(controls);
+    const resolve = (controlIds) => controlIds
+      .map((controlId) => controlById.get(controlId))
+      .filter(Boolean);
+
+    return [
+      {
+        gate_id: "external-entry",
+        name: "External Entry Gate",
+        between: "Attacker → PC01",
+        objective: "외부 공격자 위치에서 내부 사용자 PC로 공격 페이로드가 도달하는지 검증",
+        controlIds: ["aws_security_group", "sysmon", "kibana_rules"],
+        controls: resolve(["aws_security_group", "sysmon", "kibana_rules"]),
+      },
+      {
+        gate_id: "lateral-movement",
+        name: "Lateral Movement Gate",
+        between: "PC01 → FS01",
+        objective: "WinRM, PowerShell, 파일 전송 행위가 서버 구간에서 관찰되는지 검증",
+        controlIds: ["powershell_logging", "windows_security_log", "winlogbeat", "kibana_rules"],
+        controls: resolve(["powershell_logging", "windows_security_log", "winlogbeat", "kibana_rules"]),
+      },
+      {
+        gate_id: "identity-core",
+        name: "Identity Core Gate",
+        between: "Attacker/FS01 → DC01",
+        objective: "도메인 복제, Kerberos, AD 객체 접근 로그가 핵심 인증 구간에서 탐지되는지 검증",
+        controlIds: ["windows_security_log", "winlogbeat", "kibana_rules"],
+        controls: resolve(["windows_security_log", "winlogbeat", "kibana_rules"]),
+      },
+      {
+        gate_id: "egress",
+        name: "Egress Gate",
+        between: "FS01 → Attacker",
+        objective: "내부 파일 서버에서 외부 공격자 서버로 나가는 데이터 이동을 식별하는지 검증",
+        controlIds: ["sysmon", "aws_security_group", "kibana_rules"],
+        controls: resolve(["sysmon", "aws_security_group", "kibana_rules"]),
+      },
+    ];
   }
 
   function getTechniqueDisplayName(step) {
@@ -885,6 +1184,22 @@ export default function App() {
     ? `${selectedOperationSteps.length}개 큐에 있음`
     : "큐 비어 있음";
   const executedStepCount = selectedRunSteps.filter((step) => ["success", "simulated"].includes(step.status)).length;
+  const assetInventory = buildAssetInventory();
+  const segmentInventory = buildSegmentInventory(assetInventory);
+  const securityControlInventory = buildSecurityControls(assetInventory);
+  const attackPathInventory = buildAttackPaths(assetInventory);
+  const agentRequiredAssets = assetInventory.filter((asset) => asset.agent_required);
+  const onlineAgentAssetCount = agentRequiredAssets.filter((asset) => asset.agentStatus === "online").length;
+  const criticalAssetCount = assetInventory.filter((asset) => asset.criticality === "critical").length;
+  const assetById = new Map(assetInventory.map((asset) => [asset.asset_id, asset]));
+  const topologyNodes = ["attacker", "pc01", "fs01", "dc01", "elk"]
+    .map((assetId) => assetById.get(assetId))
+    .filter(Boolean);
+  const validationGates = buildValidationGates(securityControlInventory);
+  const readyPathCount = attackPathInventory.filter((path) => getPathValidationStatus(path).status === "ready").length;
+  const blockedPathCount = attackPathInventory.filter((path) => getPathValidationStatus(path).status === "blocked").length;
+  const configuredControlCount = securityControlInventory.filter((control) => control.status === "configured").length;
+  const detectionRuleCount = campaignDetail?.flow?.length || 0;
 
   async function runCampaign() {
     try {
@@ -936,7 +1251,7 @@ export default function App() {
       const data = await fetchJson(`/runs/${executionId}`);
       setSelectedRun(data);
       setNotice(`Run detail opened: ${executionId}`);
-      setActiveView("evidence");
+      showView("evidence");
     } catch (err) {
       setError(err.message);
     }
@@ -945,6 +1260,26 @@ export default function App() {
   useEffect(() => {
     loadInitialData();
     loadCampaignDetail(selectedCampaignId);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    function syncViewFromHash() {
+      const hashView = window.location.hash.replace("#", "");
+      if (VALID_VIEWS.has(hashView)) {
+        setActiveView(hashView);
+      }
+    }
+
+    window.addEventListener("hashchange", syncViewFromHash);
+    syncViewFromHash();
+
+    return () => {
+      window.removeEventListener("hashchange", syncViewFromHash);
+    };
   }, []);
 
   useEffect(() => {
@@ -968,7 +1303,7 @@ export default function App() {
           <button
             type="button"
             className="brand-home-button"
-            onClick={() => setActiveView("summary")}
+            onClick={() => showView("summary")}
             aria-label="요약 페이지로 이동"
             title="요약 페이지로 이동"
           >
@@ -1039,7 +1374,7 @@ export default function App() {
             <button
               type="button"
               className={activeView === "summary" ? "active-view" : ""}
-              onClick={() => setActiveView("summary")}
+              onClick={() => showView("summary")}
             >
               <span>요약</span>
               <small>점검 현황과 그래프</small>
@@ -1047,15 +1382,31 @@ export default function App() {
             <button
               type="button"
               className={activeView === "scope" ? "active-view" : ""}
-              onClick={() => setActiveView("scope")}
+              onClick={() => showView("scope")}
             >
               <span>실행하기</span>
               <small>검증할 기법 선택</small>
             </button>
             <button
               type="button"
+              className={activeView === "validation" ? "active-view" : ""}
+              onClick={() => showView("validation")}
+            >
+              <span>검증 맵</span>
+              <small>경로·통제 평가</small>
+            </button>
+            <button
+              type="button"
+              className={activeView === "assets" ? "active-view" : ""}
+              onClick={() => showView("assets")}
+            >
+              <span>자산 파악</span>
+              <small>망·자산·통제 현황</small>
+            </button>
+            <button
+              type="button"
               className={activeView === "history" ? "active-view" : ""}
-              onClick={() => setActiveView("history")}
+              onClick={() => showView("history")}
             >
               <span>결과 기록</span>
               <small>이전 실행 열람</small>
@@ -1063,7 +1414,7 @@ export default function App() {
             <button
               type="button"
               className={activeView === "evidence" ? "active-view" : ""}
-              onClick={() => setActiveView("evidence")}
+              onClick={() => showView("evidence")}
             >
               <span>증거 확인</span>
               <small>명령과 ELK 근거</small>
@@ -1222,6 +1573,430 @@ export default function App() {
             </div>
           </div>
         </div>
+      </section>
+      </>
+      )}
+
+      {activeView === "validation" && (
+      <>
+      <section className="view-header validation-hero">
+        <div>
+          <span>BAS Validation Map</span>
+          <h2>공격 경로와 보안 통제 검증</h2>
+          <p>멘토 피드백 기준으로 자산, 네트워크 구간, Agent, 로그 수집, Kibana 탐지룰을 하나의 검증 맵으로 연결합니다.</p>
+        </div>
+        <div className="view-header-metrics">
+          <span>Assets <strong>{assetInventory.length}</strong></span>
+          <span>Agents <strong>{onlineAgentAssetCount}/{agentRequiredAssets.length}</strong></span>
+          <span>Controls <strong>{configuredControlCount}/{securityControlInventory.length}</strong></span>
+          <span>Rules <strong>{detectionRuleCount}</strong></span>
+        </div>
+      </section>
+
+      <section className="bas-validation-layout">
+        <section className="panel validation-map-panel">
+          <div className="panel-title-row">
+            <div>
+              <div className="section-title">Enterprise Validation Canvas</div>
+              <h3>SB-AD 공격 경로</h3>
+            </div>
+            <span className="scope-pill">상용 BAS형 데모</span>
+          </div>
+
+          <div className="enterprise-map">
+            <div className="enterprise-zone enterprise-zone-external">
+              <span>External</span>
+              <strong>Attacker Zone</strong>
+            </div>
+            <div className="enterprise-zone enterprise-zone-user">
+              <span>Internal</span>
+              <strong>User Endpoint</strong>
+            </div>
+            <div className="enterprise-zone enterprise-zone-server">
+              <span>Internal</span>
+              <strong>Server Zone</strong>
+            </div>
+            <div className="enterprise-zone enterprise-zone-domain">
+              <span>Critical</span>
+              <strong>Domain Core</strong>
+            </div>
+
+            <svg className="enterprise-map-links" viewBox="0 0 1000 480" aria-hidden="true">
+              <defs>
+                <marker id="enterprise-arrow-orange" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+                  <path d="M0,0 L10,5 L0,10 Z" />
+                </marker>
+                <marker id="enterprise-arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+                  <path d="M0,0 L10,5 L0,10 Z" />
+                </marker>
+                <marker id="enterprise-arrow-red" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+                  <path d="M0,0 L10,5 L0,10 Z" />
+                </marker>
+                <marker id="enterprise-arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+                  <path d="M0,0 L10,5 L0,10 Z" />
+                </marker>
+              </defs>
+              <path className="enterprise-link link-orange" d="M170 240 C230 210 285 210 345 240" markerEnd="url(#enterprise-arrow-orange)" />
+              <path className="enterprise-link link-blue" d="M455 240 C515 210 570 210 630 240" markerEnd="url(#enterprise-arrow-blue)" />
+              <path className="enterprise-link link-red" d="M720 205 C780 120 830 110 885 145" markerEnd="url(#enterprise-arrow-red)" />
+              <path className="enterprise-link link-green" d="M665 300 C520 430 300 420 165 290" markerEnd="url(#enterprise-arrow-green)" />
+            </svg>
+
+            <div className="validation-gate gate-entry">
+              <strong>Gate 1</strong>
+              <span>SG + Endpoint</span>
+            </div>
+            <div className="validation-gate gate-lateral">
+              <strong>Gate 2</strong>
+              <span>PowerShell + WinRM</span>
+            </div>
+            <div className="validation-gate gate-domain">
+              <strong>Gate 3</strong>
+              <span>AD Audit + SIEM</span>
+            </div>
+            <div className="validation-gate gate-egress">
+              <strong>Gate 4</strong>
+              <span>Egress + SIEM</span>
+            </div>
+
+            {topologyNodes.map((asset) => (
+              <div
+                key={`enterprise-${asset.asset_id}`}
+                className={[
+                  "enterprise-node",
+                  `enterprise-${asset.asset_id}`,
+                  `criticality-${asset.criticality || "medium"}`,
+                ].join(" ")}
+              >
+                <div className="enterprise-device" aria-hidden="true">
+                  <span>
+                    {asset.platform?.toLowerCase().includes("windows")
+                      ? "WIN"
+                      : asset.asset_id === "elk"
+                        ? "SIEM"
+                        : "LNX"}
+                  </span>
+                </div>
+                <div>
+                  <strong>{asset.name || asset.asset_id}</strong>
+                  <small>{asset.private_ip || asset.hostname}</small>
+                  <em className={`asset-agent-badge ${asset.agentStatus}`}>{asset.agentLabel}</em>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <aside className="validation-side-stack">
+          <section className="panel posture-panel">
+            <div className="section-title">Validation Posture</div>
+            <h3>검증 준비 상태</h3>
+            <div className="posture-score">
+              <strong>{agentRequiredAssets.length > 0 ? Math.round((onlineAgentAssetCount / agentRequiredAssets.length) * 100) : 0}</strong>
+              <span>Agent Coverage</span>
+            </div>
+            <div className="posture-metrics">
+              <div>
+                <span>Ready paths</span>
+                <strong>{readyPathCount}</strong>
+              </div>
+              <div>
+                <span>Blocked paths</span>
+                <strong>{blockedPathCount}</strong>
+              </div>
+              <div>
+                <span>Critical assets</span>
+                <strong>{criticalAssetCount}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel objective-panel">
+            <div className="section-title">검증 목적</div>
+            <h3>이 화면이 보여줘야 하는 것</h3>
+            <div className="objective-list">
+              <div>
+                <strong>1. 어느 자산을 검증하는가</strong>
+                <span>PC01, FS01, DC01, Attacker, ELK를 역할과 중요도로 식별</span>
+              </div>
+              <div>
+                <strong>2. 어느 구간을 통과하는가</strong>
+                <span>외부, 사용자, 서버, 도메인 핵심 구간의 이동 경로 확인</span>
+              </div>
+              <div>
+                <strong>3. 어떤 통제가 봐야 하는가</strong>
+                <span>Sysmon, PowerShell Logging, Winlogbeat, Kibana Rule 매핑</span>
+              </div>
+              <div>
+                <strong>4. 어디가 미검증인가</strong>
+                <span>Agent 미설치, 로그 미수집, 룰 미탐지를 backlog로 전환</span>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <section className="panel validation-gate-panel">
+          <div className="panel-title-row">
+            <div>
+              <div className="section-title">Security Control Gates</div>
+              <h3>구간별 보안 통제 검증</h3>
+            </div>
+            <span className="page-indicator">{validationGates.length} gates</span>
+          </div>
+
+          <div className="gate-grid">
+            {validationGates.map((gate) => (
+              <div key={gate.gate_id} className="gate-card">
+                <span>{gate.between}</span>
+                <strong>{gate.name}</strong>
+                <p>{gate.objective}</p>
+                <div className="gate-control-list">
+                  {gate.controls.map((control) => (
+                    <em key={`${gate.gate_id}-${control.control_id}`} className={`control-status ${String(control.status || "configured").replaceAll(" ", "-")}`}>
+                      {control.name}
+                    </em>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel validation-path-panel">
+          <div className="panel-title-row">
+            <div>
+              <div className="section-title">Attack Path Validation</div>
+              <h3>경로별 실행 가능성</h3>
+            </div>
+            <span className="page-indicator">{attackPathInventory.length} paths</span>
+          </div>
+
+          <div className="path-validation-table">
+            <div className="path-validation-row path-validation-header">
+              <span>Path</span>
+              <span>Techniques</span>
+              <span>Agent</span>
+              <span>Status</span>
+            </div>
+            {attackPathInventory.map((path) => {
+              const validation = getPathValidationStatus(path);
+              const sourceAgent = path.sourceAsset?.agentLabel || "-";
+              const targetAgent = path.targetAsset?.agentLabel || "-";
+
+              return (
+                <div key={`${path.source_asset_id}-${path.target_asset_id}`} className="path-validation-row">
+                  <span>
+                    <strong>{path.sourceAsset?.name || path.source_asset_id} → {path.targetAsset?.name || path.target_asset_id}</strong>
+                    <small>{path.label}</small>
+                  </span>
+                  <span>{path.techniques.join(", ")}</span>
+                  <span>{sourceAgent} / {targetAgent}</span>
+                  <span>
+                    <em className={`path-status ${validation.status}`}>{validation.label}</em>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      </section>
+      </>
+      )}
+
+      {activeView === "assets" && (
+      <>
+      <section className="view-header">
+        <div>
+          <span>Asset Exposure Context</span>
+          <h2>자산 파악 및 검증 범위</h2>
+          <p>상용 BAS처럼 공격 실행 전에 어떤 자산, 네트워크 구간, 논리적 보안 통제를 검증 대상으로 삼는지 보여주는 데모 화면입니다.</p>
+        </div>
+        <div className="view-header-metrics">
+          <span>Assets <strong>{assetInventory.length}</strong></span>
+          <span>Segments <strong>{segmentInventory.length}</strong></span>
+          <span>Agents <strong>{onlineAgentAssetCount}/{agentRequiredAssets.length}</strong></span>
+          <span>Critical <strong>{criticalAssetCount}</strong></span>
+        </div>
+      </section>
+
+      <section className="asset-dashboard-grid">
+        <section className="panel asset-map-panel">
+          <div className="panel-title-row">
+            <div>
+              <div className="section-title">Environment Map</div>
+              <h3>{selectedCampaignId} 네트워크 구간</h3>
+            </div>
+            <span className="scope-pill">Demo inventory</span>
+          </div>
+
+          <div className="topology-board" aria-label="SB-AD asset topology">
+            <div className="topology-zones" aria-hidden="true">
+              {segmentInventory.map((segment) => (
+                <div key={segment.segment_id} className={`topology-zone zone-${segment.type || "internal"}`}>
+                  <span>{segment.name || segment.segment_id}</span>
+                </div>
+              ))}
+            </div>
+
+            <svg className="topology-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              <defs>
+                <marker id="topology-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                  <path d="M0,0 L8,4 L0,8 Z" />
+                </marker>
+                <marker id="topology-arrow-critical" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                  <path d="M0,0 L8,4 L0,8 Z" />
+                </marker>
+              </defs>
+              <path className="topology-link initial" d="M18 50 L33 50" markerEnd="url(#topology-arrow)" />
+              <path className="topology-link lateral" d="M42 50 L56 50" markerEnd="url(#topology-arrow)" />
+              <path className="topology-link exfil" d="M62 59 C50 82 30 80 18 58" markerEnd="url(#topology-arrow)" />
+              <path className="topology-link critical" d="M62 43 C68 28 74 25 80 26" markerEnd="url(#topology-arrow-critical)" />
+            </svg>
+
+            <div className="topology-label label-initial">Initial Access</div>
+            <div className="topology-label label-winrm">WinRM</div>
+            <div className="topology-label label-dcsync">DCSync</div>
+            <div className="topology-label label-exfil">Exfil</div>
+
+            {topologyNodes.map((asset) => (
+              <div
+                key={asset.asset_id}
+                className={[
+                  "topology-node",
+                  `topology-${asset.asset_id}`,
+                  `criticality-${asset.criticality || "medium"}`,
+                  asset.agent_required ? "requires-agent" : "observe-only",
+                ].join(" ")}
+              >
+                <div className="node-device" aria-hidden="true">
+                  <span className="device-screen">
+                    {asset.platform?.toLowerCase().includes("windows")
+                      ? "WIN"
+                      : asset.asset_id === "elk"
+                        ? "SIEM"
+                        : "LNX"}
+                  </span>
+                  <span className="device-stand" />
+                </div>
+                <div className="node-copy">
+                  <strong>{asset.name || asset.asset_id}</strong>
+                  <small>{asset.private_ip || asset.hostname || "IP 미정"}</small>
+                  <span>{asset.role || asset.segment_id}</span>
+                </div>
+                <em className={`asset-agent-badge ${asset.agentStatus}`}>
+                  {asset.agentLabel}
+                </em>
+              </div>
+            ))}
+          </div>
+
+          <div className="segment-summary-strip">
+            {segmentInventory.map((segment) => (
+              <div key={segment.segment_id}>
+                <span>{segment.type || "segment"}</span>
+                <strong>{segment.name || segment.segment_id}</strong>
+                <small>{segment.assets.length} assets</small>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel attack-route-panel">
+          <div className="panel-title-row">
+            <div>
+              <div className="section-title">Attack Path</div>
+              <h3>검증 경로</h3>
+            </div>
+            <span className="page-indicator">{attackPathInventory.length} paths</span>
+          </div>
+
+          <div className="attack-route-list">
+            {attackPathInventory.map((path, index) => (
+              <div key={`${path.source_asset_id}-${path.target_asset_id}-${index}`} className="attack-route-item">
+                <div className="route-order">{index + 1}</div>
+                <div>
+                  <strong>
+                    {path.sourceAsset?.name || path.source_asset_id}
+                    <span>→</span>
+                    {path.targetAsset?.name || path.target_asset_id}
+                  </strong>
+                  <small>{path.label}</small>
+                  <p>{path.techniques.join(", ")}</p>
+                </div>
+              </div>
+            ))}
+
+            {attackPathInventory.length === 0 && (
+              <p className="empty">이 캠페인에는 공격 경로 메타데이터가 아직 없습니다.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="panel asset-inventory-panel">
+          <div className="panel-title-row">
+            <div>
+              <div className="section-title">Asset Inventory</div>
+              <h3>검증 대상 자산</h3>
+            </div>
+            <span className="page-indicator">{assetInventory.length} assets</span>
+          </div>
+
+          <div className="asset-table">
+            <div className="asset-table-row asset-table-header">
+              <span>Asset</span>
+              <span>Segment</span>
+              <span>Role</span>
+              <span>Criticality</span>
+              <span>Agent</span>
+            </div>
+
+            {assetInventory.map((asset) => (
+              <div key={asset.asset_id} className="asset-table-row">
+                <span>
+                  <strong>{asset.name || asset.asset_id}</strong>
+                  <small>{asset.private_ip || asset.hostname || "-"}</small>
+                </span>
+                <span>{asset.segment_id || "-"}</span>
+                <span>{asset.role || "-"}</span>
+                <span>
+                  <em className={`criticality-pill criticality-${asset.criticality || "medium"}`}>
+                    {asset.criticalityLabel}
+                  </em>
+                </span>
+                <span>
+                  <em className={`asset-agent-badge ${asset.agentStatus}`}>
+                    {asset.agentLabel}
+                  </em>
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel control-coverage-panel">
+          <div className="panel-title-row">
+            <div>
+              <div className="section-title">Security Controls</div>
+              <h3>논리적 통제 매핑</h3>
+            </div>
+            <span className="page-indicator">{securityControlInventory.length} controls</span>
+          </div>
+
+          <div className="control-card-grid">
+            {securityControlInventory.map((control) => (
+              <div key={control.control_id} className="control-card">
+                <div>
+                  <strong>{control.name || control.control_id}</strong>
+                  <small>{control.category}</small>
+                </div>
+                <span className={`control-status ${String(control.status || "configured").replaceAll(" ", "-")}`}>
+                  {control.status || "configured"}
+                </span>
+                <p>{control.coveredAssets.map((asset) => asset.name || asset.asset_id).join(", ") || "매핑 자산 없음"}</p>
+              </div>
+            ))}
+          </div>
+        </section>
       </section>
       </>
       )}

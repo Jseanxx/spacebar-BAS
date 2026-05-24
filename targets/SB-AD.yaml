@@ -13,6 +13,134 @@ hosts:
   dc01_private_ip: 10.0.13.205
   pc01_private_ip: 10.0.4.216
 
+segments:
+  - segment_id: attacker-subnet
+    name: Attacker Zone
+    type: external
+    description: 공격자 우분투가 위치한 검증 시작 구간
+  - segment_id: user-subnet
+    name: User Endpoint Zone
+    type: internal
+    description: 직원 PC 역할의 PC01 구간
+  - segment_id: server-subnet
+    name: Server Zone
+    type: internal
+    description: 파일 서버와 ELK가 위치한 서버 구간
+  - segment_id: domain-subnet
+    name: Domain Core Zone
+    type: critical
+    description: 도메인 컨트롤러가 위치한 핵심 인증 구간
+
+assets:
+  - asset_id: attacker
+    name: Attacker Ubuntu
+    hostname: Attacker-Ubuntu
+    private_ip: 10.0.1.194
+    public_ip: 54.180.55.229
+    platform: Ubuntu
+    role: 공격자 서버
+    segment_id: attacker-subnet
+    agent_role: attacker
+    agent_required: true
+    criticality: medium
+    controls: [aws_security_group, manual_response]
+  - asset_id: pc01
+    name: PC01
+    hostname: PC01.mycompany.local
+    private_ip: 10.0.4.216
+    public_ip: 43.201.217.167
+    platform: Windows Server
+    role: 직원 PC 및 초기 실행 지점
+    segment_id: user-subnet
+    agent_role: pc01
+    agent_required: true
+    criticality: high
+    controls: [sysmon, windows_security_log, powershell_logging, winlogbeat, kibana_rules]
+  - asset_id: fs01
+    name: FS01
+    hostname: FS01.mycompany.local
+    private_ip: 10.0.10.77
+    public_ip: 3.36.156.17
+    platform: Windows Server
+    role: 파일 서버 및 lateral movement 대상
+    segment_id: server-subnet
+    agent_role: fs01
+    agent_required: true
+    criticality: critical
+    controls: [sysmon, windows_security_log, winlogbeat, kibana_rules]
+  - asset_id: dc01
+    name: DC01
+    hostname: DC01.mycompany.local
+    private_ip: 10.0.13.205
+    public_ip: 52.78.216.139
+    platform: Windows Server
+    role: 도메인 컨트롤러 및 AD 보안 로그 관찰 대상
+    segment_id: domain-subnet
+    agent_role: log_source
+    agent_required: false
+    criticality: critical
+    controls: [windows_security_log, winlogbeat, kibana_rules]
+  - asset_id: elk
+    name: ELK
+    hostname: elk-gh
+    private_ip: 10.0.4.30
+    public_ip: 54.116.120.198
+    platform: Linux
+    role: 로그 저장소 및 탐지룰 실행 위치
+    segment_id: server-subnet
+    agent_role: detection_backend
+    agent_required: false
+    criticality: high
+    controls: [kibana_rules]
+
+security_controls:
+  - control_id: sysmon
+    name: Sysmon
+    category: endpoint telemetry
+    status: configured
+  - control_id: windows_security_log
+    name: Windows Security Log
+    category: identity and audit log
+    status: configured
+  - control_id: powershell_logging
+    name: PowerShell Logging
+    category: script visibility
+    status: configured
+  - control_id: winlogbeat
+    name: Winlogbeat
+    category: log forwarding
+    status: configured
+  - control_id: kibana_rules
+    name: Kibana Detection Rules
+    category: SIEM detection
+    status: configured
+  - control_id: aws_security_group
+    name: AWS Security Group
+    category: network boundary
+    status: manual review
+  - control_id: manual_response
+    name: Manual Response
+    category: response procedure
+    status: planned
+
+attack_paths:
+  - source_asset_id: attacker
+    target_asset_id: pc01
+    label: Initial access / reverse shell
+    techniques: [T1204.002, T1059.003]
+  - source_asset_id: pc01
+    target_asset_id: fs01
+    label: WinRM lateral movement
+    techniques: [T1021.006, T1059.001, T1105]
+  - source_asset_id: fs01
+    target_asset_id: attacker
+    label: Data staging and exfiltration
+    techniques: [T1074.001, T1041]
+  - source_asset_id: attacker
+    target_asset_id: dc01
+    label: Domain replication abuse
+    techniques: [T1003.006]
+
 ad:
   domain: mycompany.local
   netbios_domain: MYCOMPANY

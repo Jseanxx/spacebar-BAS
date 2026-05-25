@@ -46,6 +46,14 @@ def load_config(config_path=CONFIG_PATH):
         "campaign_agent_id": "local-campaign-agent",
         "display_name": "BasAgent",
         "collector_type": "unknown",
+        "agent_role": "",
+        "asset_id": "",
+        "segment_id": "",
+        "hostname": "",
+        "platform": "",
+        "capabilities": "",
+        "controls": "",
+        "safety_mode": "",
         "controller_url": "http://127.0.0.1:8000",
         "interval_seconds": "5",
         "execution_mode": "simulation",
@@ -55,6 +63,14 @@ def load_config(config_path=CONFIG_PATH):
     config["interval_seconds"] = int(config.get("interval_seconds", 5))
 
     return config
+
+
+def parse_csv_list(value):
+    return [
+        item.strip()
+        for item in str(value or "").split(",")
+        if item.strip()
+    ]
 
 
 def request_json(method, url, payload=None):
@@ -133,6 +149,15 @@ class BasAgent:
             "campaign_agent_id": self.config["campaign_agent_id"],
             "display_name": self.config["display_name"],
             "collector_type": self.config["collector_type"],
+            "agent_role": self.config.get("agent_role") or None,
+            "asset_id": self.config.get("asset_id") or None,
+            "segment_id": self.config.get("segment_id") or None,
+            "hostname": self.config.get("hostname") or None,
+            "platform": self.config.get("platform") or None,
+            "execution_mode": self.config.get("execution_mode") or None,
+            "safety_mode": self.config.get("safety_mode") or None,
+            "capabilities": parse_csv_list(self.config.get("capabilities")),
+            "controls": parse_csv_list(self.config.get("controls")),
         }
 
         response = request_json(
@@ -166,9 +191,11 @@ class BasAgent:
         print(f"[+] Job received: {job_id}")
 
         try:
-            if self.execution_mode not in ("simulation", "real"):
+            execution_mode = job.get("execution_mode") or self.execution_mode
+
+            if execution_mode not in ("simulation", "real"):
                 raise RuntimeError(
-                    f"Unsupported execution_mode: {self.execution_mode}. "
+                    f"Unsupported execution_mode: {execution_mode}. "
                     "Allowed modes: simulation, real."
                 )
             result, output_path = run_campaign(
@@ -176,7 +203,7 @@ class BasAgent:
                 selected_orders=job.get("selected_orders"),
                 selected_steps=job.get("selected_steps"),
                 include_normal=job.get("include_normal", True),
-                execution_mode=self.execution_mode,
+                execution_mode=execution_mode,
             )
 
             print(f"[+] Job completed: {job_id}")

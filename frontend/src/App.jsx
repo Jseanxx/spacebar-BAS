@@ -89,10 +89,11 @@ export default function App() {
   const [techniqueCompatibility, setTechniqueCompatibility] = useState({});
   const [runs, setRuns] = useState([]);
   const [jobs, setJobs] = useState([]);
+  const [operations, setOperations] = useState([]);
+  const [selectedOperation, setSelectedOperation] = useState(null);
   const [agents, setAgents] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedRun, setSelectedRun] = useState(null);
-  const [selectedOrders, setSelectedOrders] = useState([]);
   const [techniqueLibrary, setTechniqueLibrary] = useState([]);
   const [selectedTechniqueIds, setSelectedTechniqueIds] = useState([]);
   const [techniqueInputs, setTechniqueInputs] = useState({});
@@ -111,7 +112,18 @@ export default function App() {
     const response = await fetch(`${API_BASE}${path}`, options);
 
     if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
+      let detail;
+      try {
+        detail = await response.json();
+      } catch {
+        detail = null;
+      }
+
+      const message = typeof detail?.detail === "string"
+        ? detail.detail
+        : detail?.detail?.message || `API error: ${response.status}`;
+
+      throw new Error(message);
     }
 
     return response.json();
@@ -142,50 +154,46 @@ export default function App() {
     const jobData = await fetchJson("/jobs");
     setJobs(jobData.jobs || []);
 
+    const operationData = await fetchJson("/operations");
+    setOperations(operationData.operations || []);
+
     const runData = await fetchJson("/runs");
     setRuns(runData.runs || []);
 
     return {
       agents: loadedAgents,
       jobs: jobData.jobs || [],
+      operations: operationData.operations || [],
       runs: runData.runs || [],
     };
   }
 
-  async function pollJobUntilFinished(jobId) {
+  async function pollOperationUntilFinished(operationId) {
     for (let attempt = 0; attempt < JOB_POLL_ATTEMPTS; attempt += 1) {
-      const job = await fetchJson(`/jobs/${jobId}`);
-      setJobs((currentJobs) => {
-        const withoutCurrentJob = currentJobs.filter((item) => item.job_id !== job.job_id);
-        return [job, ...withoutCurrentJob];
-      });
+      const operation = await fetchJson(`/operations/${operationId}`);
+      setSelectedOperation(operation);
 
-      if (job.status === "completed") {
-        setNotice(`Job completed: ${jobId}`);
-        setIsRunning(false);
-
-        if (job.execution_id) {
-          const run = await fetchJson(`/runs/${job.execution_id}`);
-          setSelectedRun(run);
-          setRuns((currentRuns) => {
-            const withoutCurrentRun = currentRuns.filter((item) => item.execution_id !== run.execution_id);
-            return [run, ...withoutCurrentRun];
-          });
-        }
-
+      if (["completed", "simulated"].includes(operation.status)) {
+        setNotice(operation.status === "simulated" ? `Operation simulated: ${operationId}` : `Operation completed: ${operationId}`);
         await refreshDashboardData();
-        return job;
+        return operation;
       }
 
-      if (job.status === "failed") {
-        throw new Error(job.error || `Job failed: ${jobId}`);
+      if (["blocked", "failed", "cancelled"].includes(operation.status)) {
+        await refreshDashboardData();
+        const blockedRoles = Array.isArray(operation.blocked_roles) ? operation.blocked_roles.join(", ") : "";
+        throw new Error(blockedRoles ? `Operation ${operation.status}: ${blockedRoles}` : `Operation ${operation.status}`);
       }
 
-      setNotice(`Job ${job.status}: ${jobId}`);
+      const running = operation.summary?.running || 0;
+      const queued = operation.summary?.queued || 0;
+      const success = operation.summary?.success || 0;
+      const total = operation.summary?.total || 0;
+      setNotice(`Operation running: ${success}/${total} 완료, running ${running}, queued ${queued}`);
       await sleep(JOB_POLL_INTERVAL_MS);
     }
 
-    setNotice(`Job is still running: ${jobId}`);
+    setNotice(`Operation is still running: ${operationId}`);
     return null;
   }
 
@@ -216,14 +224,32 @@ export default function App() {
 
       const data = await fetchJson(`/campaigns/${campaignId}`);
       const targetData = await fetchJson(`/targets/${campaignId}`);
+      let discoveredTargetData = targetData;
+
+      try {
+        const discoveryData = await fetchJson(`/targets/${campaignId}/asset-discovery`);
+        discoveredTargetData = {
+          ...targetData,
+          assets: discoveryData.assets || targetData.assets,
+          segments: discoveryData.segments || targetData.segments,
+          security_controls: discoveryData.security_controls || targetData.security_controls,
+          attack_paths: discoveryData.attack_paths || targetData.attack_paths,
+          asset_discovery: discoveryData,
+        };
+      } catch {
+        discoveredTargetData = targetData;
+      }
+
       const compatibilityData = await fetchJson(`/campaigns/${campaignId}/technique-compatibility`);
       const agentData = await fetchJson("/agents");
       const loadedAgents = agentData.agents || [];
       setCampaignDetail(data);
-      setTargetDetail(targetData);
+      setTargetDetail(discoveredTargetData);
       setTechniqueCompatibility(compatibilityData.compatibility || {});
       setSelectedCampaignId(campaignId);
       setAgents(loadedAgents);
+      setSelectedOperation(null);
+      setSelectedRun(null);
       const campaignAgent = findAgentForCampaign(loadedAgents, campaignId);
       setSelectedAgentId(campaignAgent?.agent_id || "");
       setTechniqueSourceFilter(campaignId);
@@ -247,6 +273,31 @@ export default function App() {
 
   function getTechniqueSourceId(step) {
     return step.source_campaign_id || selectedCampaignId;
+  }
+
+  function getRequiredAgentRole(step) {
+    const commands = Array.isArray(step.params?.commands) ? step.params.commands : [];
+    return commands[0]?.agent_role
+      || step.params?.agent_role
+      || step.agent_role
+      || "campaign_agent";
+  }
+
+  function getAgentRoleLabel(role) {
+    const labels = {
+      campaign_agent: "campaign",
+      manual_operator: "manual",
+    };
+
+    return labels[role] || role;
+  }
+
+  function buildSelectedStepPayload(steps) {
+    return steps.map((step) => ({
+      campaign_id: getTechniqueSourceId(step),
+      order: step.order,
+      inputs: techniqueInputs[getTechniqueSelectionId(step)] || {},
+    }));
   }
 
   function getTechniqueCompatibility(step) {
@@ -466,7 +517,6 @@ export default function App() {
   }
 
   function clearOperationQueue() {
-    setSelectedOrders([]);
     setSelectedTechniqueIds([]);
     setTechniqueInputs({});
     setExpandedTechniqueInputIds([]);
@@ -479,107 +529,6 @@ export default function App() {
     if (typeof window !== "undefined" && VALID_VIEWS.has(view)) {
       window.history.replaceState(null, "", `#${view}`);
     }
-  }
-
-  function resolveDependencies(order, flow) {
-    const stepByOrder = new Map(flow.map((step) => [step.order, step]));
-    const resolved = new Set([order]);
-
-    function visit(currentOrder) {
-      const step = stepByOrder.get(currentOrder);
-      if (!step) return;
-
-      (step.depends_on_orders || []).forEach((dependency) => {
-        if (!resolved.has(dependency)) {
-          resolved.add(dependency);
-          visit(dependency);
-        }
-      });
-    }
-
-    visit(order);
-    return Array.from(resolved).sort((a, b) => a - b);
-  }
-
-  function getStepLabel(order) {
-    const step = (campaignDetail?.flow || []).find((item) => item.order === order);
-    if (!step) return `${order}`;
-    return step.technique_id ? `${order} (${step.technique_id})` : `${order}`;
-  }
-
-  function toggleStep(step) {
-    const flow = campaignDetail?.flow || [];
-    const requiredOrders = resolveDependencies(step.order, flow);
-    const current = new Set(selectedOrders);
-    const alreadySelected = current.has(step.order);
-
-    if (alreadySelected) {
-      current.delete(step.order);
-      setSelectedOrders(Array.from(current).sort((a, b) => a - b));
-      setNotice("");
-      return;
-    }
-
-    requiredOrders.forEach((order) => current.add(order));
-
-    const autoIncluded = requiredOrders.filter((order) => order !== step.order);
-    setSelectedOrders(Array.from(current).sort((a, b) => a - b));
-
-    if (autoIncluded.length > 0) {
-      const labels = autoIncluded.map(getStepLabel).join(", ");
-      setNotice(`${step.technique_id || step.name} also selected required steps: ${labels}`);
-    } else {
-      setNotice("");
-    }
-  }
-
-  function selectAllAttacks() {
-    const attackOrders = (campaignDetail?.flow || [])
-      .filter((step) => step.phase === "attack")
-      .map((step) => step.order)
-      .sort((a, b) => a - b);
-
-    setSelectedOrders((currentOrders) => {
-      const mergedOrders = new Set(currentOrders);
-      const allAttacksSelected = attackOrders.every((order) => mergedOrders.has(order));
-
-      if (allAttacksSelected) {
-        attackOrders.forEach((order) => mergedOrders.delete(order));
-        setNotice("All attack steps cleared.");
-      } else {
-        attackOrders.forEach((order) => mergedOrders.add(order));
-        setNotice("All attack steps selected.");
-      }
-
-      return Array.from(mergedOrders).sort((a, b) => a - b);
-    });
-  }
-
-  function selectAllNormal() {
-    const normalOrders = (campaignDetail?.flow || [])
-      .filter((step) => step.phase === "normal")
-      .map((step) => step.order)
-      .sort((a, b) => a - b);
-
-    setSelectedOrders((currentOrders) => {
-      const mergedOrders = new Set(currentOrders);
-      const allNormalSelected = normalOrders.every((order) => mergedOrders.has(order));
-
-      if (allNormalSelected) {
-        normalOrders.forEach((order) => mergedOrders.delete(order));
-        setNotice("All normal steps cleared.");
-      } else {
-        normalOrders.forEach((order) => mergedOrders.add(order));
-        setNotice("All normal steps selected.");
-      }
-
-      return Array.from(mergedOrders).sort((a, b) => a - b);
-    });
-  }
-
-  function clearSelection() {
-    setSelectedOrders([]);
-    setNotice("");
   }
 
   function getDetectionStatus(step) {
@@ -608,7 +557,7 @@ export default function App() {
 
   function getRiskLevel(step) {
     const detectionStatus = getDetectionStatus(step);
-    const executed = ["success", "simulated"].includes(step.status);
+    const executed = ["success", "completed", "simulated"].includes(step.status);
 
     if (!executed) {
       return "low";
@@ -748,77 +697,26 @@ export default function App() {
 
   function buildAssetInventory() {
     const configuredAssets = Array.isArray(targetDetail?.assets) ? targetDetail.assets : [];
-    const hosts = targetDetail?.hosts || {};
-    const fallbackAssets = [
-      {
-        asset_id: "attacker",
-        name: "Attacker",
-        hostname: "Attacker-Ubuntu",
-        private_ip: hosts.attacker_private_ip,
-        public_ip: hosts.attacker_public_ip,
-        segment_id: "attacker-subnet",
-        platform: "Linux",
-        role: "공격자 서버",
-        agent_role: "attacker",
+    const discoveredAgentAssets = agents
+      .filter((agent) => agent.campaign_agent_id === selectedCampaignId)
+      .map((agent) => ({
+        asset_id: agent.asset_id || agent.agent_role || agent.agent_id,
+        name: agent.display_name || agent.hostname || agent.agent_id,
+        hostname: agent.hostname,
+        private_ip: agent.private_ip,
+        platform: agent.platform,
+        role: agent.agent_role || "BAS Agent discovered asset",
+        segment_id: agent.segment_id || "unassigned-segment",
+        agent_role: agent.agent_role,
         agent_required: true,
-        criticality: "medium",
-        controls: ["aws_security_group", "manual_response"],
-      },
-      {
-        asset_id: "pc01",
-        name: "PC01",
-        hostname: hosts.pc01,
-        private_ip: hosts.pc01_private_ip,
-        segment_id: "user-subnet",
-        platform: "Windows",
-        role: "직원 PC",
-        agent_role: "pc01",
-        agent_required: true,
-        criticality: "high",
-        controls: ["sysmon", "windows_security_log", "powershell_logging", "winlogbeat", "kibana_rules"],
-      },
-      {
-        asset_id: "fs01",
-        name: "FS01",
-        hostname: hosts.fs01,
-        private_ip: hosts.fs01_private_ip,
-        segment_id: "server-subnet",
-        platform: "Windows",
-        role: "파일 서버",
-        agent_role: "fs01",
-        agent_required: true,
-        criticality: "critical",
-        controls: ["sysmon", "windows_security_log", "winlogbeat", "kibana_rules"],
-      },
-      {
-        asset_id: "dc01",
-        name: "DC01",
-        hostname: hosts.dc01,
-        private_ip: hosts.dc01_private_ip,
-        segment_id: "domain-subnet",
-        platform: "Windows",
-        role: "도메인 컨트롤러",
-        agent_role: "log_source",
-        agent_required: false,
-        criticality: "critical",
-        controls: ["windows_security_log", "winlogbeat", "kibana_rules"],
-      },
-      {
-        asset_id: "elk",
-        name: "ELK",
-        hostname: "elk-gh",
-        private_ip: hosts.elk_private_ip,
-        segment_id: "server-subnet",
-        platform: "Linux",
-        role: "탐지 백엔드",
-        agent_role: "detection_backend",
-        agent_required: false,
-        criticality: "high",
-        controls: ["kibana_rules"],
-      },
-    ];
+        criticality: agent.criticality || "medium",
+        controls: normalizeList(agent.controls),
+        capabilities: normalizeList(agent.capabilities),
+        discovery_source: "agent_registration",
+      }));
+    const sourceAssets = configuredAssets.length > 0 ? configuredAssets : discoveredAgentAssets;
 
-    return (configuredAssets.length > 0 ? configuredAssets : fallbackAssets).map((asset) => {
+    return sourceAssets.map((asset) => {
       const agent = getAgentForAsset(asset);
       const agentStatus = getAgentStatus(asset, agent);
 
@@ -835,12 +733,14 @@ export default function App() {
 
   function buildSegmentInventory(assets) {
     const configuredSegments = Array.isArray(targetDetail?.segments) ? targetDetail.segments : [];
-    const fallbackSegments = [
-      { segment_id: "attacker-subnet", name: "Attacker Zone", type: "external" },
-      { segment_id: "user-subnet", name: "User Endpoint Zone", type: "internal" },
-      { segment_id: "server-subnet", name: "Server Zone", type: "internal" },
-      { segment_id: "domain-subnet", name: "Domain Core Zone", type: "critical" },
-    ];
+    const discoveredSegmentIds = Array.from(
+      new Set(assets.map((asset) => asset.segment_id || "unassigned-segment")),
+    );
+    const fallbackSegments = discoveredSegmentIds.map((segmentId) => ({
+      segment_id: segmentId,
+      name: segmentId === "unassigned-segment" ? "Unassigned Assets" : segmentId,
+      type: segmentId.includes("external") || segmentId.includes("attacker") ? "external" : "internal",
+    }));
 
     return (configuredSegments.length > 0 ? configuredSegments : fallbackSegments).map((segment) => ({
       ...segment,
@@ -1094,20 +994,6 @@ export default function App() {
     return "unknown";
   }
 
-  function formatCommandStatus(command) {
-    const status = getCommandStatus(command);
-
-    if (status === "success") {
-      return "성공";
-    }
-
-    if (status === "failed") {
-      return "실패";
-    }
-
-    return "알 수 없음";
-  }
-
   function renderModuleEvidence(step) {
     const result = step.module_result || {};
     const elkCheck = step.elk_check || {};
@@ -1319,9 +1205,28 @@ export default function App() {
 
     return matchesSource && matchesPhase && matchesQuery;
   });
-  const attackPathSteps = selectedRunMatchesCampaign ? selectedRun.steps : selectedOperationSteps;
+  const latestOperation = selectedOperation || operations.find((operation) => operation.campaign_id === selectedCampaignId) || null;
+  const visibleOperationSteps = latestOperation?.final_steps || [];
+  const operationDisplaySteps = visibleOperationSteps.map((step) => ({
+    ...step,
+    source_campaign_id: latestOperation?.campaign_id || selectedCampaignId,
+    phase: step.phase || (step.technique_id ? "attack" : "normal"),
+  }));
+  const attackPathSteps = selectedRunMatchesCampaign ? selectedRun.steps : (operationDisplaySteps.length > 0 ? operationDisplaySteps : selectedOperationSteps);
   const latestJob = jobs[0] || null;
   const recentJobs = jobs.slice(0, 4);
+  const plannedRoutes = selectedOperationSteps.reduce((routes, step) => {
+    const role = getRequiredAgentRole(step);
+    return {
+      ...routes,
+      [role]: [...(routes[role] || []), step],
+    };
+  }, {});
+  const routingRoles = Array.from(new Set([
+    ...Object.keys(plannedRoutes),
+    ...visibleOperationSteps.map((step) => step.agent_role).filter(Boolean),
+    ...(selectedCampaignId === "SB-AD" ? ["pc01", "fs01", "attacker"] : []),
+  ]));
   const runPageCount = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE));
   const visibleRuns = runs.slice(
     runPage * RUNS_PER_PAGE,
@@ -1336,12 +1241,18 @@ export default function App() {
     ? Math.round((dashboardSummary.detectedCount / dashboardSummary.successfulAttackCount) * 100)
     : null;
   const selectedRunSteps = selectedRunMatchesCampaign ? selectedRun.steps : [];
-  const selectedRunSummary = buildDashboardSummary(selectedRunMatchesCampaign ? selectedRun : null);
-  const selectedRunAttackSteps = selectedRunSteps.filter((step) => step.phase === "attack");
+  const recentVerificationSteps = selectedRunMatchesCampaign ? selectedRunSteps : operationDisplaySteps;
+  const recentVerificationAttackSteps = recentVerificationSteps.filter((step) => step.phase === "attack" || step.technique_id);
+  const recentVerificationExecutedCount = recentVerificationSteps.filter((step) => ["success", "completed", "simulated"].includes(step.status)).length;
+  const recentVerificationDetectedCount = recentVerificationAttackSteps.filter((step) => getDetectionStatus(step) === "detected").length;
+  const recentVerificationMissedCount = recentVerificationAttackSteps.filter((step) => getDetectionStatus(step) === "missed").length;
+  const recentVerificationNotCheckedCount = recentVerificationAttackSteps.filter((step) => getDetectionStatus(step) === "not_checked").length;
+  const recentVerificationTitle = selectedRunMatchesCampaign
+    ? selectedRun.execution_id
+    : latestOperation?.operation_id || "선택된 실행 없음";
   const selectedScopeLabel = selectedOperationSteps.length > 0
     ? `${selectedOperationSteps.length}개 큐에 있음`
     : "큐 비어 있음";
-  const executedStepCount = selectedRunSteps.filter((step) => ["success", "simulated"].includes(step.status)).length;
   const assetInventory = buildAssetInventory();
   const segmentInventory = buildSegmentInventory(assetInventory);
   const securityControlInventory = buildSecurityControls(assetInventory);
@@ -1349,10 +1260,26 @@ export default function App() {
   const agentRequiredAssets = assetInventory.filter((asset) => asset.agent_required);
   const onlineAgentAssetCount = agentRequiredAssets.filter((asset) => asset.agentStatus === "online").length;
   const criticalAssetCount = assetInventory.filter((asset) => asset.criticality === "critical").length;
-  const assetById = new Map(assetInventory.map((asset) => [asset.asset_id, asset]));
-  const topologyNodes = ["attacker", "pc01", "fs01", "dc01", "elk"]
-    .map((assetId) => assetById.get(assetId))
-    .filter(Boolean);
+  const topologyNodes = assetInventory;
+  const getMapNodeStyle = (index, total) => {
+    const safeTotal = Math.max(total, 1);
+    const column = safeTotal === 1 ? 0.5 : index / (safeTotal - 1);
+    const left = 6 + column * 74;
+    const top = safeTotal <= 3 ? 42 : 28 + (index % 2) * 28;
+
+    return {
+      left: `${left}%`,
+      top: `${top}%`,
+    };
+  };
+  const getSegmentStyle = (index, total) => {
+    const width = 100 / Math.max(total, 1);
+
+    return {
+      left: `${index * width}%`,
+      width: `${width}%`,
+    };
+  };
   const validationGates = buildValidationGates(securityControlInventory);
   const attackPathTelemetry = attackPathInventory.map((path) => getAttackPathTelemetry(path, validationRun, selectedOperationSteps));
   const activeAttackPath = attackPathInventory[selectedAttackPathIndex] || attackPathInventory[0] || null;
@@ -1374,34 +1301,43 @@ export default function App() {
             throw new Error("Select a campaign before queueing a job.");
         }
 
-        if (!selectedAgentId) {
-            throw new Error("Select a BasAgent before queueing a job.");
-        }
-
         if (selectedOperationSteps.length === 0) {
             throw new Error("실행 큐에 테크닉을 먼저 담아주세요.");
         }
 
-        const data = await fetchJson("/jobs", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            agent_id: selectedAgentId,
-            campaign_id: selectedCampaignId,
-            selected_steps: selectedOperationSteps.map((step) => ({
-              campaign_id: getTechniqueSourceId(step),
-              order: step.order,
-              inputs: techniqueInputs[getTechniqueSelectionId(step)] || {},
-            })),
-            include_normal: false
-        })
+        const selectedStepPayload = buildSelectedStepPayload(selectedOperationSteps);
+        const payload = {
+          campaign_id: selectedCampaignId,
+          selected_steps: selectedStepPayload,
+          include_normal: false,
+          execution_mode: "real",
+        };
+
+        const data = await fetchJson("/operations", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+        const operation = data.operation;
+        setSelectedRun(null);
+        setSelectedOperation(operation);
+        setOperations((currentOperations) => {
+          const withoutCurrentOperation = currentOperations.filter((item) => item.operation_id !== operation.operation_id);
+          return [operation, ...withoutCurrentOperation];
         });
 
-        setNotice(`Job queued: ${data.job.job_id}`);
-        setJobs((currentJobs) => [data.job, ...currentJobs]);
-        await pollJobUntilFinished(data.job.job_id);
+        if (operation.status === "simulated") {
+          const simulatedRoles = Array.isArray(operation.blocked_roles) ? operation.blocked_roles.join(", ") : "";
+          setNotice(`Operation simulated: ${simulatedRoles || "Agent offline"} 역할은 실제 job 없이 예상 라우팅만 표시합니다.`);
+          await refreshDashboardData();
+          return;
+        }
+
+        setNotice(`Operation started: ${operation.operation_id}`);
+        await refreshDashboardData();
+        await pollOperationUntilFinished(operation.operation_id);
     } catch (err) {
         setError(err.message);
     } finally {
@@ -1422,11 +1358,14 @@ export default function App() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadInitialData();
     loadCampaignDetail(selectedCampaignId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedAttackPathIndex(0);
   }, [selectedCampaignId]);
 
@@ -1533,7 +1472,7 @@ export default function App() {
             <button
               className="run-button topnav-run-button"
               onClick={runCampaign}
-              disabled={isRunning || !selectedAgentId || !selectedCampaignId || selectedOperationSteps.length === 0}
+              disabled={isRunning || !selectedCampaignId || selectedOperationSteps.length === 0}
             >
               {isRunning ? "실행 중..." : "검증 실행"}
             </button>
@@ -1773,22 +1712,16 @@ export default function App() {
           </div>
 
           <div className="enterprise-map">
-            <div className="enterprise-zone enterprise-zone-external">
-              <span>External</span>
-              <strong>Attacker Zone</strong>
-            </div>
-            <div className="enterprise-zone enterprise-zone-user">
-              <span>Internal</span>
-              <strong>User Endpoint</strong>
-            </div>
-            <div className="enterprise-zone enterprise-zone-server">
-              <span>Internal</span>
-              <strong>Server Zone</strong>
-            </div>
-            <div className="enterprise-zone enterprise-zone-domain">
-              <span>Critical</span>
-              <strong>Domain Core</strong>
-            </div>
+            {segmentInventory.map((segment, index) => (
+              <div
+                key={`enterprise-zone-${segment.segment_id}`}
+                className={`enterprise-zone enterprise-zone-${segment.type || "internal"}`}
+                style={getSegmentStyle(index, segmentInventory.length)}
+              >
+                <span>{segment.type || "segment"}</span>
+                <strong>{segment.name || segment.segment_id}</strong>
+              </div>
+            ))}
 
             <svg className="enterprise-map-links" viewBox="0 0 1000 480" aria-hidden="true">
               <defs>
@@ -1844,7 +1777,7 @@ export default function App() {
               <span>Egress + SIEM</span>
             </div>
 
-            {topologyNodes.map((asset) => (
+            {topologyNodes.map((asset, index) => (
               <div
                 key={`enterprise-${asset.asset_id}`}
                 className={[
@@ -1852,6 +1785,7 @@ export default function App() {
                   `enterprise-${asset.asset_id}`,
                   `criticality-${asset.criticality || "medium"}`,
                 ].join(" ")}
+                style={getMapNodeStyle(index, topologyNodes.length)}
               >
                 <div className="enterprise-device" aria-hidden="true">
                   <span>
@@ -2098,7 +2032,7 @@ export default function App() {
             <div className="topology-label label-dcsync">DCSync</div>
             <div className="topology-label label-exfil">Exfil</div>
 
-            {topologyNodes.map((asset) => (
+            {topologyNodes.map((asset, index) => (
               <div
                 key={asset.asset_id}
                 className={[
@@ -2107,6 +2041,7 @@ export default function App() {
                   `criticality-${asset.criticality || "medium"}`,
                   asset.agent_required ? "requires-agent" : "observe-only",
                 ].join(" ")}
+                style={getMapNodeStyle(index, topologyNodes.length)}
               >
                 <div className="node-device" aria-hidden="true">
                   <span className="device-screen">
@@ -2252,7 +2187,7 @@ export default function App() {
         <button
           className="run-button"
           onClick={runCampaign}
-          disabled={isRunning || !selectedAgentId || !selectedCampaignId || selectedOperationSteps.length === 0}
+          disabled={isRunning || !selectedCampaignId || selectedOperationSteps.length === 0}
         >
           {isRunning ? "실행 중..." : "큐 실행"}
         </button>
@@ -2374,6 +2309,59 @@ export default function App() {
             </div>
           </div>
 
+          <section className="routing-status-card">
+            <div className="panel-title-row">
+              <div>
+                <div className="section-title">Multi-Agent Routing</div>
+                <h3>{latestOperation ? latestOperation.operation_id : "실행 전 라우팅 계획"}</h3>
+              </div>
+              <span className={`job-badge ${latestOperation?.status || "planned"}`}>
+                {latestOperation?.status || "planned"}
+              </span>
+            </div>
+
+            <div className="routing-role-grid">
+              {routingRoles.map((role) => {
+                const plannedCount = plannedRoutes[role]?.length || 0;
+                const operationSteps = visibleOperationSteps.filter((step) => step.agent_role === role);
+                const displayCount = operationSteps.length || plannedCount;
+                const roleStatus = operationSteps.find((step) => step.status === "running")?.status
+                  || operationSteps.find((step) => step.status === "queued")?.status
+                  || operationSteps.find((step) => step.status === "completed")?.status
+                  || operationSteps.find((step) => step.status === "simulated")?.status
+                  || operationSteps.find((step) => step.status === "blocked")?.status
+                  || (displayCount > 0 ? "planned" : "empty");
+
+                return (
+                  <div key={`route-${role}`} className={`routing-role-card ${roleStatus}`}>
+                    <span>{getAgentRoleLabel(role)}</span>
+                    <strong>{displayCount}</strong>
+                    <small>{roleStatus === "empty" ? "배정 없음" : roleStatus}</small>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="routing-step-list">
+              {(visibleOperationSteps.length > 0 ? visibleOperationSteps : selectedOperationSteps.map((step) => ({
+                order: step.order,
+                name: step.name,
+                technique_id: step.technique_id,
+                agent_role: getRequiredAgentRole(step),
+                status: "planned",
+              }))).map((step) => (
+                <div key={`route-step-${step.agent_role}-${step.order}`} className="routing-step-row">
+                  <span>{getAgentRoleLabel(step.agent_role)}</span>
+                  <strong>{step.order}. {step.technique_id || step.name}</strong>
+                  <em className={`job-badge ${step.status || "planned"}`}>{step.status || "planned"}</em>
+                </div>
+              ))}
+              {selectedOperationSteps.length === 0 && visibleOperationSteps.length === 0 && (
+                <p className="empty">큐에 담은 테크닉이 생기면 역할별 라우팅 계획이 여기에 표시됩니다.</p>
+              )}
+            </div>
+          </section>
+
           <div className="queue-list">
             {selectedOperationSteps.map((step, index) => {
               const selectionId = getTechniqueSelectionId(step);
@@ -2481,27 +2469,27 @@ export default function App() {
             <div className="panel-title-row">
               <div>
                 <div className="section-title">최근 검증</div>
-                <h3>{selectedRun ? selectedRun.execution_id : "선택된 실행 없음"}</h3>
+                <h3>{recentVerificationTitle}</h3>
               </div>
-              <span className="page-indicator">{executedStepCount}개 실행됨</span>
+              <span className="page-indicator">{recentVerificationExecutedCount}개 반영됨</span>
             </div>
 
             <div className="validation-metrics">
               <div>
                 <span>공격</span>
-                <strong>{selectedRunAttackSteps.length}</strong>
+                <strong>{recentVerificationAttackSteps.length}</strong>
               </div>
               <div>
                 <span>탐지</span>
-                <strong>{selectedRunSummary.detectedCount}</strong>
+                <strong>{recentVerificationDetectedCount}</strong>
               </div>
               <div>
                 <span>미탐</span>
-                <strong>{selectedRunSummary.missedCount}</strong>
+                <strong>{recentVerificationMissedCount}</strong>
               </div>
               <div>
                 <span>미확인</span>
-                <strong>{selectedRunSummary.notCheckedCount}</strong>
+                <strong>{recentVerificationNotCheckedCount}</strong>
               </div>
             </div>
           </div>

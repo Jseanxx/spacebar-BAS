@@ -18,6 +18,7 @@ RUNS_DIR = BASE_DIR / "outputs" / "runs"
 
 JOBS_DIR = BASE_DIR / "outputs" / "jobs"
 AGENTS_DIR = BASE_DIR / "outputs" / "agents"
+OPERATIONS_DIR = BASE_DIR / "outputs" / "operations"
 
 KST = timezone(timedelta(hours=9))
 
@@ -83,6 +84,15 @@ class AgentRegisterRequest(BaseModel):
     campaign_agent_id: str = "SB-05"
     display_name: str | None = None
     collector_type: str | None = "elastic_agent"
+    agent_role: str | None = None
+    asset_id: str | None = None
+    segment_id: str | None = None
+    hostname: str | None = None
+    platform: str | None = None
+    execution_mode: str | None = "simulation"
+    safety_mode: str | None = None
+    capabilities: list[str] | str | None = None
+    controls: list[str] | str | None = None
 
 
 class AgentHeartbeatRequest(BaseModel):
@@ -103,6 +113,31 @@ class JobRequest(BaseModel):
     selected_orders: list[int] | None = None
     selected_steps: list[StepSelection] | None = None
     include_normal: bool = True
+    execution_mode: str | None = None
+
+
+class BlockedJobRequest(BaseModel):
+    """
+    Agent가 꺼져 있어 실행하지 못한 요청을 UI/보고서용으로 남길 때 사용합니다.
+    """
+
+    campaign_id: str = "SB-AD"
+    selected_steps: list[StepSelection] | None = None
+    reason: str = "agent_offline"
+    missing_agent_roles: list[str] | None = None
+
+
+class OperationRequest(BaseModel):
+    """
+    여러 Agent 역할에 걸친 SB-AD 실행 요청 모델입니다.
+    """
+
+    campaign_id: str = "SB-AD"
+    selected_orders: list[int] | None = None
+    selected_steps: list[StepSelection] | None = None
+    include_normal: bool = False
+    operation_mode: str = "multi_agent"
+    execution_mode: str = "real"
 
 
 class JobResultRequest(BaseModel):
@@ -428,6 +463,191 @@ def write_json_file(path, data):
         json.dump(data, file, indent=2, ensure_ascii=False)
 
 
+def normalize_list(value):
+    if value is None:
+        return []
+
+    if isinstance(value, list):
+        return [
+            str(item).strip()
+            for item in value
+            if str(item).strip()
+        ]
+
+    return [
+        item.strip()
+        for item in str(value).split(",")
+        if item.strip()
+    ]
+
+
+def merge_unique_lists(*values):
+    merged = []
+
+    for value in values:
+        for item in normalize_list(value):
+            if item not in merged:
+                merged.append(item)
+
+    return merged
+
+
+def load_registered_agents():
+    AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    agents = []
+
+    for path in sorted(AGENTS_DIR.glob("*.json")):
+        agents.append(read_json_file(path, {}))
+
+    return agents
+
+
+def parse_iso_datetime(value):
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def is_agent_fresh(agent, stale_after_seconds=15):
+    if not agent or agent.get("status") != "online":
+        return False
+
+    heartbeat_at = parse_iso_datetime(agent.get("last_heartbeat_at"))
+    if not heartbeat_at:
+        return False
+
+    return datetime.now(KST) - heartbeat_at <= timedelta(seconds=stale_after_seconds)
+
+
+def load_agent_or_404(agent_id):
+    agent = read_json_file(get_agent_path(agent_id), None)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    return agent
+
+
+def resolve_step_agent_role(step):
+    params = step.get("params", {}) or {}
+    commands = params.get("commands", []) or []
+
+    if commands and commands[0].get("agent_role"):
+        return commands[0].get("agent_role")
+
+    return params.get("agent_role") or step.get("agent_role") or "campaign_agent"
+
+
+def select_online_agent(campaign_id, agent_role):
+    candidates = [
+        agent
+        for agent in load_registered_agents()
+        if agent.get("campaign_agent_id") == campaign_id
+        and is_agent_fresh(agent)
+        and (
+            agent_role == "campaign_agent"
+            or agent.get("agent_role") == agent_role
+        )
+    ]
+
+    if agent_role == "campaign_agent":
+        candidates.sort(key=lambda agent: agent.get("last_heartbeat_at") or "", reverse=True)
+        candidates.sort(key=lambda agent: 0 if agent.get("agent_role") in (None, "", "campaign_agent") else 1)
+        return candidates[0] if candidates else None
+
+    candidates.sort(key=lambda agent: agent.get("last_heartbeat_at") or "", reverse=True)
+    return candidates[0] if candidates else None
+
+
+def build_discovered_asset_from_agent(agent):
+    asset_id = (
+        agent.get("asset_id")
+        or agent.get("agent_role")
+        or agent.get("hostname")
+        or agent.get("agent_id")
+    )
+
+    return {
+        "asset_id": asset_id,
+        "name": agent.get("display_name") or agent.get("hostname") or asset_id,
+        "hostname": agent.get("hostname"),
+        "platform": agent.get("platform"),
+        "role": agent.get("agent_role") or "BAS Agent discovered asset",
+        "segment_id": agent.get("segment_id"),
+        "agent_role": agent.get("agent_role"),
+        "agent_required": True,
+        "criticality": "medium",
+        "controls": normalize_list(agent.get("controls")),
+        "capabilities": normalize_list(agent.get("capabilities")),
+        "discovery_source": "agent_registration",
+        "discovered_by_agent": agent.get("agent_id"),
+    }
+
+
+def build_asset_discovery(target_id):
+    target = load_target(target_id)
+    target_assets = target.get("assets", []) or []
+    assets_by_id = {
+        asset.get("asset_id"): dict(asset)
+        for asset in target_assets
+        if asset.get("asset_id")
+    }
+    target_agents = [
+        agent
+        for agent in load_registered_agents()
+        if agent.get("campaign_agent_id") == target_id
+    ]
+
+    for agent in target_agents:
+        discovered = build_discovered_asset_from_agent(agent)
+        asset_id = discovered.get("asset_id")
+
+        if not asset_id:
+            continue
+
+        existing = assets_by_id.get(asset_id, {})
+        merged = {
+            **discovered,
+            **existing,
+            "controls": merge_unique_lists(existing.get("controls"), discovered.get("controls")),
+            "capabilities": merge_unique_lists(existing.get("capabilities"), discovered.get("capabilities")),
+            "discovery_source": "target_inventory+agent_registration" if existing else "agent_registration",
+            "discovered_by_agent": agent.get("agent_id"),
+            "agent": {
+                "agent_id": agent.get("agent_id"),
+                "display_name": agent.get("display_name"),
+                "status": agent.get("status"),
+                "last_heartbeat_at": agent.get("last_heartbeat_at"),
+            },
+        }
+
+        for key, value in discovered.items():
+            if merged.get(key) in (None, "", []):
+                merged[key] = value
+
+        assets_by_id[asset_id] = merged
+
+    return {
+        "target_id": target_id,
+        "target_name": target.get("name"),
+        "discovery_mode": "target_inventory_plus_agent_registration",
+        "assets": list(assets_by_id.values()),
+        "segments": target.get("segments", []),
+        "security_controls": target.get("security_controls", []),
+        "attack_paths": target.get("attack_paths", []),
+        "agents": target_agents,
+        "summary": {
+            "target_inventory_assets": len(target_assets),
+            "registered_agents": len(target_agents),
+            "discovered_assets": len(assets_by_id),
+        },
+    }
+
+
 def dump_step_selection(selection):
     return {
         "campaign_id": selection.campaign_id,
@@ -444,6 +664,10 @@ def get_job_path(job_id):
     return JOBS_DIR / f"{job_id}.json"
 
 
+def get_operation_path(operation_id):
+    return OPERATIONS_DIR / f"{operation_id}.json"
+
+
 def load_job(job_id):
     path = get_job_path(job_id)
 
@@ -451,6 +675,245 @@ def load_job(job_id):
         raise HTTPException(status_code=404, detail="Job not found")
 
     return read_json_file(path, {})
+
+
+def load_operation(operation_id):
+    path = get_operation_path(operation_id)
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Operation not found")
+
+    return read_json_file(path, {})
+
+
+def write_operation(operation):
+    write_json_file(get_operation_path(operation["operation_id"]), operation)
+
+
+def build_operation_summary(final_steps):
+    summary = {
+        "total": len(final_steps),
+        "queued": 0,
+        "running": 0,
+        "success": 0,
+        "failed": 0,
+        "blocked": 0,
+        "simulated": 0,
+        "pending": 0,
+    }
+
+    for step in final_steps:
+        status = step.get("status", "pending")
+
+        if status in ("completed", "success"):
+            summary["success"] += 1
+        elif status == "simulated":
+            summary["simulated"] += 1
+        elif status == "failed":
+            summary["failed"] += 1
+        elif status == "blocked":
+            summary["blocked"] += 1
+        elif status == "running":
+            summary["running"] += 1
+        elif status == "queued":
+            summary["queued"] += 1
+        else:
+            summary["pending"] += 1
+
+    return summary
+
+
+def create_operation_job(operation, step_entry):
+    agent = select_online_agent(operation["campaign_id"], step_entry["agent_role"])
+
+    if not agent:
+        step_entry["status"] = "simulated"
+        step_entry["simulation_reason"] = "agent_offline"
+        step_entry["would_route_to"] = step_entry["agent_role"]
+        step_entry["finished_at"] = now_kst()
+        operation["summary"] = build_operation_summary(operation["final_steps"])
+        write_operation(operation)
+        return None
+
+    job_id = f"job-{datetime.now(KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    job = {
+        "job_id": job_id,
+        "operation_id": operation["operation_id"],
+        "agent_id": agent.get("agent_id"),
+        "agent_role": step_entry["agent_role"],
+        "campaign_id": operation["campaign_id"],
+        "selected_orders": None,
+        "selected_steps": [
+            {
+                "campaign_id": step_entry["campaign_id"],
+                "order": step_entry["order"],
+                "inputs": step_entry.get("inputs", {}),
+            }
+        ],
+        "include_normal": False,
+        "execution_mode": operation.get("execution_mode"),
+        "status": "queued",
+        "created_at": now_kst(),
+        "started_at": None,
+        "finished_at": None,
+        "execution_id": None,
+        "result": None,
+        "error": None,
+    }
+
+    step_entry["status"] = "queued"
+    step_entry["agent_id"] = agent.get("agent_id")
+    step_entry["job_id"] = job_id
+    operation["status"] = "running"
+    operation["summary"] = build_operation_summary(operation["final_steps"])
+
+    write_json_file(get_job_path(job_id), job)
+    write_operation(operation)
+
+    return job
+
+
+def enqueue_next_operation_job(operation):
+    if operation.get("status") in ("completed", "blocked", "cancelled", "failed", "simulated"):
+        return None
+
+    active_step = next(
+        (
+            step
+            for step in operation.get("final_steps", [])
+            if step.get("status") in ("queued", "running")
+        ),
+        None,
+    )
+    if active_step:
+        return None
+
+    while True:
+        next_step = next(
+            (
+                step
+                for step in operation.get("final_steps", [])
+                if step.get("status", "pending") == "pending"
+            ),
+            None,
+        )
+
+        if not next_step:
+            summary = build_operation_summary(operation["final_steps"])
+            operation["status"] = "simulated" if summary["simulated"] == summary["total"] else "completed"
+            operation["finished_at"] = now_kst()
+            operation["summary"] = summary
+            write_operation(operation)
+            return None
+
+        job = create_operation_job(operation, next_step)
+        if job:
+            return job
+
+        operation = load_operation(operation["operation_id"])
+
+
+def get_primary_job_step(job):
+    result = job.get("result") or {}
+    steps = result.get("steps") or []
+    return steps[0] if steps else {}
+
+
+def resolve_operation_step_status(job):
+    if job.get("status") != "completed":
+        return "failed"
+
+    result_step = get_primary_job_step(job)
+    step_status = result_step.get("status")
+
+    if step_status in ("success", "simulated", "failed", "blocked"):
+        return step_status
+
+    if step_status in ("manual_required", "not_supported"):
+        return "simulated"
+
+    return "success"
+
+
+def sync_operation_result_fields(step_entry, job):
+    result_step = get_primary_job_step(job)
+
+    if result_step:
+        step_entry["phase"] = result_step.get("phase")
+        step_entry["elk_check"] = result_step.get("elk_check")
+        step_entry["module_result"] = result_step.get("module_result")
+        step_entry["result_step"] = result_step
+
+    if step_entry.get("status") == "simulated" and not step_entry.get("simulation_reason"):
+        step_entry["simulation_reason"] = result_step.get("module_result", {}).get("message") or "module_simulated"
+
+
+def finalize_operation_if_done(operation):
+    summary = build_operation_summary(operation["final_steps"])
+    operation["summary"] = summary
+
+    if summary["failed"] > 0:
+        operation["status"] = "failed"
+        operation["finished_at"] = now_kst()
+        write_operation(operation)
+        return operation
+
+    if summary["pending"] == 0 and summary["queued"] == 0 and summary["running"] == 0:
+        operation["status"] = "simulated" if summary["simulated"] == summary["total"] else "completed"
+        operation["finished_at"] = now_kst()
+        write_operation(operation)
+
+    return operation
+
+
+def update_operation_from_job_result(job):
+    operation_id = job.get("operation_id")
+    if not operation_id:
+        return None
+
+    operation = load_operation(operation_id)
+    step_entry = next(
+        (
+            step
+            for step in operation.get("final_steps", [])
+            if step.get("job_id") == job.get("job_id")
+        ),
+        None,
+    )
+
+    if not step_entry:
+        return operation
+
+    step_entry["status"] = resolve_operation_step_status(job)
+    step_entry["finished_at"] = job.get("finished_at")
+    step_entry["execution_id"] = job.get("execution_id")
+    step_entry["error"] = job.get("error")
+    step_entry["result"] = job.get("result")
+    sync_operation_result_fields(step_entry, job)
+    operation["sub_jobs"] = merge_unique_lists(operation.get("sub_jobs"), [job.get("job_id")])
+    operation = finalize_operation_if_done(operation)
+
+    if operation.get("status") == "failed":
+        return operation
+
+    enqueue_next_operation_job(operation)
+    return load_operation(operation_id)
+
+
+def mark_operation_job_running(job):
+    operation_id = job.get("operation_id")
+    if not operation_id:
+        return
+
+    operation = load_operation(operation_id)
+    for step in operation.get("final_steps", []):
+        if step.get("job_id") == job.get("job_id"):
+            step["status"] = "running"
+            step["started_at"] = job.get("started_at")
+            break
+
+    operation["summary"] = build_operation_summary(operation.get("final_steps", []))
+    write_operation(operation)
 
 @app.get("/health")
 def health_check():
@@ -495,6 +958,15 @@ def register_agent(request: AgentRegisterRequest):
         "campaign_agent_id": request.campaign_agent_id,
         "display_name": request.display_name or request.agent_id,
         "collector_type": request.collector_type,
+        "agent_role": request.agent_role,
+        "asset_id": request.asset_id,
+        "segment_id": request.segment_id,
+        "hostname": request.hostname,
+        "platform": request.platform,
+        "execution_mode": request.execution_mode,
+        "safety_mode": request.safety_mode,
+        "capabilities": normalize_list(request.capabilities),
+        "controls": normalize_list(request.controls),
         "status": "registered",
         "registered_at": now_kst(),
         "last_heartbeat_at": None,
@@ -542,15 +1014,138 @@ def list_agents():
     등록된 BasAgent 목록을 반환합니다.
     """
 
-    AGENTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    agents = []
-
-    for path in sorted(AGENTS_DIR.glob("*.json")):
-        agents.append(read_json_file(path, {}))
+    agents = load_registered_agents()
 
     return {
         "agents": agents,
+    }
+
+
+@app.get("/targets/{target_id}/asset-discovery")
+def discover_target_assets(target_id: str):
+    """
+    target YAML의 기준 자산과 실제 등록된 BasAgent 메타데이터를 합쳐
+    BAS 검증 대상 자산 목록을 반환합니다.
+    """
+
+    try:
+        return build_asset_discovery(target_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Target not found")
+
+
+@app.post("/operations")
+def create_operation(request: OperationRequest):
+    """
+    selected step을 agent_role 기준으로 순차 라우팅하는 multi-agent operation을 생성합니다.
+    """
+
+    try:
+        plan = build_execution_plan(
+            campaign_id=request.campaign_id,
+            selected_orders=request.selected_orders,
+            selected_steps=request.selected_steps,
+            include_normal=request.include_normal,
+        )
+    except HTTPException:
+        raise
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Campaign file not found")
+
+    operation_id = f"op-{datetime.now(KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    final_steps = []
+    missing_roles = []
+
+    for step in sorted(plan.get("steps", []), key=lambda item: item.get("order", 0)):
+        role = resolve_step_agent_role(step)
+        step_entry = {
+            "campaign_id": step.get("source_campaign_id") or step.get("campaign_id") or request.campaign_id,
+            "order": step.get("order"),
+            "technique_id": step.get("technique_id"),
+            "name": step.get("name"),
+            "agent_role": role,
+            "inputs": step.get("selected_inputs", {}),
+            "status": "pending",
+            "agent_id": None,
+            "job_id": None,
+        }
+
+        if not select_online_agent(request.campaign_id, role):
+            missing_roles.append(role)
+
+        final_steps.append(step_entry)
+
+    operation = {
+        "operation_id": operation_id,
+        "campaign_id": request.campaign_id,
+        "campaign_name": plan.get("campaign_name"),
+        "operation_mode": request.operation_mode,
+        "execution_mode": request.execution_mode,
+        "status": "pending",
+        "created_at": now_kst(),
+        "started_at": now_kst(),
+        "finished_at": None,
+        "requested_orders": plan.get("requested_orders", []),
+        "requested_steps": plan.get("requested_steps", []),
+        "final_steps": final_steps,
+        "sub_jobs": [],
+        "blocked_roles": sorted(set(missing_roles)),
+        "summary": build_operation_summary(final_steps),
+    }
+
+    write_operation(operation)
+    enqueue_next_operation_job(operation)
+    operation = load_operation(operation_id)
+
+    return {
+        "message": "operation created",
+        "operation": operation,
+    }
+
+
+@app.get("/operations")
+def list_operations():
+    OPERATIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+    operations = [
+        read_json_file(path, {})
+        for path in sorted(OPERATIONS_DIR.glob("*.json"), reverse=True)
+    ]
+
+    return {
+        "operations": operations,
+    }
+
+
+@app.get("/operations/{operation_id}")
+def get_operation(operation_id: str):
+    return load_operation(operation_id)
+
+
+@app.post("/operations/{operation_id}/cancel")
+def cancel_operation(operation_id: str):
+    operation = load_operation(operation_id)
+
+    if operation.get("status") in ("completed", "failed", "blocked", "cancelled"):
+        return {
+            "message": "operation already finished",
+            "operation": operation,
+        }
+
+    operation["status"] = "cancelled"
+    operation["finished_at"] = now_kst()
+
+    for step in operation.get("final_steps", []):
+        if step.get("status") in ("pending", "queued"):
+            step["status"] = "blocked"
+            step["blocked_reason"] = "operation_cancelled"
+
+    operation["summary"] = build_operation_summary(operation.get("final_steps", []))
+    write_operation(operation)
+
+    return {
+        "message": "operation cancelled",
+        "operation": operation,
     }
 
 
@@ -574,6 +1169,19 @@ def create_job(request: JobRequest):
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Campaign file not found")
 
+    agent = load_agent_or_404(request.agent_id)
+    if not is_agent_fresh(agent):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Agent is offline or heartbeat is stale",
+                "agent_id": request.agent_id,
+                "agent_role": agent.get("agent_role"),
+                "status": agent.get("status"),
+                "last_heartbeat_at": agent.get("last_heartbeat_at"),
+            },
+        )
+
     job_id = f"job-{datetime.now(KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
 
     job = {
@@ -586,6 +1194,7 @@ def create_job(request: JobRequest):
             for selection in request.selected_steps or []
         ],
         "include_normal": request.include_normal,
+        "execution_mode": request.execution_mode or agent.get("execution_mode") or "simulation",
         "status": "queued",
         "created_at": now_kst(),
         "started_at": None,
@@ -599,6 +1208,45 @@ def create_job(request: JobRequest):
 
     return {
         "message": "job created",
+        "job": job,
+    }
+
+
+@app.post("/jobs/blocked")
+def create_blocked_job(request: BlockedJobRequest):
+    """
+    Agent가 꺼져 있어 실행을 의도적으로 차단한 기록을 남깁니다.
+
+    실제 Agent job은 만들지 않으므로, Agent가 켜진 뒤 같은 큐를 다시 실행하면 됩니다.
+    """
+
+    job_id = f"blocked-{datetime.now(KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+
+    job = {
+        "job_id": job_id,
+        "agent_id": None,
+        "campaign_id": request.campaign_id,
+        "selected_orders": None,
+        "selected_steps": [
+            dump_step_selection(selection)
+            for selection in request.selected_steps or []
+        ],
+        "include_normal": False,
+        "status": "blocked",
+        "reason": request.reason,
+        "missing_agent_roles": request.missing_agent_roles or [],
+        "created_at": now_kst(),
+        "started_at": None,
+        "finished_at": now_kst(),
+        "execution_id": None,
+        "result": None,
+        "error": request.reason,
+    }
+
+    write_json_file(get_job_path(job_id), job)
+
+    return {
+        "message": "job blocked",
         "job": job,
     }
 
@@ -654,6 +1302,7 @@ def get_next_job(agent_id: str):
         job["status"] = "running"
         job["started_at"] = now_kst()
         write_json_file(path, job)
+        mark_operation_job_running(job)
 
         return {
             "job": job,
@@ -682,10 +1331,12 @@ def submit_job_result(agent_id: str, job_id: str, request: JobResultRequest):
     job["error"] = request.error
 
     write_json_file(get_job_path(job_id), job)
+    operation = update_operation_from_job_result(job)
 
     return {
         "message": "job result received",
         "job": job,
+        "operation": operation,
     }
 
 @app.get("/campaigns")

@@ -13,15 +13,62 @@ const JOB_POLL_ATTEMPTS = 40;
 const RUNS_PER_PAGE = 5;
 const VALID_VIEWS = new Set(["summary", "validation", "scope", "assets", "history", "evidence"]);
 const TECHNIQUE_NAMES = {
+  "T1003.001": "OS Credential Dumping: LSASS Memory",
+  "T1003.006": "DCSync",
+  "T1003.003": "NTDS",
+  "T1018": "Remote System Discovery",
+  "T1033": "System Owner/User Discovery",
+  "T1036.005": "Masquerading: Match Legitimate Name or Location",
+  "T1041": "Exfiltration Over C2 Channel",
+  "T1059.001": "Command and Scripting Interpreter: PowerShell",
+  "T1059.003": "Command and Scripting Interpreter: Windows Command Shell",
+  "T1069": "Permission Groups Discovery",
+  "T1074.001": "Local Data Staging",
+  "T1078.002": "Valid Accounts: Domain Accounts",
+  "T1087.002": "Account Discovery: Domain Account",
+  "T1095": "Non-Application Layer Protocol",
+  "T1105": "Ingress Tool Transfer",
+  "T1135": "Network Share Discovery",
+  "T1204.002": "User Execution: Malicious File",
+  "T1218.011": "System Binary Proxy Execution: Rundll32",
   "T1021.004": "Remote Services: SSH",
+  "T1021.006": "Remote Services: Windows Remote Management",
+  "T1558.001": "Golden Ticket",
+  "T1558.003": "Kerberoasting",
+  "T1560.001": "Archive via Utility",
+  "T1569.002": "Service Execution",
   "T1083": "File and Directory Discovery",
   "T1098.006": "Additional Container and Cloud Roles",
   "T1552.007": "Container and Resource Discovery Credentials",
-  "T1560.001": "Archive via Utility",
   "T1567.002": "Exfiltration to Cloud Storage",
   "T1609": "Container and Resource Discovery",
   "T1610": "Deploy Container",
   "T1613": "Container and Resource Discovery",
+};
+const TECHNIQUE_EVIDENCE_KEYS = {
+  "T1003.001": "lsass_memory_dump",
+  "T1003.003": "ntds_dump",
+  "T1003.006": "dcsync_replication",
+  "T1018": "remote_system_discovery",
+  "T1021.006": "winrm_remote_execution",
+  "T1033": "system_owner_user_discovery",
+  "T1036.005": "masquerading_legitimate_name",
+  "T1041": "exfiltration_over_c2",
+  "T1059.001": "powershell_over_winrm",
+  "T1059.003": "windows_command_shell",
+  "T1069": "permission_groups_discovery",
+  "T1074.001": "local_data_staging",
+  "T1078.002": "valid_domain_account_remote_logon",
+  "T1087.002": "domain_account_discovery",
+  "T1095": "non_application_tcp_connection",
+  "T1105": "ingress_tool_transfer",
+  "T1135": "network_share_discovery",
+  "T1204.002": "user_execution_malicious_file",
+  "T1218.011": "rundll32_comsvcs_proxy",
+  "T1558.001": "golden_ticket_service_ticket",
+  "T1558.003": "kerberoasting_tgs_request",
+  "T1560.001": "archive_collected_data",
+  "T1569.002": "service_execution",
 };
 
 function getInitialView() {
@@ -58,6 +105,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [runPage, setRunPage] = useState(0);
   const [activeView, setActiveView] = useState(getInitialView);
+  const [selectedAttackPathIndex, setSelectedAttackPathIndex] = useState(0);
 
   async function fetchJson(path, options) {
     const response = await fetch(`${API_BASE}${path}`, options);
@@ -839,6 +887,115 @@ export default function App() {
     }));
   }
 
+  function findRunStepForTechnique(techniqueId, run) {
+    return (run?.steps || []).find((step) => step.technique_id === techniqueId);
+  }
+
+  function findFlowStepsForTechnique(techniqueId) {
+    return (campaignDetail?.flow || []).filter((step) => step.technique_id === techniqueId);
+  }
+
+  function getBehaviorKeyForEvidence(techniqueId, flowStep, runStep) {
+    return runStep?.module_result?.behavior
+      || flowStep?.params?.behavior
+      || runStep?.module_result?.evidence_key
+      || TECHNIQUE_EVIDENCE_KEYS[techniqueId]
+      || flowStep?.module
+      || "";
+  }
+
+  function getAttackPathTelemetry(path, run, queuedSteps) {
+    const runSteps = run?.steps || [];
+    const relatedRunSteps = runSteps.filter((step) => path.techniques.includes(step.technique_id));
+    const relatedQueuedSteps = queuedSteps.filter((step) => path.techniques.includes(step.technique_id));
+    const detected = relatedRunSteps.filter((step) => getDetectionStatus(step) === "detected").length;
+    const missed = relatedRunSteps.filter((step) => getDetectionStatus(step) === "missed").length;
+    const notChecked = relatedRunSteps.filter((step) => getDetectionStatus(step) === "not_checked").length;
+    const executed = relatedRunSteps.filter((step) => ["success", "simulated"].includes(step.status)).length;
+
+    if (missed > 0) {
+      return {
+        status: "gap",
+        label: "탐지 갭",
+        detected,
+        missed,
+        notChecked,
+        executed,
+      };
+    }
+
+    if (detected > 0) {
+      return {
+        status: "detected",
+        label: "탐지됨",
+        detected,
+        missed,
+        notChecked,
+        executed,
+      };
+    }
+
+    if (executed > 0) {
+      return {
+        status: "executed",
+        label: "실행됨",
+        detected,
+        missed,
+        notChecked,
+        executed,
+      };
+    }
+
+    if (relatedQueuedSteps.length > 0) {
+      return {
+        status: "queued",
+        label: "큐 대기",
+        detected,
+        missed,
+        notChecked,
+        executed,
+      };
+    }
+
+    return {
+      status: "planned",
+      label: "계획됨",
+      detected,
+      missed,
+      notChecked,
+      executed,
+    };
+  }
+
+  function buildAttackPathEvidence(path, run) {
+    if (!path) {
+      return [];
+    }
+
+    return path.techniques.map((techniqueId) => {
+      const flowSteps = findFlowStepsForTechnique(techniqueId);
+      const primaryFlowStep = flowSteps[0];
+      const runStep = findRunStepForTechnique(techniqueId, run);
+      const behaviorKey = getBehaviorKeyForEvidence(techniqueId, primaryFlowStep, runStep);
+      const logQuery = behaviorKey ? targetDetail?.log_queries?.[behaviorKey] : "";
+      const alertQuery = behaviorKey ? targetDetail?.alert_queries?.[behaviorKey] : "";
+      const sampleEvents = Array.isArray(runStep?.elk_check?.sample_events)
+        ? runStep.elk_check.sample_events
+        : [];
+
+      return {
+        techniqueId,
+        techniqueName: TECHNIQUE_NAMES[techniqueId] || primaryFlowStep?.name || "Technique",
+        flowStep: primaryFlowStep,
+        runStep,
+        behaviorKey,
+        logQuery,
+        alertQuery,
+        sampleEvents,
+      };
+    });
+  }
+
   function getControlById(controls) {
     return new Map(controls.map((control) => [control.control_id, control]));
   }
@@ -1095,6 +1252,7 @@ export default function App() {
 
   const selectedRunMatchesCampaign = selectedRun?.campaign_id === selectedCampaignId;
   const visibleSummaryRun = latestRunsByCampaign.get(selectedCampaignId);
+  const validationRun = selectedRunMatchesCampaign ? selectedRun : visibleSummaryRun;
   const dashboardSummary = buildDashboardSummary(visibleSummaryRun);
   const executionChartStyle = buildDonutStyle(
     [
@@ -1196,6 +1354,12 @@ export default function App() {
     .map((assetId) => assetById.get(assetId))
     .filter(Boolean);
   const validationGates = buildValidationGates(securityControlInventory);
+  const attackPathTelemetry = attackPathInventory.map((path) => getAttackPathTelemetry(path, validationRun, selectedOperationSteps));
+  const activeAttackPath = attackPathInventory[selectedAttackPathIndex] || attackPathInventory[0] || null;
+  const activeAttackPathTelemetry = activeAttackPath
+    ? getAttackPathTelemetry(activeAttackPath, validationRun, selectedOperationSteps)
+    : null;
+  const activeAttackPathEvidence = buildAttackPathEvidence(activeAttackPath, validationRun);
   const readyPathCount = attackPathInventory.filter((path) => getPathValidationStatus(path).status === "ready").length;
   const blockedPathCount = attackPathInventory.filter((path) => getPathValidationStatus(path).status === "blocked").length;
   const configuredControlCount = securityControlInventory.filter((control) => control.status === "configured").length;
@@ -1263,6 +1427,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    setSelectedAttackPathIndex(0);
+  }, [selectedCampaignId]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return undefined;
     }
@@ -1311,9 +1479,10 @@ export default function App() {
           </button>
           <div>
             <p className="eyebrow">Spacebar BAS</p>
-            <h1>Security Control Validation Console</h1>
+            <h1>SpaceBaS</h1>
             <p className="topbar-copy">
-              캠페인 Technique을 실행하고, 예상 로그가 수집됐는지 확인하며, 실행 증거를 한 화면에서 검토합니다.
+              SpaceBar 팀의 공격 시뮬레이션 도구입니다. 캠페인 Technique을 실행하고,
+              예상 로그·Alert·증거가 수집됐는지 한 화면에서 검증합니다.
             </p>
           </div>
         </div>
@@ -1636,10 +1805,26 @@ export default function App() {
                   <path d="M0,0 L10,5 L0,10 Z" />
                 </marker>
               </defs>
-              <path className="enterprise-link link-orange" d="M170 240 C230 210 285 210 345 240" markerEnd="url(#enterprise-arrow-orange)" />
-              <path className="enterprise-link link-blue" d="M455 240 C515 210 570 210 630 240" markerEnd="url(#enterprise-arrow-blue)" />
-              <path className="enterprise-link link-red" d="M720 205 C780 120 830 110 885 145" markerEnd="url(#enterprise-arrow-red)" />
-              <path className="enterprise-link link-green" d="M665 300 C520 430 300 420 165 290" markerEnd="url(#enterprise-arrow-green)" />
+              <path
+                className={`enterprise-link link-orange status-${attackPathTelemetry[0]?.status || "planned"}`}
+                d="M170 240 C230 210 285 210 345 240"
+                markerEnd="url(#enterprise-arrow-orange)"
+              />
+              <path
+                className={`enterprise-link link-blue status-${attackPathTelemetry[1]?.status || "planned"}`}
+                d="M455 240 C515 210 570 210 630 240"
+                markerEnd="url(#enterprise-arrow-blue)"
+              />
+              <path
+                className={`enterprise-link link-red status-${attackPathTelemetry[3]?.status || "planned"}`}
+                d="M720 205 C780 120 830 110 885 145"
+                markerEnd="url(#enterprise-arrow-red)"
+              />
+              <path
+                className={`enterprise-link link-green status-${attackPathTelemetry[2]?.status || "planned"}`}
+                d="M665 300 C520 430 300 420 165 290"
+                markerEnd="url(#enterprise-arrow-green)"
+              />
             </svg>
 
             <div className="validation-gate gate-entry">
@@ -1711,6 +1896,48 @@ export default function App() {
             </div>
           </section>
 
+          <section className="panel evidence-brief-panel">
+            <div className="section-title">Evidence Panel</div>
+            <h3>선택 경로 로그 근거</h3>
+
+            {activeAttackPath ? (
+              <>
+                <div className={`selected-path-summary status-${activeAttackPathTelemetry?.status || "planned"}`}>
+                  <span>{activeAttackPath.sourceAsset?.name || activeAttackPath.source_asset_id} → {activeAttackPath.targetAsset?.name || activeAttackPath.target_asset_id}</span>
+                  <strong>{activeAttackPath.label}</strong>
+                  <em>{activeAttackPathTelemetry?.label || "계획됨"}</em>
+                </div>
+
+                <div className="path-evidence-list">
+                  {activeAttackPathEvidence.map((item) => (
+                    <div key={`${activeAttackPath.source_asset_id}-${item.techniqueId}`} className="path-evidence-card">
+                      <div className="path-evidence-head">
+                        <strong>{item.techniqueId}</strong>
+                        <span className={`status-tag ${item.runStep ? getDetectionStatus(item.runStep) : "not_checked"}`}>
+                          {item.runStep ? getDetectionLabel(item.runStep) : "실행 전"}
+                        </span>
+                      </div>
+                      <small>{item.techniqueName}</small>
+                      <div className="evidence-query-stack">
+                        <span>KQL</span>
+                        <code>{item.logQuery || "아직 매핑된 KQL 없음"}</code>
+                      </div>
+                      <div className="evidence-query-stack">
+                        <span>Alert</span>
+                        <code>{item.alertQuery || "아직 매핑된 Alert Rule 없음"}</code>
+                      </div>
+                      {item.sampleEvents.length > 0 && (
+                        <pre>{typeof item.sampleEvents[0] === "string" ? item.sampleEvents[0] : JSON.stringify(item.sampleEvents[0], null, 2)}</pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="empty">공격 경로 메타데이터가 아직 없습니다.</p>
+            )}
+          </section>
+
           <section className="panel objective-panel">
             <div className="section-title">검증 목적</div>
             <h3>이 화면이 보여줘야 하는 것</h3>
@@ -1780,11 +2007,23 @@ export default function App() {
             </div>
             {attackPathInventory.map((path) => {
               const validation = getPathValidationStatus(path);
+              const telemetry = attackPathTelemetry[attackPathInventory.indexOf(path)] || getAttackPathTelemetry(path, validationRun, selectedOperationSteps);
               const sourceAgent = path.sourceAsset?.agentLabel || "-";
               const targetAgent = path.targetAsset?.agentLabel || "-";
+              const pathIndex = attackPathInventory.indexOf(path);
 
               return (
-                <div key={`${path.source_asset_id}-${path.target_asset_id}`} className="path-validation-row">
+                <button
+                  key={`${path.source_asset_id}-${path.target_asset_id}`}
+                  type="button"
+                  className={[
+                    "path-validation-row",
+                    "path-validation-button",
+                    selectedAttackPathIndex === pathIndex ? "selected-path-validation" : "",
+                    `status-${telemetry.status}`,
+                  ].join(" ")}
+                  onClick={() => setSelectedAttackPathIndex(pathIndex)}
+                >
                   <span>
                     <strong>{path.sourceAsset?.name || path.source_asset_id} → {path.targetAsset?.name || path.target_asset_id}</strong>
                     <small>{path.label}</small>
@@ -1792,9 +2031,10 @@ export default function App() {
                   <span>{path.techniques.join(", ")}</span>
                   <span>{sourceAgent} / {targetAgent}</span>
                   <span>
+                    <em className={`path-status ${telemetry.status}`}>{telemetry.label}</em>
                     <em className={`path-status ${validation.status}`}>{validation.label}</em>
                   </span>
-                </div>
+                </button>
               );
             })}
           </div>

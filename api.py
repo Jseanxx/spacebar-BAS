@@ -3,13 +3,14 @@ from datetime import datetime, timezone, timedelta
 import json
 import uuid
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from bas.controller import run_campaign
 from bas.elk_checker import resolve_query
 from bas.loader import load_campaign, load_target
+from bas.report_builder import REPORTS_DIR, build_report_from_operation, build_report_from_run
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -690,6 +691,51 @@ def write_operation(operation):
     write_json_file(get_operation_path(operation["operation_id"]), operation)
 
 
+def apply_report_classification_to_operation(operation, report):
+    classified_by_key = {}
+    for classified_step in report.get("steps", []):
+        key = (classified_step.get("order"), classified_step.get("job_id"))
+        classified_by_key[key] = classified_step
+        classified_by_key[(classified_step.get("order"), None)] = classified_step
+
+    for step in operation.get("final_steps", []):
+        classified_step = classified_by_key.get((step.get("order"), step.get("job_id"))) \
+            or classified_by_key.get((step.get("order"), None))
+        if not classified_step:
+            continue
+
+        for field in (
+            "execution_status",
+            "detection_status",
+            "source_status",
+            "alert_status",
+            "source_event_count",
+            "alert_count",
+            "gap_type",
+            "recommendation",
+        ):
+            step[field] = classified_step.get(field)
+
+
+def attach_operation_report(operation):
+    try:
+        report = build_report_from_operation(operation)
+        apply_report_classification_to_operation(operation, report)
+        operation["report"] = {
+            "report_id": report.get("report_id"),
+            "source_id": report.get("source_id"),
+            "generated_at": report.get("generated_at"),
+            "summary": report.get("summary"),
+            "backlog_count": len(report.get("backlog", [])),
+            "artifact_paths": report.get("artifact_paths"),
+        }
+        operation.pop("report_error", None)
+    except Exception as exc:
+        operation["report_error"] = str(exc)
+
+    return operation
+
+
 def build_operation_summary(final_steps):
     summary = {
         "total": len(final_steps),
@@ -803,6 +849,7 @@ def enqueue_next_operation_job(operation):
             operation["status"] = "simulated" if summary["simulated"] == summary["total"] else "completed"
             operation["finished_at"] = now_kst()
             operation["summary"] = summary
+            operation = attach_operation_report(operation)
             write_operation(operation)
             return None
 
@@ -855,12 +902,14 @@ def finalize_operation_if_done(operation):
     if summary["failed"] > 0:
         operation["status"] = "failed"
         operation["finished_at"] = now_kst()
+        operation = attach_operation_report(operation)
         write_operation(operation)
         return operation
 
     if summary["pending"] == 0 and summary["queued"] == 0 and summary["running"] == 0:
         operation["status"] = "simulated" if summary["simulated"] == summary["total"] else "completed"
         operation["finished_at"] = now_kst()
+        operation = attach_operation_report(operation)
         write_operation(operation)
 
     return operation
@@ -1147,6 +1196,120 @@ def cancel_operation(operation_id: str):
         "message": "operation cancelled",
         "operation": operation,
     }
+
+
+def normalize_report_source_id(report_id):
+    if report_id.startswith("report-"):
+        candidate = report_id.removeprefix("report-")
+        if (REPORTS_DIR / f"{candidate}.report.json").exists():
+            return candidate
+
+    return report_id
+
+
+def load_report(report_id):
+    source_id = normalize_report_source_id(report_id)
+    path = REPORTS_DIR / f"{source_id}.report.json"
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    return read_json_file(path, {})
+
+
+def read_report_artifact(report_id, suffix, media_type):
+    source_id = normalize_report_source_id(report_id)
+    path = REPORTS_DIR / f"{source_id}.{suffix}"
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Report artifact not found")
+
+    return Response(content=path.read_text(encoding="utf-8"), media_type=media_type)
+
+
+@app.post("/operations/{operation_id}/report")
+def create_operation_report(operation_id: str):
+    operation = load_operation(operation_id)
+
+    try:
+        report = build_report_from_operation(operation)
+        apply_report_classification_to_operation(operation, report)
+        operation["report"] = {
+            "report_id": report.get("report_id"),
+            "source_id": report.get("source_id"),
+            "generated_at": report.get("generated_at"),
+            "summary": report.get("summary"),
+            "backlog_count": len(report.get("backlog", [])),
+            "artifact_paths": report.get("artifact_paths"),
+        }
+        operation.pop("report_error", None)
+        write_operation(operation)
+        return report
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/runs/{execution_id}/report")
+def create_run_report(execution_id: str):
+    try:
+        return build_report_from_run(execution_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Run result not found")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/reports")
+def list_reports():
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    reports = []
+
+    for path in sorted(REPORTS_DIR.glob("*.report.json"), reverse=True):
+        report = read_json_file(path, {})
+        reports.append({
+            "report_id": report.get("report_id"),
+            "source_type": report.get("source_type"),
+            "source_id": report.get("source_id"),
+            "campaign_id": report.get("campaign_id"),
+            "campaign_name": report.get("campaign_name"),
+            "generated_at": report.get("generated_at"),
+            "summary": report.get("summary"),
+            "backlog_count": len(report.get("backlog", [])),
+            "file": str(path),
+        })
+
+    return {"reports": reports}
+
+
+@app.get("/reports/{report_id}")
+def get_report(report_id: str):
+    return load_report(report_id)
+
+
+@app.get("/reports/{report_id}/summary.md")
+def get_report_summary(report_id: str):
+    return read_report_artifact(report_id, "summary.md", "text/markdown")
+
+
+@app.get("/reports/{report_id}/technical.md")
+def get_report_technical(report_id: str):
+    return read_report_artifact(report_id, "technical.md", "text/markdown")
+
+
+@app.get("/reports/{report_id}/backlog.csv")
+def get_report_backlog(report_id: str):
+    return read_report_artifact(report_id, "detection-backlog.csv", "text/csv")
+
+
+@app.get("/reports/{report_id}/navigator.json")
+def get_report_navigator(report_id: str):
+    source_id = normalize_report_source_id(report_id)
+    path = REPORTS_DIR / f"{source_id}.attack-navigator.json"
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Report artifact not found")
+
+    return read_json_file(path, {})
 
 
 @app.post("/jobs")
@@ -1439,6 +1602,13 @@ def create_run(request: RunRequest):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
+    report = None
+    report_error = None
+    try:
+        report = build_report_from_run(result["execution_id"])
+    except Exception as exc:
+        report_error = str(exc)
+
     return {
         "message": "campaign executed",
         "execution_id": result["execution_id"],
@@ -1455,6 +1625,15 @@ def create_run(request: RunRequest):
         "requested_steps": result.get("requested_steps"),
         "auto_included_orders": result.get("auto_included_orders"),
         "final_orders": result.get("final_orders"),
+        "report": {
+            "report_id": report.get("report_id"),
+            "source_id": report.get("source_id"),
+            "generated_at": report.get("generated_at"),
+            "summary": report.get("summary"),
+            "backlog_count": len(report.get("backlog", [])),
+            "artifact_paths": report.get("artifact_paths"),
+        } if report else None,
+        "report_error": report_error,
         "result": result,
     }
 

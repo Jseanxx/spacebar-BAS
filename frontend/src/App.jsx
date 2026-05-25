@@ -532,14 +532,61 @@ export default function App() {
   }
 
   function getDetectionStatus(step) {
-    if (!step?.elk_check?.checked) {
+    if (step?.detection_status) {
+      return step.detection_status;
+    }
+
+    if (["blocked"].includes(step?.status)) {
+      return "blocked";
+    }
+
+    if (["failed", "manual_required", "not_supported"].includes(step?.status)) {
+      return "execution_failed";
+    }
+
+    if (step?.status === "simulated") {
       return "not_checked";
     }
 
-    return step.elk_check.matched ? "detected" : "missed";
+    const elkCheck = step?.elk_check;
+    const alertCheck = elkCheck?.alert_check;
+
+    if (!elkCheck?.checked && !alertCheck?.checked) {
+      return "not_checked";
+    }
+
+    if (elkCheck?.matched && alertCheck?.matched) {
+      return "detected";
+    }
+
+    if (elkCheck?.matched && !alertCheck?.matched) {
+      return "logged_only";
+    }
+
+    if (!elkCheck?.matched && alertCheck?.matched) {
+      return "alert_without_source_sample";
+    }
+
+    return "missed";
   }
 
   function getDetectionLabel(step) {
+    const status = getDetectionStatus(step);
+    const labels = {
+      detected: "탐지됨",
+      logged_only: "로그만",
+      missed: "미탐지",
+      not_checked: "미확인",
+      blocked: "차단됨",
+      execution_failed: "실패",
+      alert_without_source_sample: "Alert만",
+      not_run: "대기",
+    };
+
+    if (labels[status]) {
+      return labels[status];
+    }
+
     if (!step?.elk_check) {
       return "쿼리 없음";
     }
@@ -552,7 +599,7 @@ export default function App() {
       return "미설정";
     }
 
-    return step.elk_check.matched ? "탐지됨" : "미탐지";
+    return status;
   }
 
   function getRiskLevel(step) {
@@ -563,7 +610,7 @@ export default function App() {
       return "low";
     }
 
-    if (detectionStatus === "missed") {
+    if (["missed", "execution_failed"].includes(detectionStatus)) {
       return "high";
     }
 
@@ -572,6 +619,62 @@ export default function App() {
     }
 
     return step.phase === "attack" ? "medium" : "low";
+  }
+
+  function getDetectionGapType(step) {
+    if (step?.gap_type) {
+      return step.gap_type;
+    }
+
+    const status = getDetectionStatus(step);
+    const gapTypes = {
+      logged_only: "no_alert",
+      missed: "no_telemetry",
+      not_checked: "not_checked",
+      execution_failed: "agent_or_execution_failed",
+      blocked: "blocked_or_prevented",
+      alert_without_source_sample: "query_too_narrow",
+    };
+
+    return gapTypes[status] || "-";
+  }
+
+  function getRecommendedAction(step) {
+    if (step?.recommendation?.action) {
+      return step.recommendation.action;
+    }
+
+    const status = getDetectionStatus(step);
+    const actions = {
+      detected: "keep",
+      logged_only: "tune_or_create_rule",
+      missed: "fix_telemetry_then_rule",
+      not_checked: "fix_validation_pipeline",
+      execution_failed: "fix_agent_or_execution",
+      blocked: "review_safety_or_prevention_control",
+      alert_without_source_sample: "fix_source_query",
+    };
+
+    return actions[status] || "review_detection_logic";
+  }
+
+  function getBacklogPriority(step) {
+    const status = getDetectionStatus(step);
+    const risk = getRiskLevel(step);
+
+    if (status === "missed" && risk === "high") {
+      return "P0";
+    }
+
+    if (["missed", "execution_failed", "logged_only"].includes(status)) {
+      return "P1";
+    }
+
+    if (["not_checked", "alert_without_source_sample"].includes(status)) {
+      return "P2";
+    }
+
+    return "P3";
   }
 
   function buildDashboardSummary(run) {
@@ -583,10 +686,12 @@ export default function App() {
     const simulatedSteps = steps.filter((step) => step.status === "simulated");
     const failedSteps = steps.filter((step) => step.status && !["success", "simulated"].includes(step.status));
     const detectedSteps = successfulAttacks.filter((step) => getDetectionStatus(step) === "detected");
+    const loggedOnlySteps = successfulAttacks.filter((step) => getDetectionStatus(step) === "logged_only");
     const missedSteps = successfulAttacks.filter((step) => getDetectionStatus(step) === "missed");
     const notCheckedSteps = successfulAttacks.filter((step) => getDetectionStatus(step) === "not_checked");
 
     const penalty = (missedSteps.length * 25)
+      + (loggedOnlySteps.length * 12)
       + (failedAttacks.length * 15)
       + (notCheckedSteps.length * 8);
 
@@ -599,6 +704,7 @@ export default function App() {
       successfulAttackCount: successfulAttacks.length,
       failedAttackCount: failedAttacks.length,
       detectedCount: detectedSteps.length,
+      loggedOnlyCount: loggedOnlySteps.length,
       missedCount: missedSteps.length,
       notCheckedCount: notCheckedSteps.length,
       penalty,
@@ -1151,6 +1257,7 @@ export default function App() {
   const detectionChartStyle = buildDonutStyle(
     [
       { value: dashboardSummary.detectedCount, color: "#16a34a" },
+      { value: dashboardSummary.loggedOnlyCount, color: "#eab308" },
       { value: dashboardSummary.missedCount, color: "#dc2626" },
       { value: dashboardSummary.notCheckedCount, color: "#f59e0b" },
     ],
@@ -1245,8 +1352,21 @@ export default function App() {
   const recentVerificationAttackSteps = recentVerificationSteps.filter((step) => step.phase === "attack" || step.technique_id);
   const recentVerificationExecutedCount = recentVerificationSteps.filter((step) => ["success", "completed", "simulated"].includes(step.status)).length;
   const recentVerificationDetectedCount = recentVerificationAttackSteps.filter((step) => getDetectionStatus(step) === "detected").length;
+  const recentVerificationLoggedOnlyCount = recentVerificationAttackSteps.filter((step) => getDetectionStatus(step) === "logged_only").length;
   const recentVerificationMissedCount = recentVerificationAttackSteps.filter((step) => getDetectionStatus(step) === "missed").length;
   const recentVerificationNotCheckedCount = recentVerificationAttackSteps.filter((step) => getDetectionStatus(step) === "not_checked").length;
+  const remediationBacklogRows = recentVerificationAttackSteps
+    .filter((step) => getDetectionStatus(step) !== "detected")
+    .map((step) => ({
+      priority: getBacklogPriority(step),
+      techniqueId: step.technique_id || "-",
+      order: step.order,
+      name: step.name,
+      gapType: getDetectionGapType(step),
+      action: getRecommendedAction(step),
+      status: getDetectionStatus(step),
+    }))
+    .sort((first, second) => first.priority.localeCompare(second.priority));
   const recentVerificationTitle = selectedRunMatchesCampaign
     ? selectedRun.execution_id
     : latestOperation?.operation_id || "선택된 실행 없음";
@@ -1694,10 +1814,10 @@ export default function App() {
           <p>멘토 피드백 기준으로 자산, 네트워크 구간, Agent, 로그 수집, Kibana 탐지룰을 하나의 검증 맵으로 연결합니다.</p>
         </div>
         <div className="view-header-metrics">
-          <span>Assets <strong>{assetInventory.length}</strong></span>
-          <span>Agents <strong>{onlineAgentAssetCount}/{agentRequiredAssets.length}</strong></span>
-          <span>Controls <strong>{configuredControlCount}/{securityControlInventory.length}</strong></span>
-          <span>Rules <strong>{detectionRuleCount}</strong></span>
+          <span>Detected <strong>{recentVerificationDetectedCount}</strong></span>
+          <span>Logged <strong>{recentVerificationLoggedOnlyCount}</strong></span>
+          <span>Gap <strong>{recentVerificationMissedCount}</strong></span>
+          <span>Backlog <strong>{remediationBacklogRows.length}</strong></span>
         </div>
       </section>
 
@@ -1807,172 +1927,35 @@ export default function App() {
         </section>
 
         <aside className="validation-side-stack">
-          <section className="panel posture-panel">
-            <div className="section-title">Validation Posture</div>
-            <h3>검증 준비 상태</h3>
-            <div className="posture-score">
-              <strong>{agentRequiredAssets.length > 0 ? Math.round((onlineAgentAssetCount / agentRequiredAssets.length) * 100) : 0}</strong>
-              <span>Agent Coverage</span>
+          <section className="panel remediation-backlog-panel">
+            <div className="panel-title-row">
+              <div>
+                <div className="section-title">Remediation Backlog</div>
+                <h3>자동 생성 조치 목록</h3>
+              </div>
+              <span className="page-indicator">{remediationBacklogRows.length} items</span>
             </div>
-            <div className="posture-metrics">
-              <div>
-                <span>Ready paths</span>
-                <strong>{readyPathCount}</strong>
-              </div>
-              <div>
-                <span>Blocked paths</span>
-                <strong>{blockedPathCount}</strong>
-              </div>
-              <div>
-                <span>Critical assets</span>
-                <strong>{criticalAssetCount}</strong>
-              </div>
-            </div>
-          </section>
 
-          <section className="panel evidence-brief-panel">
-            <div className="section-title">Evidence Panel</div>
-            <h3>선택 경로 로그 근거</h3>
-
-            {activeAttackPath ? (
-              <>
-                <div className={`selected-path-summary status-${activeAttackPathTelemetry?.status || "planned"}`}>
-                  <span>{activeAttackPath.sourceAsset?.name || activeAttackPath.source_asset_id} → {activeAttackPath.targetAsset?.name || activeAttackPath.target_asset_id}</span>
-                  <strong>{activeAttackPath.label}</strong>
-                  <em>{activeAttackPathTelemetry?.label || "계획됨"}</em>
+            <div className="backlog-list">
+              {remediationBacklogRows.slice(0, 6).map((item) => (
+                <div key={`${item.order}-${item.techniqueId}-${item.gapType}`} className={`backlog-item ${item.priority.toLowerCase()}`}>
+                  <span className="backlog-priority">{item.priority}</span>
+                  <div>
+                    <strong>{item.techniqueId} · {item.gapType}</strong>
+                    <small>{item.order}. {item.name}</small>
+                    <em>{item.action}</em>
+                  </div>
+                  <span className={`status-tag ${item.status}`}>{getDetectionLabel({ detection_status: item.status })}</span>
                 </div>
+              ))}
 
-                <div className="path-evidence-list">
-                  {activeAttackPathEvidence.map((item) => (
-                    <div key={`${activeAttackPath.source_asset_id}-${item.techniqueId}`} className="path-evidence-card">
-                      <div className="path-evidence-head">
-                        <strong>{item.techniqueId}</strong>
-                        <span className={`status-tag ${item.runStep ? getDetectionStatus(item.runStep) : "not_checked"}`}>
-                          {item.runStep ? getDetectionLabel(item.runStep) : "실행 전"}
-                        </span>
-                      </div>
-                      <small>{item.techniqueName}</small>
-                      <div className="evidence-query-stack">
-                        <span>KQL</span>
-                        <code>{item.logQuery || "아직 매핑된 KQL 없음"}</code>
-                      </div>
-                      <div className="evidence-query-stack">
-                        <span>Alert</span>
-                        <code>{item.alertQuery || "아직 매핑된 Alert Rule 없음"}</code>
-                      </div>
-                      {item.sampleEvents.length > 0 && (
-                        <pre>{typeof item.sampleEvents[0] === "string" ? item.sampleEvents[0] : JSON.stringify(item.sampleEvents[0], null, 2)}</pre>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <p className="empty">공격 경로 메타데이터가 아직 없습니다.</p>
-            )}
-          </section>
-
-          <section className="panel objective-panel">
-            <div className="section-title">검증 목적</div>
-            <h3>이 화면이 보여줘야 하는 것</h3>
-            <div className="objective-list">
-              <div>
-                <strong>1. 어느 자산을 검증하는가</strong>
-                <span>PC01, FS01, DC01, Attacker, ELK를 역할과 중요도로 식별</span>
-              </div>
-              <div>
-                <strong>2. 어느 구간을 통과하는가</strong>
-                <span>외부, 사용자, 서버, 도메인 핵심 구간의 이동 경로 확인</span>
-              </div>
-              <div>
-                <strong>3. 어떤 통제가 봐야 하는가</strong>
-                <span>Sysmon, PowerShell Logging, Winlogbeat, Kibana Rule 매핑</span>
-              </div>
-              <div>
-                <strong>4. 어디가 미검증인가</strong>
-                <span>Agent 미설치, 로그 미수집, 룰 미탐지를 backlog로 전환</span>
-              </div>
+              {remediationBacklogRows.length === 0 && (
+                <p className="empty">현재 선택된 실행에서 자동 조치 항목이 없습니다.</p>
+              )}
             </div>
           </section>
+
         </aside>
-
-        <section className="panel validation-gate-panel">
-          <div className="panel-title-row">
-            <div>
-              <div className="section-title">Security Control Gates</div>
-              <h3>구간별 보안 통제 검증</h3>
-            </div>
-            <span className="page-indicator">{validationGates.length} gates</span>
-          </div>
-
-          <div className="gate-grid">
-            {validationGates.map((gate) => (
-              <div key={gate.gate_id} className="gate-card">
-                <span>{gate.between}</span>
-                <strong>{gate.name}</strong>
-                <p>{gate.objective}</p>
-                <div className="gate-control-list">
-                  {gate.controls.map((control) => (
-                    <em key={`${gate.gate_id}-${control.control_id}`} className={`control-status ${String(control.status || "configured").replaceAll(" ", "-")}`}>
-                      {control.name}
-                    </em>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel validation-path-panel">
-          <div className="panel-title-row">
-            <div>
-              <div className="section-title">Attack Path Validation</div>
-              <h3>경로별 실행 가능성</h3>
-            </div>
-            <span className="page-indicator">{attackPathInventory.length} paths</span>
-          </div>
-
-          <div className="path-validation-table">
-            <div className="path-validation-row path-validation-header">
-              <span>Path</span>
-              <span>Techniques</span>
-              <span>Agent</span>
-              <span>Status</span>
-            </div>
-            {attackPathInventory.map((path) => {
-              const validation = getPathValidationStatus(path);
-              const telemetry = attackPathTelemetry[attackPathInventory.indexOf(path)] || getAttackPathTelemetry(path, validationRun, selectedOperationSteps);
-              const sourceAgent = path.sourceAsset?.agentLabel || "-";
-              const targetAgent = path.targetAsset?.agentLabel || "-";
-              const pathIndex = attackPathInventory.indexOf(path);
-
-              return (
-                <button
-                  key={`${path.source_asset_id}-${path.target_asset_id}`}
-                  type="button"
-                  className={[
-                    "path-validation-row",
-                    "path-validation-button",
-                    selectedAttackPathIndex === pathIndex ? "selected-path-validation" : "",
-                    `status-${telemetry.status}`,
-                  ].join(" ")}
-                  onClick={() => setSelectedAttackPathIndex(pathIndex)}
-                >
-                  <span>
-                    <strong>{path.sourceAsset?.name || path.source_asset_id} → {path.targetAsset?.name || path.target_asset_id}</strong>
-                    <small>{path.label}</small>
-                  </span>
-                  <span>{path.techniques.join(", ")}</span>
-                  <span>{sourceAgent} / {targetAgent}</span>
-                  <span>
-                    <em className={`path-status ${telemetry.status}`}>{telemetry.label}</em>
-                    <em className={`path-status ${validation.status}`}>{validation.label}</em>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
       </section>
       </>
       )}
@@ -2484,12 +2467,39 @@ export default function App() {
                 <strong>{recentVerificationDetectedCount}</strong>
               </div>
               <div>
+                <span>로그만</span>
+                <strong>{recentVerificationLoggedOnlyCount}</strong>
+              </div>
+              <div>
                 <span>미탐</span>
                 <strong>{recentVerificationMissedCount}</strong>
               </div>
               <div>
                 <span>미확인</span>
                 <strong>{recentVerificationNotCheckedCount}</strong>
+              </div>
+            </div>
+
+            <div className="execution-backlog-strip">
+              <div className="panel-title-row">
+                <div>
+                  <div className="section-title">자동 조치 목록</div>
+                  <h3>{remediationBacklogRows.length}개 개선 항목</h3>
+                </div>
+              </div>
+
+              <div className="execution-backlog-list">
+                {remediationBacklogRows.slice(0, 4).map((item) => (
+                  <div key={`execution-backlog-${item.order}-${item.techniqueId}-${item.gapType}`} className="execution-backlog-item">
+                    <span className="backlog-priority">{item.priority}</span>
+                    <strong>{item.techniqueId} · {item.gapType}</strong>
+                    <small>{item.action}</small>
+                  </div>
+                ))}
+
+                {remediationBacklogRows.length === 0 && (
+                  <p className="empty">최근 검증에서 자동 조치 항목이 없습니다.</p>
+                )}
               </div>
             </div>
           </div>

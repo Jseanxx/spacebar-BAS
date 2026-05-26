@@ -90,6 +90,7 @@ export default function App() {
   const [runs, setRuns] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [operations, setOperations] = useState([]);
+  const [reports, setReports] = useState([]);
   const [selectedOperation, setSelectedOperation] = useState(null);
   const [agents, setAgents] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
@@ -159,6 +160,13 @@ export default function App() {
 
     const runData = await fetchJson("/runs");
     setRuns(runData.runs || []);
+
+    try {
+      const reportData = await fetchJson("/reports");
+      setReports(reportData.reports || []);
+    } catch {
+      setReports([]);
+    }
 
     return {
       agents: loadedAgents,
@@ -656,6 +664,49 @@ export default function App() {
     };
 
     return actions[status] || "review_detection_logic";
+  }
+
+  function getGapLabel(gapType) {
+    const labels = {
+      no_alert: "로그는 있음, Alert 없음",
+      no_telemetry: "로그/Alert 모두 없음",
+      not_checked: "검증 미확인",
+      agent_or_execution_failed: "실행 실패",
+      blocked_or_prevented: "차단 또는 미실행",
+      query_too_narrow: "검증 쿼리 보정 필요",
+      review_required: "검토 필요",
+    };
+
+    return labels[gapType] || gapType || "검토 필요";
+  }
+
+  function getActionLabel(action) {
+    const labels = {
+      keep: "유지",
+      tune_or_create_rule: "탐지룰 생성/보완",
+      fix_telemetry_then_rule: "로그 수집부터 보완",
+      fix_validation_pipeline: "ELK/검증 연결 확인",
+      fix_agent_or_execution: "Agent/실행 조건 확인",
+      review_safety_or_prevention_control: "차단 조건 검토",
+      fix_source_query: "source query 보정",
+      review_detection_logic: "탐지 로직 검토",
+    };
+
+    return labels[action] || action || "검토 필요";
+  }
+
+  function getBacklogExplanation(step) {
+    const status = getDetectionStatus(step);
+    const explanations = {
+      logged_only: "원본 로그는 확인됐지만 Alert가 없어 탐지룰 보완이 필요합니다.",
+      missed: "공격은 실행됐지만 로그와 Alert가 모두 확인되지 않았습니다.",
+      not_checked: "ELK 연결, 쿼리, Agent 실행 상태 중 하나가 확인되지 않았습니다.",
+      execution_failed: "공격 단계 자체가 완료되지 않아 탐지 검증을 할 수 없습니다.",
+      blocked: "실행 전 차단되었거나 예방 통제에 의해 멈춘 상태입니다.",
+      alert_without_source_sample: "Alert는 있으나 원본 로그 샘플이 부족해 쿼리 보정이 필요합니다.",
+    };
+
+    return explanations[status] || "탐지 상태를 다시 확인해야 합니다.";
   }
 
   function getBacklogPriority(step) {
@@ -1355,6 +1406,12 @@ export default function App() {
   const recentVerificationLoggedOnlyCount = recentVerificationAttackSteps.filter((step) => getDetectionStatus(step) === "logged_only").length;
   const recentVerificationMissedCount = recentVerificationAttackSteps.filter((step) => getDetectionStatus(step) === "missed").length;
   const recentVerificationNotCheckedCount = recentVerificationAttackSteps.filter((step) => getDetectionStatus(step) === "not_checked").length;
+  const recentVerificationSourceMatchedCount = recentVerificationAttackSteps.filter((step) => (
+    step.source_status === "matched" || step.elk_check?.matched
+  )).length;
+  const recentVerificationAlertMatchedCount = recentVerificationAttackSteps.filter((step) => (
+    step.alert_status === "matched" || step.elk_check?.alert_check?.matched
+  )).length;
   const remediationBacklogRows = recentVerificationAttackSteps
     .filter((step) => getDetectionStatus(step) !== "detected")
     .map((step) => ({
@@ -1364,9 +1421,34 @@ export default function App() {
       name: step.name,
       gapType: getDetectionGapType(step),
       action: getRecommendedAction(step),
+      gapLabel: getGapLabel(getDetectionGapType(step)),
+      actionLabel: getActionLabel(getRecommendedAction(step)),
+      explanation: getBacklogExplanation(step),
       status: getDetectionStatus(step),
     }))
     .sort((first, second) => first.priority.localeCompare(second.priority));
+  const validationPipeline = [
+    {
+      label: "실행 반영",
+      value: recentVerificationExecutedCount,
+      helper: "Agent가 처리했거나 시뮬레이션으로 기록된 단계",
+    },
+    {
+      label: "원본 로그 확인",
+      value: recentVerificationSourceMatchedCount,
+      helper: "ELK source log 쿼리에서 증거가 확인된 단계",
+    },
+    {
+      label: "Alert 확인",
+      value: recentVerificationAlertMatchedCount,
+      helper: "Kibana alert 쿼리에서 탐지가 확인된 단계",
+    },
+    {
+      label: "조치 필요",
+      value: remediationBacklogRows.length,
+      helper: "로그만 있음, 미탐지, 미확인, 실행 실패 항목",
+    },
+  ];
   const recentVerificationTitle = selectedRunMatchesCampaign
     ? selectedRun.execution_id
     : latestOperation?.operation_id || "선택된 실행 없음";
@@ -1407,6 +1489,10 @@ export default function App() {
     ? getAttackPathTelemetry(activeAttackPath, validationRun, selectedOperationSteps)
     : null;
   const activeAttackPathEvidence = buildAttackPathEvidence(activeAttackPath, validationRun);
+  const selectedRunReport = selectedRun
+    ? reports.find((report) => report.source_id === selectedRun.execution_id || report.report_id === `report-${selectedRun.execution_id}`)
+    : null;
+  const selectedReportId = selectedRunReport?.report_id || "";
   const readyPathCount = attackPathInventory.filter((path) => getPathValidationStatus(path).status === "ready").length;
   const blockedPathCount = attackPathInventory.filter((path) => getPathValidationStatus(path).status === "blocked").length;
   const configuredControlCount = securityControlInventory.filter((control) => control.status === "configured").length;
@@ -1465,13 +1551,29 @@ export default function App() {
     }
     }
 
-  async function loadRun(executionId) {
+  async function loadRun(executionId, nextView = "evidence") {
     try {
       setError("");
       const data = await fetchJson(`/runs/${executionId}`);
       setSelectedRun(data);
       setNotice(`Run detail opened: ${executionId}`);
-      showView("evidence");
+      showView(nextView);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function createSelectedRunReport() {
+    if (!selectedRun?.execution_id) {
+      return;
+    }
+
+    try {
+      setError("");
+      setNotice("보고서를 생성하는 중입니다.");
+      await fetchJson(`/runs/${selectedRun.execution_id}/report`, { method: "POST" });
+      await refreshDashboardData();
+      setNotice(`보고서가 생성되었습니다: ${selectedRun.execution_id}`);
     } catch (err) {
       setError(err.message);
     }
@@ -1621,7 +1723,7 @@ export default function App() {
               onClick={() => showView("validation")}
             >
               <span>검증 맵</span>
-              <small>경로·통제 평가</small>
+              <small>공격 경로 평가</small>
             </button>
             <button
               type="button"
@@ -1801,6 +1903,33 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        <div className="panel summary-action-panel">
+          <div className="panel-title-row">
+            <div>
+              <div className="section-title">주요 Gap Top 3</div>
+              <h3>다음에 해야 할 조치</h3>
+            </div>
+            <span className="page-indicator">{remediationBacklogRows.length} items</span>
+          </div>
+
+          <div className="summary-action-list">
+            {remediationBacklogRows.slice(0, 3).map((item) => (
+              <div key={`summary-gap-${item.order}-${item.techniqueId}`} className={`summary-action-item ${item.priority.toLowerCase()}`}>
+                <span className="backlog-priority">{item.priority}</span>
+                <div>
+                  <strong>{item.techniqueId} · {item.gapLabel}</strong>
+                  <small>{item.explanation}</small>
+                  <em>{item.actionLabel}</em>
+                </div>
+              </div>
+            ))}
+
+            {remediationBacklogRows.length === 0 && (
+              <p className="empty">최근 실행에서 바로 조치할 탐지 Gap이 없습니다.</p>
+            )}
+          </div>
+        </div>
       </section>
       </>
       )}
@@ -1810,8 +1939,8 @@ export default function App() {
       <section className="view-header validation-hero">
         <div>
           <span>BAS Validation Map</span>
-          <h2>공격 경로와 보안 통제 검증</h2>
-          <p>멘토 피드백 기준으로 자산, 네트워크 구간, Agent, 로그 수집, Kibana 탐지룰을 하나의 검증 맵으로 연결합니다.</p>
+          <h2>공격 경로와 탐지 위치</h2>
+          <p>Attacker에서 내부 자산으로 이어지는 경로가 어디까지 실행됐고, 어느 지점에서 탐지·로그·미탐지가 발생했는지 확인합니다.</p>
         </div>
         <div className="view-header-metrics">
           <span>Detected <strong>{recentVerificationDetectedCount}</strong></span>
@@ -1828,7 +1957,7 @@ export default function App() {
               <div className="section-title">Enterprise Validation Canvas</div>
               <h3>SB-AD 공격 경로</h3>
             </div>
-            <span className="scope-pill">상용 BAS형 데모</span>
+            <span className="scope-pill">경로 상태 {attackPathInventory.length}개</span>
           </div>
 
           <div className="enterprise-map">
@@ -1924,33 +2053,111 @@ export default function App() {
               </div>
             ))}
           </div>
+
+          <div className="path-validation-table">
+            <div className="path-validation-row path-validation-header">
+              <span>경로</span>
+              <span>상태</span>
+              <span>탐지/로그/미탐지 위치</span>
+            </div>
+            {attackPathInventory.map((path, index) => {
+              const telemetry = attackPathTelemetry[index] || getAttackPathTelemetry(path, validationRun, selectedOperationSteps);
+              return (
+                <button
+                  key={`${path.source_asset_id}-${path.target_asset_id}-${index}`}
+                  type="button"
+                  className={[
+                    "path-validation-row",
+                    "path-validation-button",
+                    `status-${telemetry.status}`,
+                    selectedAttackPathIndex === index ? "selected-path-validation" : "",
+                  ].join(" ")}
+                  onClick={() => setSelectedAttackPathIndex(index)}
+                >
+                  <strong>
+                    {path.sourceAsset?.name || path.source_asset_id}
+                    <span> → </span>
+                    {path.targetAsset?.name || path.target_asset_id}
+                  </strong>
+                  <span className={`path-status ${telemetry.status}`}>{telemetry.label}</span>
+                  <div>
+                    <small>탐지 {telemetry.detected} · 미탐지 {telemetry.missed} · 미확인 {telemetry.notChecked}</small>
+                    <small>{path.techniques.join(", ")}</small>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </section>
 
         <aside className="validation-side-stack">
-          <section className="panel remediation-backlog-panel">
+          <section className="panel validation-result-panel">
             <div className="panel-title-row">
               <div>
-                <div className="section-title">Remediation Backlog</div>
-                <h3>자동 생성 조치 목록</h3>
+                <div className="section-title">Path Detection Summary</div>
+                <h3>{recentVerificationTitle}</h3>
               </div>
-              <span className="page-indicator">{remediationBacklogRows.length} items</span>
+              <span className="page-indicator">{recentVerificationExecutedCount}개 반영됨</span>
             </div>
 
-            <div className="backlog-list">
-              {remediationBacklogRows.slice(0, 6).map((item) => (
-                <div key={`${item.order}-${item.techniqueId}-${item.gapType}`} className={`backlog-item ${item.priority.toLowerCase()}`}>
-                  <span className="backlog-priority">{item.priority}</span>
-                  <div>
-                    <strong>{item.techniqueId} · {item.gapType}</strong>
-                    <small>{item.order}. {item.name}</small>
-                    <em>{item.action}</em>
+            <div className="validation-result-grid compact-validation-grid">
+              <div className="validation-result-card">
+                <span>공격</span>
+                <strong>{recentVerificationAttackSteps.length}</strong>
+              </div>
+              <div className="validation-result-card detected">
+                <span>탐지됨</span>
+                <strong>{recentVerificationDetectedCount}</strong>
+              </div>
+              <div className="validation-result-card logged">
+                <span>로그만</span>
+                <strong>{recentVerificationLoggedOnlyCount}</strong>
+              </div>
+              <div className="validation-result-card missed">
+                <span>미탐지</span>
+                <strong>{recentVerificationMissedCount}</strong>
+              </div>
+              <div className="validation-result-card unknown">
+                <span>미확인</span>
+                <strong>{recentVerificationNotCheckedCount}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel evidence-brief-panel">
+            <div className="panel-title-row">
+              <div>
+                <div className="section-title">Selected Path Evidence</div>
+                <h3>{activeAttackPath
+                  ? `${activeAttackPath.sourceAsset?.name || activeAttackPath.source_asset_id} → ${activeAttackPath.targetAsset?.name || activeAttackPath.target_asset_id}`
+                  : "선택된 경로 없음"}</h3>
+              </div>
+              {activeAttackPathTelemetry && (
+                <span className={`path-status ${activeAttackPathTelemetry.status}`}>{activeAttackPathTelemetry.label}</span>
+              )}
+            </div>
+
+            <div className="path-evidence-list">
+              {activeAttackPathEvidence.map((evidence) => (
+                <div key={evidence.techniqueId} className="path-evidence-card">
+                  <div className="path-evidence-head">
+                    <strong>{evidence.techniqueId}</strong>
+                    <span className={`status-tag ${evidence.runStep ? getDetectionStatus(evidence.runStep) : "not_run"}`}>
+                      {evidence.runStep ? getDetectionLabel(evidence.runStep) : "대기"}
+                    </span>
                   </div>
-                  <span className={`status-tag ${item.status}`}>{getDetectionLabel({ detection_status: item.status })}</span>
+                  <small>{evidence.techniqueName}</small>
+                  <div className="evidence-query-stack">
+                    <span>Source log query</span>
+                    <code>{evidence.logQuery || "아직 매핑된 source query가 없습니다."}</code>
+                    <span>Alert query</span>
+                    <code>{evidence.alertQuery || "아직 매핑된 alert query가 없습니다."}</code>
+                  </div>
                 </div>
               ))}
 
-              {remediationBacklogRows.length === 0 && (
-                <p className="empty">현재 선택된 실행에서 자동 조치 항목이 없습니다.</p>
+              {activeAttackPathEvidence.length === 0 && (
+                <p className="empty">공격 경로를 선택하면 관련 Technique과 ELK 근거가 표시됩니다.</p>
               )}
             </div>
           </section>
@@ -2056,37 +2263,6 @@ export default function App() {
                 <small>{segment.assets.length} assets</small>
               </div>
             ))}
-          </div>
-        </section>
-
-        <section className="panel attack-route-panel">
-          <div className="panel-title-row">
-            <div>
-              <div className="section-title">Attack Path</div>
-              <h3>검증 경로</h3>
-            </div>
-            <span className="page-indicator">{attackPathInventory.length} paths</span>
-          </div>
-
-          <div className="attack-route-list">
-            {attackPathInventory.map((path, index) => (
-              <div key={`${path.source_asset_id}-${path.target_asset_id}-${index}`} className="attack-route-item">
-                <div className="route-order">{index + 1}</div>
-                <div>
-                  <strong>
-                    {path.sourceAsset?.name || path.source_asset_id}
-                    <span>→</span>
-                    {path.targetAsset?.name || path.target_asset_id}
-                  </strong>
-                  <small>{path.label}</small>
-                  <p>{path.techniques.join(", ")}</p>
-                </div>
-              </div>
-            ))}
-
-            {attackPathInventory.length === 0 && (
-              <p className="empty">이 캠페인에는 공격 경로 메타데이터가 아직 없습니다.</p>
-            )}
           </div>
         </section>
 
@@ -2492,8 +2668,8 @@ export default function App() {
                 {remediationBacklogRows.slice(0, 4).map((item) => (
                   <div key={`execution-backlog-${item.order}-${item.techniqueId}-${item.gapType}`} className="execution-backlog-item">
                     <span className="backlog-priority">{item.priority}</span>
-                    <strong>{item.techniqueId} · {item.gapType}</strong>
-                    <small>{item.action}</small>
+                    <strong>{item.techniqueId} · {item.gapLabel}</strong>
+                    <small>{item.actionLabel}</small>
                   </div>
                 ))}
 
@@ -2505,6 +2681,10 @@ export default function App() {
           </div>
 
           <div className="path-map compact-path-map">
+            <div className="execution-result-heading">
+              <span>테크닉별 실행 결과</span>
+              <strong>{recentVerificationAttackSteps.length}개 공격 검증</strong>
+            </div>
             {attackPathSteps.map((step) => {
               const hasRunResult = Boolean(step.status);
               const executionStatus = step.status || "queued";
@@ -2575,7 +2755,7 @@ export default function App() {
                 key={job.job_id}
                 type="button"
                 className="job-row"
-                onClick={() => job.execution_id && loadRun(job.execution_id)}
+                onClick={() => job.execution_id && loadRun(job.execution_id, "history")}
               >
                 <span>
                   <strong>{job.campaign_id}</strong>
@@ -2608,7 +2788,7 @@ export default function App() {
                     ? "run-item selected-run"
                     : "run-item"
                 }
-                onClick={() => loadRun(run.execution_id)}
+                onClick={() => loadRun(run.execution_id, "history")}
               >
                 <strong>{run.execution_id}</strong>
                 <span>{run.campaign_id}</span>
@@ -2637,6 +2817,34 @@ export default function App() {
             </button>
           </div>
           </section>
+        </div>
+
+        <div className="history-report-strip">
+          <div>
+            <div className="section-title">Report Artifacts</div>
+            <h3>{selectedRun ? selectedRun.execution_id : "실행 기록을 선택하세요"}</h3>
+            <p>{selectedRunReport
+              ? "생성된 보고서 산출물만 표시합니다. HTML은 아직 동적 생성 대상이 아니라 샘플로 분리했습니다."
+              : "보고서가 아직 없으면 먼저 생성해야 요약, 기술 상세, 조치 목록을 열 수 있습니다."}</p>
+          </div>
+          <div className="report-artifact-actions">
+            {selectedRun && selectedRunReport ? (
+              <>
+                <a href={`${API_BASE}/reports/${selectedReportId}/summary.md`} target="_blank" rel="noreferrer">요약</a>
+                <a href={`${API_BASE}/reports/${selectedReportId}/technical.md`} target="_blank" rel="noreferrer">기술 상세</a>
+                <a href={`${API_BASE}/reports/${selectedReportId}/backlog.csv`} target="_blank" rel="noreferrer">조치 목록 CSV</a>
+                <a href={`${API_BASE}/reports/${selectedReportId}/navigator.json`} target="_blank" rel="noreferrer">ATT&CK Layer</a>
+                <a className="sample-artifact-link" href={REPORT_MOCKUP_URL} target="_blank" rel="noreferrer">샘플 HTML</a>
+              </>
+            ) : selectedRun ? (
+              <>
+                <button type="button" onClick={createSelectedRunReport}>보고서 생성</button>
+                <a className="sample-artifact-link" href={REPORT_MOCKUP_URL} target="_blank" rel="noreferrer">샘플 HTML</a>
+              </>
+            ) : (
+              <span>Runs 목록에서 실행 결과를 선택하면 보고서 링크가 표시됩니다.</span>
+            )}
+          </div>
         </div>
       </section>
       </>

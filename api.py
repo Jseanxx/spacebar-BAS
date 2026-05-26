@@ -514,7 +514,7 @@ def parse_iso_datetime(value):
         return None
 
 
-def is_agent_fresh(agent, stale_after_seconds=15):
+def is_agent_fresh(agent, stale_after_seconds=60):
     if not agent or agent.get("status") != "online":
         return False
 
@@ -899,15 +899,13 @@ def finalize_operation_if_done(operation):
     summary = build_operation_summary(operation["final_steps"])
     operation["summary"] = summary
 
-    if summary["failed"] > 0:
-        operation["status"] = "failed"
-        operation["finished_at"] = now_kst()
-        operation = attach_operation_report(operation)
-        write_operation(operation)
-        return operation
-
     if summary["pending"] == 0 and summary["queued"] == 0 and summary["running"] == 0:
-        operation["status"] = "simulated" if summary["simulated"] == summary["total"] else "completed"
+        if summary["simulated"] == summary["total"]:
+            operation["status"] = "simulated"
+        elif summary["failed"] == summary["total"]:
+            operation["status"] = "failed"
+        else:
+            operation["status"] = "completed"
         operation["finished_at"] = now_kst()
         operation = attach_operation_report(operation)
         write_operation(operation)
@@ -941,9 +939,6 @@ def update_operation_from_job_result(job):
     sync_operation_result_fields(step_entry, job)
     operation["sub_jobs"] = merge_unique_lists(operation.get("sub_jobs"), [job.get("job_id")])
     operation = finalize_operation_if_done(operation)
-
-    if operation.get("status") == "failed":
-        return operation
 
     enqueue_next_operation_job(operation)
     return load_operation(operation_id)

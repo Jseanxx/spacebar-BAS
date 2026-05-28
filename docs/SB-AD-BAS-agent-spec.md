@@ -318,18 +318,29 @@ Controller는 다음 기준으로 Agent를 선택한다.
 
 | 순번 | MITRE | 행위 | Agent role | 필수 선행 | 위험도 |
 | --- | --- | --- | --- | --- | --- |
+| 1 | T1204.002 | User Execution: Malicious File | `pc01` | 없음 | high |
 | 2 | T1059.003 | Windows Command Shell | `pc01` | 없음 | high |
 | 3 | T1095 | Non-Application Layer Protocol | `pc01` | 없음 | high |
 | 4 | T1087.002 | Domain Account Discovery | `pc01` | 없음 | low |
 | 5 | T1018 | Remote System Discovery | `pc01` | 없음 | low |
 | 6 | T1033 | System Owner/User Discovery | `pc01` | 없음 | low |
-| 10 | T1021.006 | WinRM Remote Execution | `pc01` | 없음 | high |
+| 7 | T1135 | Network Share Discovery | `pc01` | 없음 | low |
+| 8 | T1069 | Permission Groups Discovery | `pc01` | 없음 | low |
+| 9 | T1558.003 | Kerberoasting TGS Request | `pc01` | 없음 | medium |
+| 10 | T1021.006 | WinRM Remote Execution | `pc01` | 9 권장 | high |
 | 11 | T1059.001 | PowerShell Over WinRM | `pc01` | 10 | high |
 | 12 | T1105 | Ingress Tool Transfer | `pc01` | 10, attacker HTTP 준비 | medium |
-| 13 | T1003.001 | LSASS Memory Dump | `fs01` | 10 권장 | critical |
+| 13 | T1003.001 | LSASS Memory Dump | `fs01` | 10 권장, credential gate | critical |
+| 14 | T1218.011 | Rundll32 Proxy Execution | `fs01` | 10 권장, credential gate | critical |
 | 15 | T1074.001 | Local Data Staging | `pc01` | 10 | high |
 | 16 | T1041 | Exfiltration Over C2 | `pc01` | 15, attacker upload 준비 | high |
-| 19 | T1003.006 | DCSync | `attacker` | 도메인 권한/해시 준비 | critical |
+| 17 | T1036.005 | Masquerading | `pc01` | 15 | medium |
+| 18 | T1560.001 | Archive Collected Data | `pc01` | 15 | medium |
+| 19 | T1003.006 | DCSync | `attacker` | 도메인 권한/해시 준비, domain gate | critical |
+| 20 | T1558.001 | Golden Ticket | `attacker` | 19, golden-ticket gate | critical |
+| 21 | T1078.002 | Valid Domain Account | `attacker` | 20, golden-ticket gate | critical |
+| 22 | T1569.002 | Service Execution | `attacker` | 20, service-execution gate | critical |
+| 23 | T1003.003 | NTDS Dump | `attacker` | 20, NTDS gate | critical |
 
 ## 8. Controller 설치 명세
 
@@ -988,7 +999,7 @@ operation step result에 저장
 
 - 3개 Agent가 online으로 표시된다.
 - Agent 등록 정보에 `agent_role`, `platform`, `capabilities`가 표시된다.
-- SB-AD operation 생성 시 12개 테크닉이 role별로 라우팅된다.
+- SB-AD operation 생성 시 23개 테크닉이 role별로 라우팅된다.
 - 각 step은 순번대로 실행된다.
 - 결과가 하나의 operation report로 병합된다.
 
@@ -1002,6 +1013,6 @@ operation step result에 저장
 안전 완료:
 
 - DC01에는 Agent가 없다.
-- safety gate 없이는 13, 19가 실행되지 않는다.
+- safety gate 없이는 13, 14, 19, 20, 21, 22, 23이 실제 실행되지 않는다.
 - 비밀번호/해시/토큰은 config, repo, output에 평문 저장되지 않는다.
 - 테스트 후 LSASS dump와 임시 artifact cleanup 절차가 있다.

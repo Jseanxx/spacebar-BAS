@@ -140,7 +140,7 @@ class OperationRequest(BaseModel):
     selected_steps: list[StepSelection] | None = None
     include_normal: bool = False
     operation_mode: str = "multi_agent"
-    execution_mode: str = "real"
+    execution_mode: str = "simulation"
 
 
 class JobResultRequest(BaseModel):
@@ -501,7 +501,15 @@ def load_registered_agents():
     agents = []
 
     for path in sorted(AGENTS_DIR.glob("*.json")):
-        agents.append(read_json_file(path, {}))
+        agent = read_json_file(path, {})
+        if agent.get("status") == "online" and not is_agent_fresh(agent):
+            agent = {
+                **agent,
+                "reported_status": agent.get("status"),
+                "status": "offline",
+                "stale": True,
+            }
+        agents.append(agent)
 
     return agents
 
@@ -545,6 +553,47 @@ def resolve_step_agent_role(step):
     return params.get("agent_role") or step.get("agent_role") or "campaign_agent"
 
 
+def resolve_step_asset_id(step):
+    params = step.get("params", {}) or {}
+    explicit_asset_id = params.get("target_asset_id") or params.get("asset_id") or step.get("target_asset_id") or step.get("asset_id")
+    if explicit_asset_id:
+        return str(explicit_asset_id).lower()
+
+    behavior_asset_map = {
+        "kerberoasting_tgs_request": "dc01",
+        "winrm_remote_execution": "fs01",
+        "powershell_over_winrm": "fs01",
+        "ingress_tool_transfer": "fs01",
+        "lsass_memory_dump": "fs01",
+        "rundll32_comsvcs_proxy": "fs01",
+        "local_data_staging": "fs01",
+        "exfiltration_over_c2": "fs01",
+        "masquerading_legitimate_name": "fs01",
+        "archive_collected_data": "fs01",
+        "dcsync_replication": "dc01",
+        "golden_ticket_service_ticket": "dc01",
+        "valid_domain_account_remote_logon": "dc01",
+        "service_execution": "dc01",
+        "ntds_dump": "dc01",
+    }
+    behavior = params.get("behavior") or step.get("behavior")
+    if behavior in behavior_asset_map:
+        return behavior_asset_map[behavior]
+
+    execution_host = str(params.get("execution_host") or step.get("execution_host") or "").lower()
+    if "fs01" in execution_host:
+        return "fs01"
+    if "dc01" in execution_host:
+        return "dc01"
+    if "pc01" in execution_host:
+        return "pc01"
+    if "attacker" in execution_host:
+        return "attacker"
+
+    role = resolve_step_agent_role(step)
+    return role if role in ("attacker", "pc01", "fs01", "dc01", "elk") else None
+
+
 def select_online_agent(campaign_id, agent_role):
     candidates = [
         agent
@@ -566,9 +615,30 @@ def select_online_agent(campaign_id, agent_role):
     return candidates[0] if candidates else None
 
 
+def infer_agent_asset_id(agent):
+    explicit_asset_id = agent.get("asset_id")
+    if explicit_asset_id:
+        return str(explicit_asset_id).lower()
+
+    explicit_role = agent.get("agent_role")
+    if explicit_role and explicit_role not in ("campaign_agent", "log_source", "detection_backend"):
+        return str(explicit_role).lower()
+
+    searchable = " ".join(
+        str(agent.get(field) or "")
+        for field in ("agent_id", "display_name", "hostname", "agent_role")
+    ).lower()
+
+    for asset_id in ("attacker", "pc01", "fs01", "dc01", "elk"):
+        if asset_id in searchable:
+            return asset_id
+
+    return None
+
+
 def build_discovered_asset_from_agent(agent):
     asset_id = (
-        agent.get("asset_id")
+        infer_agent_asset_id(agent)
         or agent.get("agent_role")
         or agent.get("hostname")
         or agent.get("agent_id")
@@ -613,6 +683,10 @@ def build_asset_discovery(target_id):
             continue
 
         existing = assets_by_id.get(asset_id, {})
+        existing_agent = existing.get("agent") or {}
+        if existing_agent.get("status") == "online" and agent.get("status") != "online":
+            continue
+
         merged = {
             **discovered,
             **existing,
@@ -1110,6 +1184,8 @@ def create_operation(request: OperationRequest):
             "technique_id": step.get("technique_id"),
             "name": step.get("name"),
             "agent_role": role,
+            "asset_id": resolve_step_asset_id(step),
+            "execution_host": (step.get("params") or {}).get("execution_host"),
             "inputs": step.get("selected_inputs", {}),
             "status": "pending",
             "agent_id": None,

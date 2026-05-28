@@ -40,13 +40,17 @@ RULES = [
 
 
 ACTIVE_BEHAVIORS = {
-    "local_data_staging",
-    "exfiltration_over_c2",
-    "dcsync_replication",
+    behavior
+    for behavior, *_ in RULES
 }
 
 
 MANUAL_RULE_BEHAVIORS = {
+    "windows_command_shell",
+    "non_application_tcp_connection",
+    "domain_account_discovery",
+    "remote_system_discovery",
+    "system_owner_user_discovery",
     "winrm_remote_execution",
     "powershell_over_winrm",
     "ingress_tool_transfer",
@@ -55,16 +59,29 @@ MANUAL_RULE_BEHAVIORS = {
 
 
 SCENARIO_ORDERS = {
+    "user_execution_malicious_file": 1,
+    "windows_command_shell": 2,
+    "non_application_tcp_connection": 3,
+    "domain_account_discovery": 4,
+    "remote_system_discovery": 5,
+    "system_owner_user_discovery": 6,
+    "network_share_discovery": 7,
+    "permission_groups_discovery": 8,
+    "kerberoasting_tgs_request": 9,
     "winrm_remote_execution": 10,
     "powershell_over_winrm": 11,
     "ingress_tool_transfer": 12,
     "lsass_memory_dump": 13,
+    "rundll32_comsvcs_proxy": 14,
     "local_data_staging": 15,
     "exfiltration_over_c2": 16,
+    "masquerading_legitimate_name": 17,
+    "archive_collected_data": 18,
     "dcsync_replication": 19,
     "golden_ticket_service_ticket": 20,
     "valid_domain_account_remote_logon": 21,
     "service_execution": 22,
+    "ntds_dump": 23,
 }
 
 

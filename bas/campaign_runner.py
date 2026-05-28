@@ -1,5 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+import os
+import time
 import uuid
 
 from bas.loader import load_campaign, load_target
@@ -286,8 +288,14 @@ class CampaignRunner:
 
         evidence_key = module_result.get("evidence_key")
 
-        # evidence_key가 있어야 target YAML의 log_queries 중 어떤 쿼리를 쓸지 결정할 수 있습니다.
-        elk_result = check_elk(target, evidence_key) if evidence_key else None
+        wait_seconds = int(os.environ.get("BAS_STEP_ALERT_WAIT_SECONDS", "0") or "0")
+        if wait_seconds > 0 and status not in ("simulated", "blocked", "failed"):
+            time.sleep(wait_seconds)
+
+        # simulation은 실제 공격 행위가 없으므로 과거 로그와 섞이지 않게 ELK 검증을 생략합니다.
+        elk_result = None
+        if evidence_key and status not in ("simulated", "blocked", "failed"):
+            elk_result = check_elk(target, evidence_key)
 
         return {
             "order": step.get("order"),

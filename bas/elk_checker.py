@@ -6,6 +6,7 @@ import urllib.request
 
 
 DEFAULT_ELK_URL = "http://127.0.0.1:9200"
+DEFAULT_LOOKBACK_MINUTES = 120
 
 
 def get_dataset(target, key):
@@ -126,7 +127,41 @@ def build_auth_header(username, password):
     return f"Basic {base64.b64encode(token).decode('ascii')}"
 
 
+def build_time_filter():
+    raw_minutes = os.environ.get("BAS_ELK_LOOKBACK_MINUTES", str(DEFAULT_LOOKBACK_MINUTES))
+
+    try:
+        minutes = int(raw_minutes)
+    except (TypeError, ValueError):
+        minutes = DEFAULT_LOOKBACK_MINUTES
+
+    if minutes <= 0:
+        return None
+
+    return {
+        "range": {
+            "@timestamp": {
+                "gte": f"now-{minutes}m",
+                "lte": "now",
+            }
+        }
+    }
+
+
 def search_elasticsearch(elk_url, index, query, username=None, password=None):
+    filters = [
+        {
+            "query_string": {
+                "query": normalize_query(query),
+                "analyze_wildcard": True,
+            }
+        }
+    ]
+
+    time_filter = build_time_filter()
+    if time_filter:
+        filters.append(time_filter)
+
     payload = {
         "size": 3,
         "sort": [
@@ -138,9 +173,8 @@ def search_elasticsearch(elk_url, index, query, username=None, password=None):
             }
         ],
         "query": {
-            "query_string": {
-                "query": normalize_query(query),
-                "analyze_wildcard": True,
+            "bool": {
+                "filter": filters,
             }
         },
     }

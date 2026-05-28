@@ -7,10 +7,10 @@ const POLL_INTERVAL_MS = 900;
 const POLL_LIMIT = 70;
 
 const PANELS = [
-  { id: "overview", label: "상황판", hint: "캠페인과 자산 상태" },
-  { id: "library", label: "테크닉", hint: "시나리오 검색과 실행" },
-  { id: "queue", label: "런", hint: "실행 순서와 파라미터" },
-  { id: "evidence", label: "증거", hint: "최근 결과와 탐지" },
+  { id: "overview", label: "Summary", hint: "자산과 상태" },
+  { id: "library", label: "Technique", hint: "선택과 실행" },
+  { id: "queue", label: "Queue", hint: "순서와 입력값" },
+  { id: "evidence", label: "Evidence", hint: "결과와 로그" },
 ];
 
 const ASSET_POSITIONS = {
@@ -40,13 +40,37 @@ function getStepRole(step) {
 
 function getStepAssetId(step) {
   const role = getStepRole(step);
-  const host = String(step?.params?.execution_host || "").toLowerCase();
+  const explicitAssetId = step?.target_asset_id || step?.asset_id || step?.params?.target_asset_id || step?.params?.asset_id;
+  const host = String(step?.execution_host || step?.params?.execution_host || "").toLowerCase();
 
-  if (role === "pc01" || host.includes("pc01")) return "pc01";
-  if (role === "fs01" || host.includes("fs01")) return "fs01";
-  if (role === "attacker" || host.includes("attacker")) return "attacker";
-  if (role === "log_source" || host.includes("dc01")) return "dc01";
+  if (explicitAssetId) return String(explicitAssetId).toLowerCase();
+
+  if (host.includes("fs01")) return "fs01";
+  if (host.includes("dc01")) return "dc01";
+  if (host.includes("pc01")) return "pc01";
+  if (host.includes("attacker")) return "attacker";
+  if (role === "pc01") return "pc01";
+  if (role === "fs01") return "fs01";
+  if (role === "attacker") return "attacker";
+  if (role === "log_source") return "dc01";
   return role;
+}
+
+function inferAgentAssetKey(agent) {
+  if (!agent) return "";
+  if (agent.asset_id) return String(agent.asset_id).toLowerCase();
+  if (agent.agent_role && !["campaign_agent", "log_source", "detection_backend"].includes(agent.agent_role)) {
+    return String(agent.agent_role).toLowerCase();
+  }
+
+  const searchable = [
+    agent.agent_id,
+    agent.display_name,
+    agent.hostname,
+    agent.agent_role,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  return ["attacker", "pc01", "fs01", "dc01", "elk"].find((assetId) => searchable.includes(assetId)) || "";
 }
 
 function getStepSelectionId(step, fallbackCampaignId) {
@@ -65,6 +89,7 @@ function getStatusLabel(status) {
   const labels = {
     online: "온라인",
     offline: "오프라인",
+    observe: "관찰",
     registered: "등록",
     running: "실행 중",
     queued: "대기",
@@ -75,6 +100,19 @@ function getStatusLabel(status) {
     success: "성공",
   };
   return labels[status] || status || "대기";
+}
+
+function getLogCollectionStatus(asset) {
+  if (asset?.log_collection_status) return asset.log_collection_status;
+
+  const controls = normalizeList(asset?.controls);
+  if (controls.includes("winlogbeat")) return "Active";
+  if (controls.includes("kibana_rules")) return "Detection Backend";
+  return "Manual";
+}
+
+function getLogCollectionClass(status) {
+  return String(status || "manual").toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
 function getDetectionStatus(step) {
@@ -125,6 +163,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [phaseFilter, setPhaseFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("SB-AD");
+  const [executionMode, setExecutionMode] = useState("simulation");
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedOperation, setSelectedOperation] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -235,13 +274,18 @@ export default function App() {
     const map = new Map();
     agents.forEach((agent) => {
       [
+        inferAgentAssetKey(agent),
         agent.asset_id,
         agent.agent_role,
         agent.campaign_agent_id,
         agent.display_name,
         agent.hostname,
       ].forEach((value) => {
-        if (value) map.set(String(value).toLowerCase(), agent);
+        if (!value) return;
+        const key = String(value).toLowerCase();
+        const existing = map.get(key);
+        if (existing?.status === "online" && agent.status !== "online") return;
+        if (existing?.status !== "online" || agent.status === "online") map.set(key, agent);
       });
     });
     return map;
@@ -251,7 +295,7 @@ export default function App() {
     const sourceAssets = normalizeList(target?.assets).length > 0 ? target.assets : ASSET_FALLBACKS;
     return sourceAssets.map((asset, index) => {
       const id = String(asset.asset_id || `asset-${index}`).toLowerCase();
-      const agent = agentByAsset.get(id) || agentByAsset.get(String(asset.agent_role || "").toLowerCase());
+      const agent = agentByAsset.get(id) || agentByAsset.get(String(asset.agent_role || "").toLowerCase()) || asset.agent;
       return {
         ...asset,
         asset_id: id,
@@ -274,7 +318,8 @@ export default function App() {
 
   const latestOperation = selectedOperation || operations[0] || null;
   const latestRun = selectedRun || runs[0] || null;
-  const operationSteps = normalizeList(latestOperation?.steps);
+  const operationSteps = normalizeList(latestOperation?.final_steps || latestOperation?.steps);
+  const evidenceSteps = operationSteps.length > 0 ? operationSteps : normalizeList(latestRun?.steps);
   const visibleSteps = operationSteps.length > 0 ? operationSteps : selectedSteps;
   const runningStep = operationSteps.find((step) => step.status === "running")
     || operationSteps.find((step) => step.status === "queued")
@@ -282,7 +327,9 @@ export default function App() {
   const activeAssetId = runningStep ? getStepAssetId(runningStep) : (isRunning && selectedSteps[0] ? getStepAssetId(selectedSteps[0]) : "");
   const completedCount = operationSteps.filter((step) => ["completed", "success", "simulated"].includes(step.status)).length;
   const totalOperationSteps = latestOperation?.summary?.total || operationSteps.length || selectedSteps.length;
-  const detectionCounts = normalizeList(latestRun?.steps).reduce((counts, step) => {
+  const requiredAssets = assets.filter((asset) => asset.agent_required);
+  const onlineRequiredAssets = requiredAssets.filter((asset) => asset.agentStatus === "online");
+  const detectionCounts = evidenceSteps.reduce((counts, step) => {
     const status = getDetectionStatus(step);
     return { ...counts, [status]: (counts[status] || 0) + 1 };
   }, {});
@@ -308,6 +355,14 @@ export default function App() {
     Array.from(new Set(library.map((step) => getStepSourceId(step, campaignId)))).sort()
   ), [library, campaignId]);
 
+  const filteredSelectionIds = useMemo(() => (
+    filteredLibrary.map((step) => getStepSelectionId(step, campaignId))
+  ), [filteredLibrary, campaignId]);
+
+  const selectedFilteredCount = useMemo(() => (
+    filteredSelectionIds.filter((id) => selectedIds.includes(id)).length
+  ), [filteredSelectionIds, selectedIds]);
+
   function toggleStep(step) {
     const selectionId = getStepSelectionId(step, campaignId);
     setSelectedIds((currentIds) => {
@@ -322,6 +377,36 @@ export default function App() {
       }
       return [...currentIds, selectionId];
     });
+  }
+
+  function selectFilteredTechniques() {
+    setSelectedIds((currentIds) => {
+      const nextIds = [...currentIds];
+      filteredSelectionIds.forEach((id) => {
+        if (!nextIds.includes(id)) nextIds.push(id);
+      });
+      return nextIds;
+    });
+    setNotice(`현재 필터의 Technique ${filteredSelectionIds.length}개를 Queue에 담았습니다.`);
+  }
+
+  function clearFilteredTechniques() {
+    const idSet = new Set(filteredSelectionIds);
+    setSelectedIds((currentIds) => currentIds.filter((id) => !idSet.has(id)));
+    setTechniqueInputs((currentInputs) => {
+      const nextInputs = { ...currentInputs };
+      filteredSelectionIds.forEach((id) => delete nextInputs[id]);
+      return nextInputs;
+    });
+    setOpenInputIds((current) => current.filter((id) => !idSet.has(id)));
+    setNotice("현재 필터의 Technique을 Queue에서 제거했습니다.");
+  }
+
+  function clearAllTechniques() {
+    setSelectedIds([]);
+    setTechniqueInputs({});
+    setOpenInputIds([]);
+    setNotice("Queue를 초기화했습니다.");
   }
 
   function loadPreset() {
@@ -383,12 +468,13 @@ export default function App() {
       setError("");
 
       if (selectedSteps.length === 0) {
-        throw new Error("먼저 테크닉 패널에서 실행할 항목을 선택해 주세요.");
+        throw new Error("먼저 Technique 패널에서 실행할 항목을 선택해 주세요.");
       }
 
       const payload = {
         campaign_id: campaignId,
         include_normal: false,
+        execution_mode: executionMode,
         selected_steps: selectedSteps.map((step) => {
           const selectionId = getStepSelectionId(step, campaignId);
           return {
@@ -399,11 +485,12 @@ export default function App() {
         }),
       };
 
-      const operation = await fetchJson("/operations", {
+      const operationResponse = await fetchJson("/operations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      const operation = operationResponse.operation || operationResponse;
 
       setSelectedOperation(operation);
       setNotice(`런을 시작했습니다: ${operation.operation_id}`);
@@ -437,7 +524,7 @@ export default function App() {
   const renderActivePanel = () => {
     if (activePanel === "overview") {
       return (
-        <div className="side-section">
+        <div className="side-section overview-section">
           <div className="panel-heading">
             <span>Mission</span>
             <strong>{campaign?.campaign_name || campaignId}</strong>
@@ -454,7 +541,7 @@ export default function App() {
           </label>
           <div className="summary-stack">
             <div><span>Assets</span><strong>{assets.length}</strong></div>
-            <div><span>Agents</span><strong>{agents.filter((agent) => agent.status === "online").length}/{agents.length}</strong></div>
+            <div><span>Agents</span><strong>{onlineRequiredAssets.length}/{requiredAssets.length}</strong></div>
             <div><span>Queue</span><strong>{selectedSteps.length}</strong></div>
             <div><span>Runs</span><strong>{runs.length}</strong></div>
           </div>
@@ -469,6 +556,13 @@ export default function App() {
                   : "타깃 설정에서 ELK 활성 정보를 찾지 못했습니다."}
             </small>
           </div>
+          <label className="field-label mode-field">
+            실행 방식
+            <select value={executionMode} onChange={(event) => setExecutionMode(event.target.value)}>
+              <option value="simulation">Simulation - 명령 미실행</option>
+              <option value="real">Real - Agent 안전 게이트 적용</option>
+            </select>
+          </label>
           <button type="button" className="secondary-button" onClick={loadPreset}>
             기본 흐름 올리기
           </button>
@@ -478,10 +572,10 @@ export default function App() {
 
     if (activePanel === "library") {
       return (
-        <div className="side-section">
+        <div className="side-section library-section">
           <div className="panel-heading">
             <span>Technique Library</span>
-            <strong>{filteredLibrary.length}개 테크닉</strong>
+            <strong>{filteredLibrary.length} Techniques</strong>
           </div>
           <div className="filter-grid">
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="T1059, WinRM, shell..." />
@@ -498,10 +592,21 @@ export default function App() {
           <div className="library-run-strip">
             <div>
               <span>선택됨</span>
-              <strong>{selectedSteps.length}</strong>
+              <strong>{selectedFilteredCount}/{filteredLibrary.length}</strong>
             </div>
             <button type="button" className="secondary-button" onClick={runQueue} disabled={isRunning || selectedSteps.length === 0}>
               {isRunning ? "실행 중" : "선택 실행"}
+            </button>
+          </div>
+          <div className="library-bulk-actions">
+            <button type="button" className="ghost-button" onClick={selectFilteredTechniques} disabled={filteredLibrary.length === 0 || selectedFilteredCount === filteredLibrary.length}>
+              전체 선택
+            </button>
+            <button type="button" className="ghost-button" onClick={clearFilteredTechniques} disabled={selectedFilteredCount === 0}>
+              전체 해제
+            </button>
+            <button type="button" className="ghost-button" onClick={clearAllTechniques} disabled={selectedIds.length === 0}>
+              초기화
             </button>
           </div>
           <div className="technique-list">
@@ -525,6 +630,7 @@ export default function App() {
                 </button>
               );
             })}
+            {filteredLibrary.length === 0 && <p className="empty">조건에 맞는 Technique이 없습니다.</p>}
           </div>
         </div>
       );
@@ -532,19 +638,26 @@ export default function App() {
 
     if (activePanel === "queue") {
       return (
-        <div className="side-section">
+        <div className="side-section queue-section">
           <div className="panel-heading">
-            <span>Execution Queue</span>
+            <span>Queue</span>
             <strong>{selectedSteps.length}개 선택</strong>
           </div>
           <div className="queue-actions-bar">
             <button type="button" className="secondary-button" onClick={runQueue} disabled={isRunning || selectedSteps.length === 0}>
               {isRunning ? "실행 중" : "런 실행"}
             </button>
-            <button type="button" className="ghost-button" onClick={() => setSelectedIds([])} disabled={selectedSteps.length === 0}>
-              비우기
+            <button type="button" className="ghost-button" onClick={clearAllTechniques} disabled={selectedSteps.length === 0}>
+              초기화
             </button>
           </div>
+          <label className="field-label mode-field compact">
+            실행 방식
+            <select value={executionMode} onChange={(event) => setExecutionMode(event.target.value)}>
+              <option value="simulation">Simulation</option>
+              <option value="real">Real gated</option>
+            </select>
+          </label>
           <div className="queue-stack">
             {selectedSteps.map((step, index) => {
               const selectionId = getStepSelectionId(step, campaignId);
@@ -593,7 +706,7 @@ export default function App() {
                 </div>
               );
             })}
-            {selectedSteps.length === 0 && <p className="empty">쿼리 패널에서 테크닉을 누르면 작은 박스 안 큐로 쌓입니다.</p>}
+            {selectedSteps.length === 0 && <p className="empty queue-empty">Technique 탭에서 항목을 선택하면 Queue에 추가됩니다.</p>}
           </div>
         </div>
       );
@@ -603,7 +716,7 @@ export default function App() {
       <div className="side-section">
         <div className="panel-heading">
           <span>Evidence</span>
-          <strong>{latestRun?.execution_id || "선택된 결과 없음"}</strong>
+          <strong>{latestOperation?.operation_id || latestRun?.execution_id || "선택된 결과 없음"}</strong>
         </div>
         <div className="result-meter">
           <div><span>탐지</span><strong>{detectionCounts.detected || 0}</strong></div>
@@ -626,27 +739,27 @@ export default function App() {
   return (
     <main className="bas-shell">
       <aside className="left-rail">
-        <button type="button" className="brand-mark" onClick={() => setActivePanel("overview")}>
-          <img src={spacebarLogo} alt="Spacebar" />
-        </button>
-        <div className="panel-tabs" role="tablist" aria-label="BAS workspace panels">
-          {PANELS.map((panel) => (
-            <div key={panel.id} className={`rail-accordion-item ${activePanel === panel.id ? "open" : ""}`}>
+        <div className="rail-top">
+          <button type="button" className="brand-mark" onClick={() => setActivePanel("overview")}>
+            <img src={spacebarLogo} alt="Spacebar" />
+          </button>
+          <div className="panel-tabs" role="tablist" aria-label="BAS workspace panels">
+            {PANELS.map((panel) => (
               <button
+                key={panel.id}
                 type="button"
                 className={`panel-trigger ${activePanel === panel.id ? "active" : ""}`}
-                onClick={() => setActivePanel(activePanel === panel.id ? "" : panel.id)}
+                onClick={() => setActivePanel(panel.id)}
+                title={panel.hint}
               >
                 <span>{panel.label}</span>
                 <small>{panel.hint}</small>
               </button>
-              {activePanel === panel.id && (
-                <div className="rail-panel">
-                  {renderActivePanel()}
-                </div>
-              )}
-            </div>
-          ))}
+            ))}
+          </div>
+        </div>
+        <div className="rail-panel">
+          {renderActivePanel()}
         </div>
         <div className="api-state">
           <span>
@@ -670,7 +783,7 @@ export default function App() {
         <header className="stage-header">
           <div>
             <span>Breach and Attack Simulation</span>
-            <h1>자산 맵 중심 검증 콘솔</h1>
+            <h1>Attack Map</h1>
           </div>
           <button type="button" className="run-button" onClick={runQueue} disabled={isRunning || selectedSteps.length === 0}>
             {isRunning ? "실행 중" : "Run"}
@@ -705,6 +818,7 @@ export default function App() {
             {assets.map((asset) => {
               const isActive = activeAssetId === asset.asset_id;
               const isCompleted = operationSteps.some((step) => getStepAssetId(step) === asset.asset_id && ["completed", "success", "simulated"].includes(step.status));
+              const logStatus = getLogCollectionStatus(asset);
               return (
                 <button
                   key={asset.asset_id}
@@ -717,12 +831,20 @@ export default function App() {
                     isCompleted ? "completed" : "",
                   ].join(" ")}
                   style={{ left: `${asset.position.left}%`, top: `${asset.position.top}%` }}
-                  onClick={() => setNotice(`${asset.name || asset.asset_id}: ${asset.private_ip || asset.hostname || "수동 자산"}`)}
+                  onClick={() => setNotice(`${asset.name || asset.asset_id}: ${asset.private_ip || asset.hostname || "수동 자산"} · ${asset.role || asset.segment_id || "역할 미정"}`)}
                 >
                   <span className="node-ring" />
                   <strong>{asset.name || asset.asset_id}</strong>
-                  <small>{asset.private_ip || asset.platform || asset.segment_id}</small>
-                  <em>{getStatusLabel(asset.agentStatus)}</em>
+                  <div className="asset-facts">
+                    <span><b>IP</b>{asset.private_ip || "N/A"}</span>
+                    <span><b>OS</b>{asset.os || asset.platform || "N/A"}</span>
+                    <span><b>Type</b>{asset.role || asset.segment_id || "N/A"}</span>
+                  </div>
+                  <div className="asset-state-row">
+                    <em>Agent {getStatusLabel(asset.agentStatus)}</em>
+                    <em className={`log-pill log-${getLogCollectionClass(logStatus)}`}>Log {logStatus}</em>
+                  </div>
+                  {asset.log_collection_detail && <small className="log-detail">{asset.log_collection_detail}</small>}
                 </button>
               );
             })}
@@ -746,7 +868,7 @@ export default function App() {
                     <span>{String(index + 1).padStart(2, "0")}</span>
                     <div>
                       <strong>{getTechniqueLabel(step)}</strong>
-                      <small>{getStepAssetId(step).toUpperCase()} · {getStatusLabel(status)}</small>
+                  <small>{getStepAssetId(step).toUpperCase()} · {getStatusLabel(status)} · {getDetectionLabel(getDetectionStatus(step))}</small>
                     </div>
                   </div>
                 );
@@ -759,11 +881,11 @@ export default function App() {
             <div className="panel-heading horizontal">
               <div>
                 <span>Recent Detection</span>
-                <strong>{latestRun?.execution_id || "결과 없음"}</strong>
+                <strong>{latestOperation?.operation_id || latestRun?.execution_id || "결과 없음"}</strong>
               </div>
             </div>
             <div className="evidence-feed">
-              {normalizeList(latestRun?.steps).slice(0, 6).map((step) => {
+              {evidenceSteps.slice(0, 6).map((step) => {
                 const detectionStatus = getDetectionStatus(step);
                 return (
                   <div key={`${step.order}-${step.technique_id}`} className="evidence-row">
@@ -775,7 +897,7 @@ export default function App() {
                   </div>
                 );
               })}
-              {!latestRun?.steps?.length && <p className="empty">런 완료 후 탐지 결과가 표시됩니다.</p>}
+              {evidenceSteps.length === 0 && <p className="empty">런 완료 후 탐지 결과가 표시됩니다.</p>}
             </div>
           </div>
         </section>

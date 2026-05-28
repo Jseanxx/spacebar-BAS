@@ -2,14 +2,17 @@
 
 This document summarizes the active Spacebar AWS AD BAS campaign.
 
-The BAS campaign is limited to the detection rules that currently exist in Kibana for SB-AD. It includes Gahyun's existing 2-6 rules, Junseo's confirmed 10-13, 15, 16, and 19 rules, and excludes missing, postponed, duplicate, and not-yet-implemented steps.
+The BAS campaign now exposes all 23 SB-03 / SB-AD techniques in the dashboard. Safe discovery and staging steps can be executed through the proper BasAgent role, while credential dumping and domain-compromise steps are present but blocked by explicit safety gates unless an approved validation window is used.
 
 ## Files
 
-- `campaigns/SB-AD.yaml`: 12 detection validation steps.
+- `campaigns/SB-AD.yaml`: 23 detection validation steps.
 - `targets/SB-AD.yaml`: host metadata, ELK source queries, and alert queries.
 - `modules/attack/sb_ad_technique.py`: shared execution module for SB-AD command templates.
 - `tools/sb_ad_detection_rules.py`: Kibana detection rule sync helper for the SB-AD rules managed by this repo. Existing manual Kibana rules are referenced by rule ID instead of duplicated.
+- `tools/sbad_support_server.py`: Attacker-side support server for benign file download and upload validation.
+- `tools/sbad_start_attacker_support.sh`: Starts the attacker file and upload support servers.
+- `tools/sbad_start_windows_agent.ps1`: Starts PC01/FS01 BasAgent from RDP or remote PowerShell.
 - `agent_runtime/config.sbad-pc01.yaml`: PC01 BasAgent config template.
 - `agent_runtime/config.sbad-fs01.yaml`: FS01 BasAgent config template.
 - `agent_runtime/config.sbad-attacker.yaml`: Attacker Ubuntu BasAgent config template.
@@ -18,30 +21,41 @@ The BAS campaign is limited to the detection rules that currently exist in Kiban
 
 | Scenario Order | Technique | Behavior key | Primary host | Severity | Source rule |
 | --- | --- | --- | --- | --- | --- |
+| 1 | T1204.002 | `user_execution_malicious_file` | PC01 | High | repo-managed |
 | 2 | T1059.003 | `windows_command_shell` | PC01 | High | existing manual |
 | 3 | T1095 | `non_application_tcp_connection` | PC01 | High | existing manual |
 | 4 | T1087.002 | `domain_account_discovery` | PC01 | Low | existing manual |
 | 5 | T1018 | `remote_system_discovery` | PC01 | Low | existing manual |
 | 6 | T1033 | `system_owner_user_discovery` | PC01 | Low | existing manual |
+| 7 | T1135 | `network_share_discovery` | PC01 | Low | repo-managed |
+| 8 | T1069 | `permission_groups_discovery` | PC01 | Low | repo-managed |
+| 9 | T1558.003 | `kerberoasting_tgs_request` | PC01/DC01 | Medium | repo-managed |
 | 10 | T1021.006 | `winrm_remote_execution` | PC01 to FS01 | High | existing manual |
 | 11 | T1059.001 | `powershell_over_winrm` | FS01 | High | existing manual |
 | 12 | T1105 | `ingress_tool_transfer` | FS01 | Medium | existing manual |
-| 13 | T1003.001 | `lsass_memory_dump` | FS01 | Critical | existing manual |
+| 13 | T1003.001 | `lsass_memory_dump` | FS01 | Critical | existing manual, gated |
+| 14 | T1218.011 | `rundll32_comsvcs_proxy` | FS01 | Critical | repo-managed, gated |
 | 15 | T1074.001 | `local_data_staging` | FS01 | High | repo-managed |
 | 16 | T1041 | `exfiltration_over_c2` | FS01 | High | repo-managed |
-| 19 | T1003.006 | `dcsync_replication` | Attacker/DC01 | Critical | repo-managed |
+| 17 | T1036.005 | `masquerading_legitimate_name` | FS01 | Medium | repo-managed |
+| 18 | T1560.001 | `archive_collected_data` | FS01 | Medium | repo-managed |
+| 19 | T1003.006 | `dcsync_replication` | Attacker/DC01 | Critical | repo-managed, gated |
+| 20 | T1558.001 | `golden_ticket_service_ticket` | Attacker/DC01 | Critical | repo-managed, gated |
+| 21 | T1078.002 | `valid_domain_account_remote_logon` | Attacker/DC01 | Critical | repo-managed, gated |
+| 22 | T1569.002 | `service_execution` | Attacker/DC01 | Critical | repo-managed, gated |
+| 23 | T1003.003 | `ntds_dump` | Attacker/DC01 | Critical | repo-managed, gated |
 
-## Disabled/Excluded Rules
+## Gated High-Risk Steps
 
-The following scenario steps are excluded from the active BAS campaign:
+The following steps are intentionally present in the dashboard but blocked in real mode unless dedicated environment variables are set:
 
-- Original orders 1, 7, 8, 9: no current Kibana rule was found.
-- Original orders 14, 17, 18: postponed or supporting evidence, not active BAS steps.
-- Original orders 20, 21, 22: not implemented by the operator yet, so they are excluded from SB-AD BAS for now.
-- `T1218.011`: supporting evidence for `T1003.001`, not a separate active validation rule.
-- `T1036.005`: postponed.
-- `T1560.001`: postponed.
-- `T1003.003`: not a separate active validation rule in the current campaign.
+- 13, 14: `BAS_ENABLE_CREDENTIAL_TESTS=1`
+- 19: `BAS_ENABLE_DOMAIN_COMPROMISE_TESTS=1`
+- 20, 21: `BAS_ENABLE_DOMAIN_COMPROMISE_TESTS=1` and `BAS_ENABLE_GOLDEN_TICKET_TESTS=1`
+- 22: also requires `BAS_ENABLE_SERVICE_EXECUTION_TESTS=1`
+- 23: also requires `BAS_ENABLE_NTDS_DUMP_TESTS=1`
+
+This keeps the BAS useful for coverage visualization without accidentally running LSASS dumping, Golden Ticket usage, service execution, or NTDS dumping in Gahyun's AWS environment.
 
 ## Safety Model
 
@@ -55,6 +69,9 @@ Common real-mode gates:
 - `BAS_AGENT_ROLE=pc01|fs01|attacker`: required role for the current agent host.
 - `BAS_ENABLE_CREDENTIAL_TESTS=1`: required for credential dumping.
 - `BAS_ENABLE_DOMAIN_COMPROMISE_TESTS=1`: required for DCSync.
+- `BAS_ENABLE_GOLDEN_TICKET_TESTS=1`: required for Golden Ticket creation/use.
+- `BAS_ENABLE_SERVICE_EXECUTION_TESTS=1`: required for psexec-style service execution.
+- `BAS_ENABLE_NTDS_DUMP_TESTS=1`: required for NTDS dump validation.
 
 Secrets are not stored in the repo. Use environment variables on the relevant agent host:
 
@@ -90,6 +107,13 @@ export BAS_DA_NTLM_HASH="<set locally>"
 python3 agent_runtime/bas_agent.py --config agent_runtime/config.sbad-attacker.yaml --execution-mode real
 ```
 
+Attacker support servers for T1105/T1041:
+
+```bash
+cd /opt/spacebar-BAS
+bash tools/sbad_start_attacker_support.sh
+```
+
 ## Kibana Rule Management
 
 Dry run:
@@ -109,7 +133,7 @@ python tools\sb_ad_detection_rules.py
 
 Current BAS rule mapping:
 
-- Active BAS flow: 12 steps.
+- Active BAS flow: 23 steps.
 - Rule display names: scenario order plus MITRE technique ID, such as `13.T1003.001`.
 - Existing manual Kibana rules are referenced by rule ID for orders 2-6 and 10-13.
-- Repo-managed `sb-ad-*` rules are used for orders 15, 16, and 19.
+- Repo-managed `sb-ad-*` rules are used for the remaining BAS-managed coverage checks.

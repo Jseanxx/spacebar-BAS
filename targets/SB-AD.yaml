@@ -38,7 +38,10 @@ assets:
     private_ip: 10.0.1.194
     public_ip: 54.180.55.229
     platform: Ubuntu
-    role: 공격자 서버
+    os: Ubuntu 24.04.4 LTS
+    role: 공격자 시뮬레이션 서버
+    log_collection_status: Manual
+    log_collection_detail: 수동 실행 로그 및 BAS Agent heartbeat 기준 확인
     segment_id: attacker-subnet
     agent_role: attacker
     agent_required: true
@@ -50,7 +53,10 @@ assets:
     private_ip: 10.0.4.216
     public_ip: 43.201.217.167
     platform: Windows Server
-    role: 직원 PC 및 초기 실행 지점
+    os: Windows Server 2022 Datacenter
+    role: 직원 PC
+    log_collection_status: Active
+    log_collection_detail: Sysmon, Windows Security Log, PowerShell Logging, Winlogbeat
     segment_id: user-subnet
     agent_role: pc01
     agent_required: true
@@ -62,7 +68,10 @@ assets:
     private_ip: 10.0.10.77
     public_ip: 3.36.156.17
     platform: Windows Server
-    role: 파일 서버 및 lateral movement 대상
+    os: Windows Server 2022 Datacenter
+    role: 파일 서버
+    log_collection_status: Active
+    log_collection_detail: Sysmon, Windows Security Log, Winlogbeat
     segment_id: server-subnet
     agent_role: fs01
     agent_required: true
@@ -74,7 +83,10 @@ assets:
     private_ip: 10.0.13.205
     public_ip: 52.78.216.139
     platform: Windows Server
-    role: 도메인 컨트롤러 및 AD 보안 로그 관찰 대상
+    os: Windows Server 2022 Datacenter
+    role: 도메인 컨트롤러
+    log_collection_status: Active
+    log_collection_detail: Windows Security Log, Sysmon, Winlogbeat
     segment_id: domain-subnet
     agent_role: log_source
     agent_required: false
@@ -86,7 +98,10 @@ assets:
     private_ip: 10.0.4.30
     public_ip: 54.116.120.198
     platform: Linux
-    role: 로그 저장소 및 탐지룰 실행 위치
+    os: Ubuntu 24.04 LTS
+    role: SIEM 로그 분석 서버
+    log_collection_status: Detection Backend
+    log_collection_detail: Elasticsearch, Kibana Detection Rules
     segment_id: server-subnet
     agent_role: detection_backend
     agent_required: false
@@ -127,19 +142,27 @@ attack_paths:
   - source_asset_id: attacker
     target_asset_id: pc01
     label: Initial access / reverse shell
-    techniques: [T1204.002, T1059.003]
+    techniques: [T1204.002, T1059.003, T1095]
+  - source_asset_id: pc01
+    target_asset_id: dc01
+    label: AD discovery / Kerberos ticket request
+    techniques: [T1087.002, T1018, T1033, T1135, T1069, T1558.003]
   - source_asset_id: pc01
     target_asset_id: fs01
     label: WinRM lateral movement
     techniques: [T1021.006, T1059.001, T1105]
+  - source_asset_id: fs01
+    target_asset_id: fs01
+    label: Credential access and local staging
+    techniques: [T1003.001, T1218.011, T1074.001, T1036.005, T1560.001]
   - source_asset_id: fs01
     target_asset_id: attacker
     label: Data staging and exfiltration
     techniques: [T1074.001, T1041]
   - source_asset_id: attacker
     target_asset_id: dc01
-    label: Domain replication abuse
-    techniques: [T1003.006]
+    label: Domain compromise
+    techniques: [T1003.006, T1558.001, T1078.002, T1569.002, T1003.003]
 
 ad:
   domain: mycompany.local
@@ -158,12 +181,14 @@ paths:
   staged_lsass_name: sys_evnt_log_20260508.log
   staged_customer_name: tmp_bak_0508.dat
   archive_name: data.zip
+  golden_ticket_ccache: Administrator.ccache
 
 tools:
   rubeus_path: C:\Users\Public\Downloads\Rubeus.exe
   impacket_examples_dir: /home/ubuntu/impacket/examples
   attacker_http_port: 80
   attacker_upload_port: 8080
+  benign_download_name: bas_t1105_probe.txt
 
 operation_defaults:
   reverse_shell_port: 4444
@@ -208,9 +233,9 @@ log_queries:
   system_owner_user_discovery: >-
     winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:1 AND winlog.event_data.Image:(*whoami.exe OR *quser.exe OR *qwinsta.exe) AND winlog.event_data.CommandLine:(*whoami* OR *quser* OR *qwinsta*) AND NOT winlog.event_data.User:("NT AUTHORITY\\SYSTEM" OR "MYCOMPANY\\user_admin") AND NOT winlog.event_data.ParentImage:(*devenv.exe OR *code.exe)
   network_share_discovery: >-
-    host.name:"PC01.mycompany.local" AND event.code:"1" AND (winlog.event_data.CommandLine:*"net view"* OR winlog.event_data.CommandLine:*"\\\\FS01\\share"*)
+    host.name:"PC01.mycompany.local" AND event.code:"1" AND (winlog.event_data.CommandLine:*"net view"* OR winlog.event_data.CommandLine:*"\\\\FS01\\share"* OR winlog.event_data.CommandLine:*"\\\\FS01"*)
   permission_groups_discovery: >-
-    host.name:"PC01.mycompany.local" AND event.code:"1" AND winlog.event_data.Image:*net.exe AND (winlog.event_data.CommandLine:*localgroup* OR winlog.event_data.CommandLine:*"Domain Admins"*)
+    host.name:"PC01.mycompany.local" AND event.code:"1" AND (winlog.event_data.Image:*net.exe OR winlog.event_data.Image:*net1.exe) AND (winlog.event_data.CommandLine:*localgroup* OR winlog.event_data.CommandLine:*"Domain Admins"* OR winlog.event_data.CommandLine:*Administrators*)
   kerberoasting_tgs_request: >-
     host.name:"DC01.mycompany.local" AND event.code:"4769" AND (winlog.event_data.ServiceName:*svc_file* OR winlog.event_data.ServiceName:*FS01*)
   winrm_remote_execution: >-
@@ -234,13 +259,13 @@ log_queries:
   dcsync_replication: >-
     host.name:"DC01.mycompany.local" AND event.code:"4662" AND winlog.event_data.Properties:*1131f6ad-9c07-11d1-f79f-00c04fc2dcd2* AND NOT winlog.event_data.SubjectUserName:*$*
   golden_ticket_service_ticket: >-
-    host.name:"DC01.mycompany.local" AND event.code:"4769" AND winlog.event_data.TargetUserName:*Administrator* AND winlog.event_data.IpAddress:"::ffff:10.0.1.194"
+    host.name:"DC01.mycompany.local" AND event.code:"4769" AND winlog.event_data.TargetUserName:(*Administrator* OR *admin_user*) AND (winlog.event_data.IpAddress:"::ffff:10.0.1.194" OR winlog.event_data.IpAddress:"10.0.1.194")
   valid_domain_account_remote_logon: >-
-    host.name:"DC01.mycompany.local" AND event.code:"4624" AND winlog.event_data.LogonType:"3" AND winlog.event_data.IpAddress:"10.0.1.194" AND winlog.event_data.TargetUserName:*Administrator*
+    host.name:"DC01.mycompany.local" AND event.code:"4624" AND winlog.event_data.LogonType:"3" AND (winlog.event_data.IpAddress:"10.0.1.194" OR winlog.event_data.IpAddress:"::ffff:10.0.1.194") AND winlog.event_data.TargetUserName:(*Administrator* OR *admin_user*)
   service_execution: >-
-    host.name:"DC01.mycompany.local" AND event.code:"7045" AND winlog.event_data.AccountName:"LocalSystem" AND winlog.event_data.ImagePath:*\\*.exe AND NOT winlog.event_data.ImagePath:*\\System32\\* AND NOT winlog.event_data.ImagePath:*\\SysWOW64\\*
+    host.name:"DC01.mycompany.local" AND event.code:"7045" AND winlog.event_data.AccountName:("LocalSystem" OR "NT AUTHORITY\\SYSTEM") AND winlog.event_data.ImagePath:(*\\Windows\\*.exe OR *systemroot%\\*.exe OR *\\*.exe) AND NOT winlog.event_data.ImagePath:(*\\System32\\* OR *\\SysWOW64\\* OR *\\regedit.exe*)
   ntds_dump: >-
-    host.name:"DC01.mycompany.local" AND (event.code:"4662" AND winlog.event_data.Properties:*1131f6ad-9c07-11d1-f79f-00c04fc2dcd2*) OR (event.code:"7045" AND winlog.event_data.ServiceName:*BTOBTO*)
+    host.name:"DC01.mycompany.local" AND ((event.code:"4662" AND winlog.event_data.Properties:*1131f6ad-9c07-11d1-f79f-00c04fc2dcd2*) OR (event.code:"7045" AND winlog.event_data.ImagePath:(*\\Windows\\*.exe OR *systemroot%\\*.exe)))
 
 alert_queries:
   user_execution_malicious_file: 'kibana.alert.rule.rule_id:"sb-ad-t1204-002-user-execution-malicious-file"'

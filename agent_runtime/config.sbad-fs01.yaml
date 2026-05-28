@@ -7,7 +7,7 @@ display_name: SB-AD FS01 BasAgent
 hostname: FS01.mycompany.local
 platform: windows
 collector_type: winlogbeat
-controller_url: http://127.0.0.1:8000
+controller_url: http://10.0.1.194:8000
 interval_seconds: 2
 execution_mode: simulation
 safety_mode: approval_required

@@ -92,7 +92,7 @@ class AgentRegisterRequest(BaseModel):
     segment_id: str | None = None
     hostname: str | None = None
     platform: str | None = None
-    execution_mode: str | None = "simulation"
+    execution_mode: str | None = "real"
     safety_mode: str | None = None
     capabilities: list[str] | str | None = None
     controls: list[str] | str | None = None
@@ -140,7 +140,7 @@ class OperationRequest(BaseModel):
     selected_steps: list[StepSelection] | None = None
     include_normal: bool = False
     operation_mode: str = "multi_agent"
-    execution_mode: str = "simulation"
+    execution_mode: str = "real"
 
 
 class JobResultRequest(BaseModel):

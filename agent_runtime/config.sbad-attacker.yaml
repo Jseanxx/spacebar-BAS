@@ -9,7 +9,7 @@ platform: linux
 collector_type: manual
 controller_url: http://127.0.0.1:8000
 interval_seconds: 2
-execution_mode: simulation
+execution_mode: real
 safety_mode: approval_required
 capabilities: linux,bash,impacket,attacker_host,http_server,upload_server
 controls: aws_security_group,manual_response

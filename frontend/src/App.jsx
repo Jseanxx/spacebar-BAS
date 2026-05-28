@@ -146,6 +146,63 @@ function getDetectionLabel(status) {
   return labels[status] || status;
 }
 
+function formatCoverage(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (Number.isNaN(numeric)) return value;
+  return `${Math.round((numeric <= 1 ? numeric * 100 : numeric))}%`;
+}
+
+function getExecutionLabel(status) {
+  const labels = {
+    success: "공격 성공",
+    completed: "공격 성공",
+    simulated: "시뮬레이션",
+    failed: "공격 실패",
+    blocked: "실행 차단",
+    running: "실행 중",
+    queued: "대기",
+    pending: "대기",
+    manual_required: "수동 필요",
+  };
+  return labels[status] || getStatusLabel(status);
+}
+
+function getStepEvidenceText(step) {
+  const executionStatus = step?.execution_status || step?.status;
+  const detectionStatus = getDetectionStatus(step);
+  const eventCount = step?.source_event_count ?? step?.elk_check?.event_count ?? 0;
+  const alertCount = step?.alert_count ?? step?.elk_check?.alert_check?.alert_count ?? 0;
+  const missingGates = step?.module_result?.missing_safety_gates || [];
+  const commandResults = step?.module_result?.command_results || [];
+  const failedCommand = commandResults.find((item) => item?.returncode || item?.status === "failed");
+
+  if (executionStatus === "simulated") {
+    return "Simulation mode: 실제 공격 명령과 ELK 조회는 수행하지 않았습니다.";
+  }
+
+  if (executionStatus === "blocked") {
+    if (missingGates.length > 0) {
+      return `안전 게이트가 열리지 않아 실행이 차단되었습니다: ${missingGates.join(", ")}`;
+    }
+    return step?.error || step?.module_result?.message || "안전 게이트 또는 Agent 상태 때문에 실행이 차단되었습니다.";
+  }
+
+  if (executionStatus === "failed") {
+    if (failedCommand) {
+      const reason = failedCommand.stderr || failedCommand.stdout || failedCommand.error || "명령 반환 코드가 0이 아닙니다.";
+      return `공격 실행 실패: ${String(reason).slice(0, 260)}`;
+    }
+    return step?.error || step?.module_result?.message || "공격 실행 단계에서 실패했습니다.";
+  }
+
+  if (step?.elk_check?.checked === false) {
+    return step.elk_check.message || "ELK 조회가 수행되지 않았습니다.";
+  }
+
+  return `ELK source events ${eventCount}건 · detection alerts ${alertCount}건 · ${getDetectionLabel(detectionStatus)}`;
+}
+
 export default function App() {
   const [health, setHealth] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
@@ -163,7 +220,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [phaseFilter, setPhaseFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("SB-AD");
-  const [executionMode, setExecutionMode] = useState("simulation");
+  const [executionMode, setExecutionMode] = useState("real");
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedOperation, setSelectedOperation] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -333,6 +390,16 @@ export default function App() {
     const status = getDetectionStatus(step);
     return { ...counts, [status]: (counts[status] || 0) + 1 };
   }, {});
+  const operationSummary = latestOperation?.summary || {};
+  const reportSummary = latestOperation?.report?.summary || {};
+  const executionTotal = operationSummary.total || evidenceSteps.length || selectedSteps.length || 0;
+  const executionSucceeded = (operationSummary.success || 0) + (operationSummary.completed || 0);
+  const executionFailed = (operationSummary.failed || 0) + (operationSummary.blocked || 0);
+  const executionSimulated = operationSummary.simulated || 0;
+  const detectionChecked = (detectionCounts.detected || 0)
+    + (detectionCounts.logged_only || 0)
+    + (detectionCounts.alert_only || 0)
+    + (detectionCounts.missed || 0);
   const elkConfigured = Boolean(target?.elk?.enabled);
   const elkVerified = normalizeList(latestRun?.steps).some((step) => (
     step.elk_check?.checked || step.elk_check?.alert_check?.checked
@@ -559,8 +626,8 @@ export default function App() {
           <label className="field-label mode-field">
             실행 방식
             <select value={executionMode} onChange={(event) => setExecutionMode(event.target.value)}>
+              <option value="real">Real gated - Agent 실행 + ELK 검증</option>
               <option value="simulation">Simulation - 명령 미실행</option>
-              <option value="real">Real - Agent 안전 게이트 적용</option>
             </select>
           </label>
           <button type="button" className="secondary-button" onClick={loadPreset}>
@@ -654,8 +721,8 @@ export default function App() {
           <label className="field-label mode-field compact">
             실행 방식
             <select value={executionMode} onChange={(event) => setExecutionMode(event.target.value)}>
-              <option value="simulation">Simulation</option>
               <option value="real">Real gated</option>
+              <option value="simulation">Simulation</option>
             </select>
           </label>
           <div className="queue-stack">
@@ -713,17 +780,60 @@ export default function App() {
     }
 
     return (
-      <div className="side-section">
+      <div className="side-section evidence-side-section">
         <div className="panel-heading">
           <span>Evidence</span>
           <strong>{latestOperation?.operation_id || latestRun?.execution_id || "선택된 결과 없음"}</strong>
         </div>
-        <div className="result-meter">
+        <div className="evidence-callout">
+          <span>현재 결과</span>
+          <strong>{latestOperation?.status ? getStatusLabel(latestOperation.status) : "런 선택 전"}</strong>
+          <small>
+            {(latestOperation?.execution_mode || executionMode) === "simulation"
+              ? "Simulation은 공격과 ELK 조회를 실행하지 않아 탐지 결과가 미확인으로 표시됩니다."
+              : "Real 모드에서 Agent가 명령을 실행한 뒤 ELK source/alert 조회 결과가 채워집니다."}
+          </small>
+        </div>
+        <div className="result-meter execution-meter">
+          <div><span>전체</span><strong>{executionTotal}</strong></div>
+          <div><span>성공</span><strong>{executionSucceeded}</strong></div>
+          <div><span>시뮬</span><strong>{executionSimulated}</strong></div>
+          <div><span>실패/차단</span><strong>{executionFailed}</strong></div>
+        </div>
+        <div className="result-meter detection-meter">
+          <div><span>ELK 확인</span><strong>{detectionChecked}</strong></div>
           <div><span>탐지</span><strong>{detectionCounts.detected || 0}</strong></div>
           <div><span>로그만</span><strong>{detectionCounts.logged_only || 0}</strong></div>
           <div><span>미탐</span><strong>{detectionCounts.missed || 0}</strong></div>
+          <div><span>미확인</span><strong>{detectionCounts.not_checked || 0}</strong></div>
         </div>
-        <div className="run-list">
+        {latestOperation?.report?.report_id && (
+          <div className="report-card">
+            <span>Report</span>
+            <strong>{latestOperation.report.report_id}</strong>
+            <small>
+              Score {reportSummary.final_score ?? "-"} · Detection {formatCoverage(reportSummary.detection_coverage)}
+            </small>
+            <a
+              className="artifact-link"
+              href={`${API_BASE}/reports/${latestOperation.report.report_id}/summary.md`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Summary 열기
+            </a>
+          </div>
+        )}
+        <div className="run-list operation-list">
+          {operations.slice(0, 6).map((operation) => (
+            <button key={operation.operation_id} type="button" onClick={() => setSelectedOperation(operation)}>
+              <strong>{operation.operation_id}</strong>
+              <span>{operation.campaign_id} · {getStatusLabel(operation.status)} · {operation.created_at || "-"}</span>
+            </button>
+          ))}
+          {operations.length === 0 && <p className="empty">아직 Operation 기록이 없습니다.</p>}
+        </div>
+        <div className="run-list legacy-run-list">
           {runs.slice(0, 8).map((run) => (
             <button key={run.execution_id} type="button" onClick={() => loadRun(run.execution_id)}>
               <strong>{run.execution_id}</strong>
@@ -861,14 +971,14 @@ export default function App() {
               <button type="button" className="ghost-button" onClick={refreshRuntime}>새로고침</button>
             </div>
             <div className="timeline-list">
-              {visibleSteps.slice(0, 10).map((step, index) => {
+              {visibleSteps.map((step, index) => {
                 const status = step.status || (selectedIds.includes(getStepSelectionId(step, campaignId)) ? "queued" : "planned");
                 return (
                   <div key={`${step.order}-${step.technique_id || index}`} className={`timeline-row ${status}`}>
                     <span>{String(index + 1).padStart(2, "0")}</span>
                     <div>
                       <strong>{getTechniqueLabel(step)}</strong>
-                  <small>{getStepAssetId(step).toUpperCase()} · {getStatusLabel(status)} · {getDetectionLabel(getDetectionStatus(step))}</small>
+                      <small>{getStepAssetId(step).toUpperCase()} · {getExecutionLabel(status)} · {getDetectionLabel(getDetectionStatus(step))}</small>
                     </div>
                   </div>
                 );
@@ -880,19 +990,50 @@ export default function App() {
           <div className="evidence-panel">
             <div className="panel-heading horizontal">
               <div>
-                <span>Recent Detection</span>
+                <span>Run Result</span>
                 <strong>{latestOperation?.operation_id || latestRun?.execution_id || "결과 없음"}</strong>
               </div>
             </div>
+            <div className="result-overview">
+              <div>
+                <span>Execution</span>
+                <strong>{latestOperation?.status ? getStatusLabel(latestOperation.status) : "대기"}</strong>
+                <small>{executionSucceeded} success · {executionSimulated} simulation · {executionFailed} failed/blocked</small>
+              </div>
+              <div>
+                <span>ELK Detection</span>
+                <strong>{detectionChecked}/{executionTotal}</strong>
+                <small>{detectionCounts.detected || 0} detected · {detectionCounts.logged_only || 0} logged · {detectionCounts.missed || 0} missed · {detectionCounts.not_checked || 0} not checked</small>
+              </div>
+              {latestOperation?.report?.report_id && (
+                <div>
+                  <span>Report</span>
+                  <strong>{reportSummary.final_score ?? "-"} / 100</strong>
+                  <small>{latestOperation.report.report_id}</small>
+                  <a
+                    className="artifact-link compact"
+                    href={`${API_BASE}/reports/${latestOperation.report.report_id}/summary.md`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Summary 보기
+                  </a>
+                </div>
+              )}
+            </div>
             <div className="evidence-feed">
-              {evidenceSteps.slice(0, 6).map((step) => {
+              {evidenceSteps.map((step) => {
                 const detectionStatus = getDetectionStatus(step);
+                const executionStatus = step.execution_status || step.status;
                 return (
                   <div key={`${step.order}-${step.technique_id}`} className="evidence-row">
-                    <span className={`detection-pill ${detectionStatus}`}>{getDetectionLabel(detectionStatus)}</span>
+                    <div className="result-pill-stack">
+                      <span className={`execution-pill ${executionStatus}`}>{getExecutionLabel(executionStatus)}</span>
+                      <span className={`detection-pill ${detectionStatus}`}>{getDetectionLabel(detectionStatus)}</span>
+                    </div>
                     <div>
                       <strong>{getTechniqueLabel(step)}</strong>
-                      <small>{step.module_result?.message || step.status || "결과 메시지 없음"}</small>
+                      <small>{getStepAssetId(step).toUpperCase()} · {getStepEvidenceText(step)}</small>
                     </div>
                   </div>
                 );

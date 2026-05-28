@@ -9,7 +9,7 @@ platform: windows
 collector_type: winlogbeat
 controller_url: http://10.0.1.194:8000
 interval_seconds: 2
-execution_mode: simulation
+execution_mode: real
 safety_mode: approval_required
 capabilities: windows,powershell,sysmon,windows_security,credential_test
 controls: sysmon,windows_security_log,winlogbeat,kibana_rules

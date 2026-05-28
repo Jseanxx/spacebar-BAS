@@ -101,7 +101,7 @@ flow:
           platform: windows
           shell: cmd
           timeout: 30
-          command: net user /domain
+          command: net user /domain & exit /b 0
 
   - order: 5
     phase: attack
@@ -197,7 +197,7 @@ flow:
           platform: windows
           shell: cmd
           timeout: 30
-          command: net localgroup Administrators && net group "Domain Admins" /domain
+          command: net localgroup Administrators & net group "Domain Admins" /domain & exit /b 0
 
   - order: 9
     phase: attack

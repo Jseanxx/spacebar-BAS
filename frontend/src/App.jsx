@@ -417,6 +417,11 @@ export default function App() {
       return matchesSource && matchesPhase && matchesQuery;
     });
   }, [library, campaignId, query, phaseFilter, sourceFilter]);
+  const libraryEmptyMessage = error
+    ? `Technique 데이터를 불러오지 못했습니다: ${error}`
+    : library.length === 0
+      ? "Technique 데이터가 아직 로드되지 않았습니다. API 서버 연결을 확인해 주세요."
+      : "조건에 맞는 Technique이 없습니다.";
 
   const sourceOptions = useMemo(() => (
     Array.from(new Set(library.map((step) => getStepSourceId(step, campaignId)))).sort()
@@ -697,7 +702,7 @@ export default function App() {
                 </button>
               );
             })}
-            {filteredLibrary.length === 0 && <p className="empty">조건에 맞는 Technique이 없습니다.</p>}
+            {filteredLibrary.length === 0 && <p className="empty">{libraryEmptyMessage}</p>}
           </div>
         </div>
       );

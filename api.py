@@ -454,8 +454,11 @@ def read_json_file(path, default):
     if not path.exists():
         return default
 
-    with path.open("r", encoding="utf-8") as file:
-        return json.load(file)
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            return json.load(file)
+    except (OSError, json.JSONDecodeError):
+        return default
 
 
 def write_json_file(path, data):

@@ -8,7 +8,7 @@ const POLL_LIMIT = 70;
 
 const PANELS = [
   { id: "overview", label: "상황판", hint: "캠페인과 자산 상태" },
-  { id: "library", label: "쿼리", hint: "테크닉 검색과 선택" },
+  { id: "library", label: "테크닉", hint: "시나리오 검색과 실행" },
   { id: "queue", label: "런", hint: "실행 순서와 파라미터" },
   { id: "evidence", label: "증거", hint: "최근 결과와 탐지" },
 ];
@@ -286,6 +286,11 @@ export default function App() {
     const status = getDetectionStatus(step);
     return { ...counts, [status]: (counts[status] || 0) + 1 };
   }, {});
+  const elkConfigured = Boolean(target?.elk?.enabled);
+  const elkVerified = normalizeList(latestRun?.steps).some((step) => (
+    step.elk_check?.checked || step.elk_check?.alert_check?.checked
+  ));
+  const elkStatus = elkVerified ? "verified" : (elkConfigured ? "configured" : "missing");
 
   const filteredLibrary = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -376,10 +381,9 @@ export default function App() {
     try {
       setIsRunning(true);
       setError("");
-      setActivePanel("queue");
 
       if (selectedSteps.length === 0) {
-        throw new Error("먼저 쿼리 패널에서 실행할 테크닉을 선택해 주세요.");
+        throw new Error("먼저 테크닉 패널에서 실행할 항목을 선택해 주세요.");
       }
 
       const payload = {
@@ -454,6 +458,17 @@ export default function App() {
             <div><span>Queue</span><strong>{selectedSteps.length}</strong></div>
             <div><span>Runs</span><strong>{runs.length}</strong></div>
           </div>
+          <div className={`elk-status-card ${elkStatus}`}>
+            <span>ELK 연동</span>
+            <strong>{elkStatus === "verified" ? "검증됨" : elkStatus === "configured" ? "설정됨" : "미설정"}</strong>
+            <small>
+              {elkStatus === "verified"
+                ? "최근 런에서 ELK 확인이 수행되었습니다."
+                : elkStatus === "configured"
+                  ? "타깃 설정에 ELK가 활성화되어 있습니다."
+                  : "타깃 설정에서 ELK 활성 정보를 찾지 못했습니다."}
+            </small>
+          </div>
           <button type="button" className="secondary-button" onClick={loadPreset}>
             기본 흐름 올리기
           </button>
@@ -466,7 +481,7 @@ export default function App() {
         <div className="side-section">
           <div className="panel-heading">
             <span>Technique Library</span>
-            <strong>{filteredLibrary.length}개 쿼리</strong>
+            <strong>{filteredLibrary.length}개 테크닉</strong>
           </div>
           <div className="filter-grid">
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="T1059, WinRM, shell..." />
@@ -480,18 +495,31 @@ export default function App() {
               <option value="normal">Normal</option>
             </select>
           </div>
+          <div className="library-run-strip">
+            <div>
+              <span>선택됨</span>
+              <strong>{selectedSteps.length}</strong>
+            </div>
+            <button type="button" className="secondary-button" onClick={runQueue} disabled={isRunning || selectedSteps.length === 0}>
+              {isRunning ? "실행 중" : "선택 실행"}
+            </button>
+          </div>
           <div className="technique-list">
             {filteredLibrary.map((step) => {
               const selectionId = getStepSelectionId(step, campaignId);
               const selected = selectedIds.includes(selectionId);
+              const phase = step.phase || "attack";
               return (
                 <button
                   key={selectionId}
                   type="button"
-                  className={`technique-card ${selected ? "selected" : ""}`}
+                  className={`technique-card ${phase} ${selected ? "selected" : ""}`}
                   onClick={() => toggleStep(step)}
                 >
-                  <span>{step.technique_id || step.phase || "STEP"}</span>
+                  <span className="phase-line">
+                    <em>{phase === "normal" ? "Normal" : "Attack"}</em>
+                    <b>{step.technique_id || "STEP"}</b>
+                  </span>
                   <strong>{step.name}</strong>
                   <small>{getStepSourceId(step, campaignId)} · {getStepRole(step)}</small>
                 </button>
@@ -603,26 +631,34 @@ export default function App() {
         </button>
         <div className="panel-tabs" role="tablist" aria-label="BAS workspace panels">
           {PANELS.map((panel) => (
-            <button
-              key={panel.id}
-              type="button"
-              className={activePanel === panel.id ? "active" : ""}
-              onClick={() => setActivePanel(panel.id)}
-            >
-              <span>{panel.label}</span>
-              <small>{panel.hint}</small>
-            </button>
+            <div key={panel.id} className={`rail-accordion-item ${activePanel === panel.id ? "open" : ""}`}>
+              <button
+                type="button"
+                className={`panel-trigger ${activePanel === panel.id ? "active" : ""}`}
+                onClick={() => setActivePanel(activePanel === panel.id ? "" : panel.id)}
+              >
+                <span>{panel.label}</span>
+                <small>{panel.hint}</small>
+              </button>
+              {activePanel === panel.id && (
+                <div className="rail-panel">
+                  {renderActivePanel()}
+                </div>
+              )}
+            </div>
           ))}
         </div>
         <div className="api-state">
-          <span className={`status-dot ${health?.status === "ok" ? "online" : "offline"}`} />
-          API {health?.status === "ok" ? "연결됨" : "확인 필요"}
+          <span>
+            <i className={`status-dot ${health?.status === "ok" ? "online" : "offline"}`} />
+            API {health?.status === "ok" ? "연결됨" : "확인 필요"}
+          </span>
+          <span>
+            <i className={`status-dot elk-dot ${elkStatus}`} />
+            ELK {elkStatus === "verified" ? "검증됨" : elkStatus === "configured" ? "설정됨" : "미설정"}
+          </span>
         </div>
       </aside>
-
-      <section className="drawer-panel">
-        {renderActivePanel()}
-      </section>
 
       <section className="map-stage">
         {(error || notice) && (

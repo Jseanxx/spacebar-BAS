@@ -25,7 +25,7 @@ button {
 .bas-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 92px minmax(300px, 390px) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
   background:
     linear-gradient(90deg, rgba(19, 33, 49, 0.06) 1px, transparent 1px),
     linear-gradient(0deg, rgba(19, 33, 49, 0.05) 1px, transparent 1px),
@@ -40,7 +40,8 @@ button {
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 18px;
-  padding: 18px 12px;
+  overflow: hidden;
+  padding: 18px;
   border-right: 1px solid rgba(13, 29, 47, 0.14);
   background: #101820;
   color: #ecf2f6;
@@ -66,10 +67,20 @@ button {
   display: grid;
   gap: 10px;
   align-content: start;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 3px;
 }
 
-.panel-tabs button {
-  min-height: 72px;
+.rail-accordion-item {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.panel-trigger {
+  min-height: 64px;
+  width: 100%;
   display: grid;
   align-content: center;
   gap: 4px;
@@ -81,42 +92,62 @@ button {
   padding: 10px;
 }
 
-.panel-tabs button:hover,
-.panel-tabs button.active {
+.panel-trigger:hover,
+.panel-trigger.active {
   border-color: rgba(122, 178, 255, 0.36);
   background: #1c2a35;
   color: #ffffff;
 }
 
-.panel-tabs span,
-.panel-tabs small {
+.panel-trigger span,
+.panel-trigger small {
   display: block;
   overflow-wrap: anywhere;
 }
 
-.panel-tabs span {
+.panel-trigger span {
   font-size: 14px;
   font-weight: 900;
 }
 
-.panel-tabs small {
+.panel-trigger small {
   color: #8fa2b4;
   font-size: 11px;
   line-height: 1.25;
 }
 
+.rail-panel {
+  min-width: 0;
+  max-height: min(62vh, 660px);
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #18212f;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  animation: accordion-open 180ms ease-out;
+}
+
 .api-state {
-  display: flex;
-  align-items: center;
+  display: grid;
   gap: 7px;
   color: #c7d2dc;
   font-size: 11px;
   font-weight: 900;
 }
 
+.api-state span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .status-dot {
   width: 9px;
   height: 9px;
+  display: inline-block;
+  flex: 0 0 auto;
   border-radius: 50%;
   background: #ef4444;
 }
@@ -126,12 +157,19 @@ button {
   box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.14);
 }
 
-.drawer-panel {
-  min-height: 100vh;
-  padding: 18px;
-  border-right: 1px solid rgba(13, 29, 47, 0.12);
-  background: rgba(248, 250, 252, 0.82);
-  backdrop-filter: blur(14px);
+.status-dot.elk-dot.configured {
+  background: #38bdf8;
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.14);
+}
+
+.status-dot.elk-dot.verified {
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.14);
+}
+
+.status-dot.elk-dot.missing {
+  background: #f97316;
+  box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.14);
 }
 
 .side-section {
@@ -226,6 +264,40 @@ button {
   line-height: 1;
 }
 
+.elk-status-card {
+  display: grid;
+  gap: 4px;
+  padding: 13px;
+  border: 1px solid #bae6fd;
+  border-left: 4px solid #0284c7;
+  border-radius: 8px;
+  background: #f0f9ff;
+}
+
+.elk-status-card.verified {
+  border-color: #bbf7d0;
+  border-left-color: #16a34a;
+  background: #f0fdf4;
+}
+
+.elk-status-card.missing {
+  border-color: #fed7aa;
+  border-left-color: #f97316;
+  background: #fff7ed;
+}
+
+.elk-status-card span,
+.elk-status-card small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.elk-status-card strong {
+  color: #0f172a;
+  font-size: 18px;
+}
+
 .secondary-button,
 .ghost-button,
 .run-button {
@@ -267,6 +339,35 @@ button {
   gap: 8px;
 }
 
+.library-run-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #d8e2ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.library-run-strip div {
+  min-width: 0;
+}
+
+.library-run-strip span {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.library-run-strip strong {
+  display: block;
+  color: #0f172a;
+  font-size: 22px;
+  line-height: 1;
+}
+
 .technique-list,
 .queue-stack,
 .run-list,
@@ -277,7 +378,7 @@ button {
 }
 
 .technique-list {
-  max-height: calc(100vh - 210px);
+  max-height: 430px;
   overflow: auto;
   padding-right: 4px;
 }
@@ -296,17 +397,75 @@ button {
   text-align: left;
 }
 
-.technique-card:hover,
-.technique-card.selected {
-  border-color: #2563eb;
-  border-left-color: #2563eb;
-  background: #f5f9ff;
+.technique-card.attack {
+  border-color: #fecaca;
+  border-left-color: #f87171;
+  background: #fff7f7;
 }
 
-.technique-card span {
-  color: #1d4ed8;
+.technique-card.attack:hover,
+.technique-card.attack.selected {
+  border-color: #ef4444;
+  border-left-color: #dc2626;
+  background: #fee2e2;
+}
+
+.technique-card.normal {
+  border-color: #bbf7d0;
+  border-left-color: #4ade80;
+  background: #f0fdf4;
+}
+
+.technique-card.normal:hover,
+.technique-card.normal.selected {
+  border-color: #22c55e;
+  border-left-color: #16a34a;
+  background: #dcfce7;
+}
+
+.phase-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.phase-line em,
+.phase-line b {
+  font-style: normal;
   font-size: 11px;
   font-weight: 950;
+}
+
+.phase-line em {
+  padding: 4px 7px;
+  border-radius: 999px;
+}
+
+.phase-line b {
+  color: #334155;
+}
+
+.technique-card.attack .phase-line em {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.technique-card.attack.selected .phase-line em,
+.technique-card.attack:hover .phase-line em {
+  color: #ffffff;
+  background: #dc2626;
+}
+
+.technique-card.normal .phase-line em {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.technique-card.normal.selected .phase-line em,
+.technique-card.normal:hover .phase-line em {
+  color: #ffffff;
+  background: #16a34a;
 }
 
 .technique-card strong,
@@ -799,9 +958,21 @@ button {
   }
 }
 
+@keyframes accordion-open {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 1180px) {
   .bas-shell {
-    grid-template-columns: 84px minmax(280px, 340px) minmax(0, 1fr);
+    grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
   }
 
   .lower-grid {
@@ -817,28 +988,25 @@ button {
   .left-rail {
     position: static;
     height: auto;
-    grid-template-columns: auto 1fr auto;
-    grid-template-rows: auto;
-    align-items: center;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    align-items: stretch;
   }
 
   .panel-tabs {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow: visible;
   }
 
-  .panel-tabs button {
+  .panel-trigger {
     min-height: 58px;
   }
 
-  .panel-tabs small,
   .api-state {
     display: none;
   }
 
-  .drawer-panel {
-    min-height: auto;
-    border-right: 0;
-    border-bottom: 1px solid rgba(13, 29, 47, 0.12);
+  .rail-panel {
+    max-height: none;
   }
 
   .technique-list {
@@ -892,11 +1060,6 @@ button {
     height: 48px;
   }
 
-  .panel-tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .drawer-panel,
   .map-stage {
     padding: 14px;
   }

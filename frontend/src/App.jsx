@@ -215,6 +215,26 @@ function getStepQueries(step) {
   };
 }
 
+function getCoverageFields(step, detectionStatus) {
+  const recommendation = step?.recommendation || {};
+  const fallbackAction = recommendation.action || "review_detection_logic";
+
+  return [
+    ["Technique ID", step?.technique_id || "-"],
+    ["Attack Name", step?.attack_name || step?.name || "-"],
+    ["Target Asset", step?.target_asset || getStepAssetId(step).toUpperCase()],
+    ["Required Condition", step?.required_condition || "-"],
+    ["Expected Log", step?.expected_log || "Source telemetry from the mapped log source"],
+    ["Detection Rule", step?.detection_rule || "-"],
+    ["Detection Result", step?.detection_result || getDetectionLabel(detectionStatus)],
+    ["Coverage Status", step?.coverage_status || getDetectionLabel(detectionStatus)],
+    ["System Impact", step?.system_impact || "-"],
+    ["Risk Level", step?.risk_level || step?.risk || "-"],
+    ["Recommended Sensor", step?.recommended_sensor || "-"],
+    ["Improvement Plan", step?.improvement_plan || fallbackAction],
+  ];
+}
+
 export default function App() {
   const [health, setHealth] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
@@ -1147,6 +1167,7 @@ export default function App() {
                 const executionStatus = step.execution_status || step.status;
                 const queries = getStepQueries(step);
                 const hasQuery = queries.source || queries.alert;
+                const coverageFields = getCoverageFields(step, detectionStatus);
                 return (
                   <div key={`${step.order}-${step.technique_id}`} className="evidence-row">
                     <div className="result-pill-stack">
@@ -1156,6 +1177,14 @@ export default function App() {
                     <div>
                       <strong>{getTechniqueLabel(step)}</strong>
                       <small>{getStepAssetId(step).toUpperCase()} · {getStepEvidenceText(step)}</small>
+                      <div className="coverage-stack">
+                        {coverageFields.map(([label, value]) => (
+                          <div key={`${step.order}-${label}`}>
+                            <span>{label}</span>
+                            <strong>{value || "-"}</strong>
+                          </div>
+                        ))}
+                      </div>
                       <div className="query-stack">
                         {queries.source && (
                           <div>

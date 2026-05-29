@@ -8,6 +8,7 @@ hostname: FS01.mycompany.local
 platform: windows
 collector_type: winlogbeat
 controller_url: http://10.0.1.194:8000
+controller_urls: http://10.0.1.194:8000,http://192.168.10.59:8001
 interval_seconds: 2
 execution_mode: real
 safety_mode: approval_required

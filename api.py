@@ -795,6 +795,18 @@ def apply_report_classification_to_operation(operation, report):
             "alert_count",
             "gap_type",
             "recommendation",
+            "attack_name",
+            "target_asset",
+            "required_condition",
+            "expected_log",
+            "detection_rule",
+            "detection_result",
+            "coverage_status",
+            "system_impact",
+            "risk_level",
+            "recommended_sensor",
+            "improvement_plan",
+            "queries",
         ):
             step[field] = classified_step.get(field)
 
@@ -1548,6 +1560,11 @@ def get_report_technical(report_id: str):
 @app.get("/reports/{report_id}/backlog.csv")
 def get_report_backlog(report_id: str):
     return read_report_artifact(report_id, "detection-backlog.csv", "text/csv")
+
+
+@app.get("/reports/{report_id}/coverage.csv")
+def get_report_coverage(report_id: str):
+    return read_report_artifact(report_id, "coverage.csv", "text/csv")
 
 
 @app.get("/reports/{report_id}/navigator.json")

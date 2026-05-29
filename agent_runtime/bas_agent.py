@@ -56,6 +56,7 @@ def load_config(config_path=CONFIG_PATH):
         "controls": "",
         "safety_mode": "",
         "controller_url": "http://127.0.0.1:8000",
+        "controller_urls": "",
         "interval_seconds": "5",
         "execution_mode": "simulation",
     }
@@ -72,6 +73,18 @@ def parse_csv_list(value):
         for item in str(value or "").split(",")
         if item.strip()
     ]
+
+
+def parse_controller_urls(config):
+    urls = []
+
+    for key in ("controller_url", "controller_urls"):
+        for item in parse_csv_list(config.get(key)):
+            normalized = item.rstrip("/")
+            if normalized and normalized not in urls:
+                urls.append(normalized)
+
+    return urls or ["http://127.0.0.1:8000"]
 
 
 def request_json(method, url, payload=None):
@@ -121,7 +134,8 @@ class BasAgent:
     def __init__(self, config):
         self.config = config
         self.agent_id = config["agent_id"]
-        self.controller_url = config["controller_url"].rstrip("/")
+        self.controller_urls = parse_controller_urls(config)
+        self.controller_url = self.controller_urls[0]
         self.interval_seconds = config["interval_seconds"]
         self.execution_mode = config["execution_mode"]
 
@@ -144,6 +158,23 @@ class BasAgent:
 
             time.sleep(self.interval_seconds)
 
+    def request_controller(self, method, path, payload=None):
+        errors = []
+        ordered_urls = [self.controller_url] + [
+            url for url in self.controller_urls
+            if url != self.controller_url
+        ]
+
+        for controller_url in ordered_urls:
+            try:
+                response = request_json(method, f"{controller_url}{path}", payload)
+                self.controller_url = controller_url
+                return response
+            except urllib.error.URLError as exc:
+                errors.append(f"{controller_url}: {exc}")
+
+        raise urllib.error.URLError("; ".join(errors))
+
     def register(self):
         payload = {
             "agent_id": self.agent_id,
@@ -161,27 +192,27 @@ class BasAgent:
             "controls": parse_csv_list(self.config.get("controls")),
         }
 
-        response = request_json(
+        response = self.request_controller(
             "POST",
-            f"{self.controller_url}/agents/register",
+            "/agents/register",
             payload,
         )
 
-        print(f"[+] Registered BasAgent: {response.get('agent', {}).get('agent_id')}")
+        print(f"[+] Registered BasAgent: {response.get('agent', {}).get('agent_id')} @ {self.controller_url}")
 
     def heartbeat(self):
-        request_json(
+        self.request_controller(
             "POST",
-            f"{self.controller_url}/agents/{self.agent_id}/heartbeat",
+            f"/agents/{self.agent_id}/heartbeat",
             {
                 "status": "online",
             },
         )
 
     def get_next_job(self):
-        response = request_json(
+        response = self.request_controller(
             "GET",
-            f"{self.controller_url}/agents/{self.agent_id}/jobs/next",
+            f"/agents/{self.agent_id}/jobs/next",
         )
 
         return response.get("job")
@@ -200,8 +231,14 @@ class BasAgent:
                     "Allowed modes: simulation, real."
                 )
             previous_defer_elk = os.environ.get("BAS_DEFER_ELK_CHECKS")
+            previous_agent_role = os.environ.get("BAS_AGENT_ROLE")
+            previous_allow_real = os.environ.get("BAS_ALLOW_REAL_EXECUTION")
             if job.get("defer_elk_checks", False):
                 os.environ["BAS_DEFER_ELK_CHECKS"] = "1"
+            if self.config.get("agent_role"):
+                os.environ["BAS_AGENT_ROLE"] = self.config["agent_role"]
+            if execution_mode == "real" and self.config.get("safety_mode") == "approval_required":
+                os.environ.setdefault("BAS_ALLOW_REAL_EXECUTION", "1")
 
             try:
                 result, output_path = run_campaign(
@@ -216,6 +253,14 @@ class BasAgent:
                     os.environ.pop("BAS_DEFER_ELK_CHECKS", None)
                 else:
                     os.environ["BAS_DEFER_ELK_CHECKS"] = previous_defer_elk
+                if previous_agent_role is None:
+                    os.environ.pop("BAS_AGENT_ROLE", None)
+                else:
+                    os.environ["BAS_AGENT_ROLE"] = previous_agent_role
+                if previous_allow_real is None:
+                    os.environ.pop("BAS_ALLOW_REAL_EXECUTION", None)
+                else:
+                    os.environ["BAS_ALLOW_REAL_EXECUTION"] = previous_allow_real
 
             print(f"[+] Job completed: {job_id}")
             print(f"[+] Result saved: {output_path}")
@@ -247,9 +292,9 @@ class BasAgent:
             "error": error,
         }
 
-        request_json(
+        self.request_controller(
             "POST",
-            f"{self.controller_url}/agents/{self.agent_id}/jobs/{job_id}/result",
+            f"/agents/{self.agent_id}/jobs/{job_id}/result",
             payload,
         )
 

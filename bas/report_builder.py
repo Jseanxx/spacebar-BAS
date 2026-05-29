@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from datetime import datetime, timezone, timedelta
 from html import escape
 from pathlib import Path
 
-from bas.loader import load_campaign
+from bas.elk_checker import resolve_alert_query, resolve_query
+from bas.loader import load_campaign, load_target
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -40,6 +42,13 @@ def write_json(path, data):
 def safe_load_campaign(campaign_id):
     try:
         return load_campaign(campaign_id)
+    except FileNotFoundError:
+        return {}
+
+
+def safe_load_target(target_id):
+    try:
+        return load_target(target_id)
     except FileNotFoundError:
         return {}
 
@@ -251,11 +260,202 @@ def recommendation_for(step, classification):
     }
 
 
-def classify_step(step):
+def normalize_list(value):
+    return value if isinstance(value, list) else []
+
+
+def get_step_params(step):
+    params = step.get("params") or {}
+    return params if isinstance(params, dict) else {}
+
+
+def step_behavior(step):
+    return get_step_params(step).get("behavior") or step.get("behavior")
+
+
+def step_target_asset(step):
+    asset_id = step.get("asset_id") or step.get("target_asset_id")
+    if asset_id:
+        return str(asset_id).upper()
+
+    execution_host = step.get("execution_host")
+    if execution_host:
+        return str(execution_host).upper()
+
+    agent_role = step.get("agent_role") or step.get("operation_agent_role")
+    return str(agent_role or "-").upper()
+
+
+def required_condition(step):
+    requires = normalize_list(step.get("requires"))
+    safety_gates = normalize_list(get_step_params(step).get("safety_gates"))
+    parts = []
+
+    if requires:
+        parts.append(", ".join(requires))
+    if safety_gates:
+        parts.append("Safety gates: " + ", ".join(safety_gates))
+
+    return "; ".join(parts) if parts else "-"
+
+
+def expected_log(step):
+    requires = set(normalize_list(step.get("requires")))
+    behavior = step_behavior(step) or ""
+
+    if behavior in ("kerberoasting_tgs_request",):
+        return "Windows Security 4769 Kerberos TGS request"
+    if behavior in ("dcsync_replication",):
+        return "Windows Security 4662 / directory replication access"
+    if behavior in ("valid_domain_account_remote_logon", "winrm_remote_execution"):
+        return "Windows Security 4624/4688 and Sysmon process telemetry"
+    if behavior in ("service_execution",):
+        return "Service creation/execution event and Sysmon process telemetry"
+    if behavior in ("lsass_memory_dump", "rundll32_comsvcs_proxy"):
+        return "Sysmon Event ID 10 process access and Event ID 11 file creation"
+    if behavior in ("non_application_tcp_connection", "exfiltration_over_c2"):
+        return "Sysmon Event ID 3 network connection"
+    if behavior in ("ingress_tool_transfer", "local_data_staging", "masquerading_legitimate_name", "archive_collected_data", "ntds_dump"):
+        return "Sysmon file/process telemetry and Windows Security audit events"
+    if "powershell_logging" in requires or "powershell" in requires:
+        return "PowerShell 4104 and Sysmon process telemetry"
+    if "windows_security" in requires or "active_directory" in requires:
+        return "Windows Security Log and Sysmon process telemetry"
+    if "network" in requires:
+        return "Network connection telemetry"
+    if "sysmon" in requires:
+        return "Sysmon process/file/network telemetry"
+    return "Source telemetry from the mapped log source"
+
+
+def risk_level(step):
+    return str(step.get("risk") or "medium").lower()
+
+
+def system_impact(step):
+    risk = risk_level(step)
+    behavior = step_behavior(step) or ""
+    safety_gates = set(normalize_list(get_step_params(step).get("safety_gates")))
+    high_impact_keywords = ("dcsync", "golden_ticket", "ntds", "lsass", "service_execution")
+
+    if any(keyword in behavior for keyword in high_impact_keywords) or "BAS_ENABLE_DOMAIN_COMPROMISE_TESTS" in safety_gates:
+        return "High - test environment only"
+    if risk == "high" or safety_gates:
+        return "Medium - approval recommended"
+    if risk == "critical":
+        return "High - test environment only"
+    return "Low - safe validation"
+
+
+def recommended_sensor(step):
+    requires = set(normalize_list(step.get("requires")))
+    sensors = []
+
+    if "sysmon" in requires:
+        sensors.append("Sysmon")
+    if "windows_security" in requires or "active_directory" in requires or "kerberos" in requires:
+        sensors.append("Windows Security Log")
+    if "powershell_logging" in requires or "powershell" in requires:
+        sensors.append("PowerShell 4104")
+    if "network" in requires:
+        sensors.append("Sysmon Network / Suricata or Snort")
+    if "winrm" in requires:
+        sensors.append("WinRM logs")
+    if "aws" in requires:
+        sensors.append("CloudTrail / VPC Flow Log / WAF")
+
+    sensors.extend(["Winlogbeat", "Kibana Detection Rule"])
+    deduped = []
+    for sensor in sensors:
+        if sensor not in deduped:
+            deduped.append(sensor)
+    return ", ".join(deduped)
+
+
+def coverage_status(detection_status):
+    return {
+        "detected": "Covered",
+        "logged_only": "Partial",
+        "alert_without_source_sample": "Partial",
+        "missed": "Gap",
+        "not_checked": "Not checked",
+        "blocked": "Blocked",
+        "execution_failed": "Execution failed",
+    }.get(detection_status, "Review")
+
+
+def detection_result_label(detection_status):
+    return {
+        "detected": "Detected",
+        "logged_only": "Logged only",
+        "alert_without_source_sample": "Alert only",
+        "missed": "Missed",
+        "not_checked": "Not checked",
+        "blocked": "Blocked",
+        "execution_failed": "Execution failed",
+    }.get(detection_status, detection_status or "-")
+
+
+def extract_rule_from_query(query):
+    if not query:
+        return ""
+
+    rule_id_match = re.search(r'rule_id:"([^"]+)"', query)
+    if rule_id_match:
+        return rule_id_match.group(1)
+
+    rule_name_match = re.search(r'rule\.name:"([^"]+)"', query)
+    if rule_name_match:
+        return rule_name_match.group(1)
+
+    return query
+
+
+def improvement_plan(step, recommendation):
+    action = recommendation.get("action") or "review_detection_logic"
+    reason = recommendation.get("reason") or ""
+    return f"{action}: {reason}" if reason else action
+
+
+def build_dashboard_fields(step, classification, recommendation, target):
+    behavior = step_behavior(step)
+    source_query = (step.get("elk_check") or {}).get("query")
+    alert_query = get_alert_check(step.get("elk_check") or {}).get("query")
+
+    if target and behavior:
+        source_query = source_query or resolve_query(target, behavior)[0]
+        alert_query = alert_query or resolve_alert_query(target, behavior)[0]
+
+    rule = extract_rule(get_alert_check(step.get("elk_check") or {}))
+    detection_rule = rule.get("name") or rule.get("rule_id") or extract_rule_from_query(alert_query) or "-"
+
+    return {
+        "attack_name": step.get("name") or "-",
+        "target_asset": step_target_asset(step),
+        "required_condition": required_condition(step),
+        "expected_log": expected_log(step),
+        "detection_rule": detection_rule,
+        "detection_result": detection_result_label(classification["detection_status"]),
+        "coverage_status": coverage_status(classification["detection_status"]),
+        "system_impact": system_impact(step),
+        "risk_level": risk_level(step).title(),
+        "recommended_sensor": recommended_sensor(step),
+        "improvement_plan": improvement_plan(step, recommendation),
+        "resolved_queries": {
+            "source": source_query,
+            "alert": alert_query,
+        },
+    }
+
+
+def classify_step(step, target=None):
     classification = classify_detection_status(step)
     elk_check = step.get("elk_check") or {}
     alert_check = get_alert_check(elk_check)
     recommendation = recommendation_for(step, classification)
+    dashboard_fields = build_dashboard_fields(step, classification, recommendation, target or {})
+    source_query = elk_check.get("query") or dashboard_fields["resolved_queries"].get("source")
+    alert_query = alert_check.get("query") or dashboard_fields["resolved_queries"].get("alert")
 
     return {
         "order": step.get("order"),
@@ -263,6 +463,17 @@ def classify_step(step):
         "name": step.get("name"),
         "module": step.get("module"),
         "technique_id": step.get("technique_id"),
+        "attack_name": dashboard_fields["attack_name"],
+        "target_asset": dashboard_fields["target_asset"],
+        "required_condition": dashboard_fields["required_condition"],
+        "expected_log": dashboard_fields["expected_log"],
+        "detection_rule": dashboard_fields["detection_rule"],
+        "detection_result": dashboard_fields["detection_result"],
+        "coverage_status": dashboard_fields["coverage_status"],
+        "system_impact": dashboard_fields["system_impact"],
+        "risk_level": dashboard_fields["risk_level"],
+        "recommended_sensor": dashboard_fields["recommended_sensor"],
+        "improvement_plan": dashboard_fields["improvement_plan"],
         "risk": step.get("risk") or "medium",
         "agent_role": step.get("agent_role") or step.get("operation_agent_role"),
         "execution_host": step.get("execution_host"),
@@ -279,8 +490,8 @@ def classify_step(step):
         "started_at": step.get("started_at"),
         "finished_at": step.get("finished_at"),
         "queries": {
-            "source": elk_check.get("query"),
-            "alert": alert_check.get("query"),
+            "source": source_query,
+            "alert": alert_query,
         },
         "evidence": {
             "sample_source_events": elk_check.get("sample_events", []),
@@ -479,7 +690,8 @@ def build_report(source, source_type):
     source_id = source.get("operation_id") or source.get("execution_id")
     campaign_id = source.get("campaign_id")
     campaign, _ = build_flow_index(campaign_id)
-    steps = [classify_step(step) for step in normalize_source_steps(source)]
+    target = safe_load_target(campaign_id)
+    steps = [classify_step(step, target) for step in normalize_source_steps(source)]
     summary = calculate_metrics(steps)
     backlog = generate_backlog(steps)
 
@@ -548,6 +760,7 @@ def write_report_artifacts(report):
         "summary": base.with_suffix(".summary.md"),
         "summary_html": base.with_suffix(".summary.html"),
         "technical": base.with_suffix(".technical.md"),
+        "coverage": base.with_suffix(".coverage.csv"),
         "backlog": base.with_suffix(".detection-backlog.csv"),
         "navigator": base.with_suffix(".attack-navigator.json"),
     }
@@ -556,6 +769,7 @@ def write_report_artifacts(report):
     artifacts["summary"].write_text(render_summary_markdown(report), encoding="utf-8")
     artifacts["summary_html"].write_text(render_summary_html(report), encoding="utf-8")
     artifacts["technical"].write_text(render_technical_markdown(report), encoding="utf-8")
+    write_coverage_csv(artifacts["coverage"], report.get("steps", []))
     write_backlog_csv(artifacts["backlog"], report.get("backlog", []))
     write_json(artifacts["navigator"], build_navigator_layer(report))
 
@@ -654,6 +868,26 @@ def render_summary_html(report):
     if not meaning_items:
         meaning_items.append("No major detection backlog was generated from this run.")
     meaning_html = "\n".join(f"<li>{text(item)}</li>" for item in meaning_items)
+    coverage_rows = "\n".join(
+        "<tr>"
+        f"<td>{text(step.get('technique_id'))}</td>"
+        f"<td>{text(step.get('attack_name') or step.get('name'))}</td>"
+        f"<td>{text(step.get('target_asset'))}</td>"
+        f"<td>{text(step.get('required_condition'))}</td>"
+        f"<td>{text(step.get('expected_log'))}</td>"
+        f"<td>{text(step.get('detection_rule'))}</td>"
+        f"<td>{text(step.get('detection_result'))}</td>"
+        f"<td>{text(step.get('coverage_status'))}</td>"
+        f"<td>{text(step.get('system_impact'))}</td>"
+        f"<td>{text(step.get('risk_level'))}</td>"
+        f"<td>{text(step.get('recommended_sensor'))}</td>"
+        f"<td>{text(step.get('improvement_plan'))}</td>"
+        "</tr>"
+        for step in report.get("steps", [])
+        if step.get("technique_id")
+    )
+    if not coverage_rows:
+        coverage_rows = "<tr><td colspan=\"12\" class=\"empty\">No BAS coverage result was generated.</td></tr>"
 
     return f"""<!doctype html>
 <html lang="en">
@@ -695,6 +929,8 @@ def render_summary_html(report):
     table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
     th, td {{ border-bottom: 1px solid #e2e8f0; padding: 11px; text-align: left; vertical-align: top; }}
     th {{ color: #475569; background: #f8fafc; font-size: 12px; }}
+    .table-wrap {{ overflow-x: auto; }}
+    .coverage-table {{ min-width: 1480px; }}
     .empty {{ color: #64748b; text-align: center; }}
     @media (max-width: 820px) {{
       body {{ padding: 16px; }}
@@ -729,6 +965,21 @@ def render_summary_html(report):
       <ul>{meaning_html}</ul>
     </section>
     <section class="panel">
+      <h2>BAS Coverage Result Table</h2>
+      <div class="table-wrap">
+        <table class="coverage-table">
+          <thead>
+            <tr>
+              <th>Technique ID</th><th>Attack Name</th><th>Target Asset</th><th>Required Condition</th>
+              <th>Expected Log</th><th>Detection Rule</th><th>Detection Result</th><th>Coverage Status</th>
+              <th>System Impact</th><th>Risk Level</th><th>Recommended Sensor</th><th>Improvement Plan</th>
+            </tr>
+          </thead>
+          <tbody>{coverage_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="panel">
       <h2>Recommended Remediation</h2>
       <table>
         <thead>
@@ -746,11 +997,30 @@ def render_technical_markdown(report):
     lines = [
         f"# {report.get('campaign_name') or report.get('campaign_id')} Technical Detection Report",
         "",
-        "## Step Results",
+        "## BAS Coverage Result Table",
+        "",
+        "| Technique ID | Attack Name | Target Asset | Required Condition | Expected Log | Detection Rule | Detection Result | Coverage Status | System Impact | Risk Level | Recommended Sensor | Improvement Plan |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+
+    for step in report.get("steps", []):
+        lines.append(
+            f"| {step.get('technique_id') or '-'} | {step.get('attack_name') or step.get('name') or '-'} | "
+            f"{step.get('target_asset') or '-'} | {step.get('required_condition') or '-'} | "
+            f"{step.get('expected_log') or '-'} | {step.get('detection_rule') or '-'} | "
+            f"{step.get('detection_result') or step.get('detection_status') or '-'} | "
+            f"{step.get('coverage_status') or '-'} | {step.get('system_impact') or '-'} | "
+            f"{step.get('risk_level') or step.get('risk') or '-'} | {step.get('recommended_sensor') or '-'} | "
+            f"{step.get('improvement_plan') or step.get('recommendation', {}).get('action') or '-'} |"
+        )
+
+    lines.extend([
+        "",
+        "## Step Diagnostics",
         "",
         "| Order | Technique | Execution | Source Log | Alert | Detection | Gap | Action |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
-    ]
+    ])
 
     for step in report.get("steps", []):
         action = step.get("recommendation", {}).get("action") or ""
@@ -802,6 +1072,32 @@ def write_backlog_csv(path, backlog):
         writer.writeheader()
         for item in backlog:
             writer.writerow({field: item.get(field, "") for field in fields})
+
+
+def write_coverage_csv(path, steps):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = [
+        "technique_id",
+        "attack_name",
+        "target_asset",
+        "required_condition",
+        "expected_log",
+        "detection_rule",
+        "detection_result",
+        "coverage_status",
+        "system_impact",
+        "risk_level",
+        "recommended_sensor",
+        "improvement_plan",
+    ]
+
+    with path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fields)
+        writer.writeheader()
+        for step in steps:
+            if not step.get("technique_id"):
+                continue
+            writer.writerow({field: step.get(field, "") for field in fields})
 
 
 def build_navigator_layer(report):

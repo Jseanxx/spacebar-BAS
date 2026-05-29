@@ -542,7 +542,6 @@ button {
   background: #fff7f7;
 }
 
-.technique-card.attack:hover,
 .technique-card.attack.selected {
   border-color: #ef4444;
   border-left-color: #dc2626;
@@ -555,7 +554,6 @@ button {
   background: #f0fdf4;
 }
 
-.technique-card.normal:hover,
 .technique-card.normal.selected {
   border-color: #22c55e;
   border-left-color: #16a34a;
@@ -590,8 +588,7 @@ button {
   background: #fee2e2;
 }
 
-.technique-card.attack.selected .phase-line em,
-.technique-card.attack:hover .phase-line em {
+.technique-card.attack.selected .phase-line em {
   color: #ffffff;
   background: #dc2626;
 }
@@ -601,8 +598,7 @@ button {
   background: #dcfce7;
 }
 
-.technique-card.normal.selected .phase-line em,
-.technique-card.normal:hover .phase-line em {
+.technique-card.normal.selected .phase-line em {
   color: #ffffff;
   background: #16a34a;
 }
@@ -711,6 +707,16 @@ button {
   padding: 6px 9px;
   font-size: 12px;
   font-weight: 900;
+}
+
+.queue-move-row .queue-arrow-button {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
 }
 
 .empty {

@@ -1543,12 +1543,6 @@ def get_report_summary(report_id: str):
 
 @app.get("/reports/{report_id}/summary.html")
 def get_report_summary_html(report_id: str):
-    source_id = normalize_report_source_id(report_id)
-    path = REPORTS_DIR / f"{source_id}.summary.html"
-
-    if path.exists():
-        return Response(content=path.read_text(encoding="utf-8"), media_type="text/html")
-
     return Response(content=render_summary_html(load_report(report_id)), media_type="text/html")
 
 

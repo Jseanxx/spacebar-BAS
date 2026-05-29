@@ -23,6 +23,72 @@ BLOCKED_STATUSES = {"blocked", "blocked_by_safety_gate"}
 REPORT_VERSION = "0.1"
 GENERATOR_VERSION = "sb-ad-report-builder-0.1"
 
+RISK_LABELS = {
+    "low": "낮음",
+    "medium": "중간",
+    "high": "높음",
+    "critical": "치명",
+}
+
+DETECTION_RESULT_LABELS = {
+    "detected": "탐지됨",
+    "logged_only": "로그만 확인",
+    "alert_without_source_sample": "알림만 확인",
+    "missed": "미탐",
+    "not_checked": "확인 안 됨",
+    "blocked": "차단됨",
+    "execution_failed": "실행 실패",
+}
+
+COVERAGE_STATUS_LABELS = {
+    "detected": "커버됨",
+    "logged_only": "부분 커버",
+    "alert_without_source_sample": "부분 커버",
+    "missed": "공백",
+    "not_checked": "확인 필요",
+    "blocked": "차단",
+    "execution_failed": "실행 실패",
+}
+
+EXECUTION_STATUS_LABELS = {
+    "success": "성공",
+    "simulated": "시뮬레이션",
+    "blocked": "차단",
+    "failed": "실패",
+    "unknown": "확인 필요",
+}
+
+GAP_LABELS = {
+    "not_checked": "검증 미완료",
+    "agent_or_execution_failed": "에이전트/실행 실패",
+    "no_alert": "알림 룰 미탐",
+    "query_too_narrow": "쿼리 범위 재검토",
+    "no_telemetry": "로그 미수집",
+    "review_required": "검토 필요",
+}
+
+ACTION_LABELS = {
+    "keep": "유지",
+    "tune_or_create_rule": "탐지 룰 튜닝 또는 신규 생성",
+    "fix_telemetry_then_rule": "로그 수집 경로 보완 후 룰 작성",
+    "fix_validation_pipeline": "ELK 쿼리/연동 검증",
+    "fix_agent_or_execution": "Agent 또는 실행 조건 점검",
+    "review_safety_or_prevention_control": "안전 게이트 또는 차단 정책 검토",
+    "rerun_real_or_implement_module": "Real 모드 재실행 또는 모듈 구현",
+    "review_detection_logic": "탐지 로직 검토",
+}
+
+ACTION_REASONS_KO = {
+    "keep": "원본 로그와 탐지 알림이 모두 확인되었습니다.",
+    "tune_or_create_rule": "원본 로그는 있으나 매칭되는 탐지 알림이 없습니다.",
+    "fix_telemetry_then_rule": "원본 로그와 탐지 알림이 모두 확인되지 않았습니다.",
+    "fix_validation_pipeline": "ELK 쿼리, 연결 상태 또는 실시간 검증 증거를 확인해야 합니다.",
+    "fix_agent_or_execution": "BAS 단계가 완료되지 않아 탐지 여부를 검증할 수 없습니다.",
+    "review_safety_or_prevention_control": "정상 탐지 검증 전에 실행이 차단되었습니다.",
+    "rerun_real_or_implement_module": "실제 실행 증거가 아니므로 Real 모드 검증이 필요합니다.",
+    "review_detection_logic": "알림 증거와 원본 로그 샘플의 매칭 조건을 다시 확인해야 합니다.",
+}
+
 
 def now_kst():
     return datetime.now(KST).isoformat(timespec="seconds")
@@ -292,9 +358,9 @@ def required_condition(step):
     parts = []
 
     if requires:
-        parts.append(", ".join(requires))
+        parts.append("필수 조건: " + ", ".join(requires))
     if safety_gates:
-        parts.append("Safety gates: " + ", ".join(safety_gates))
+        parts.append("안전 게이트: " + ", ".join(safety_gates))
 
     return "; ".join(parts) if parts else "-"
 
@@ -304,28 +370,28 @@ def expected_log(step):
     behavior = step_behavior(step) or ""
 
     if behavior in ("kerberoasting_tgs_request",):
-        return "Windows Security 4769 Kerberos TGS request"
+        return "Windows Security 4769 Kerberos TGS 요청"
     if behavior in ("dcsync_replication",):
-        return "Windows Security 4662 / directory replication access"
+        return "Windows Security 4662 / 디렉터리 복제 접근 로그"
     if behavior in ("valid_domain_account_remote_logon", "winrm_remote_execution"):
-        return "Windows Security 4624/4688 and Sysmon process telemetry"
+        return "Windows Security 4624/4688 및 Sysmon 프로세스 로그"
     if behavior in ("service_execution",):
-        return "Service creation/execution event and Sysmon process telemetry"
+        return "서비스 생성/실행 이벤트 및 Sysmon 프로세스 로그"
     if behavior in ("lsass_memory_dump", "rundll32_comsvcs_proxy"):
-        return "Sysmon Event ID 10 process access and Event ID 11 file creation"
+        return "Sysmon Event ID 10 프로세스 접근 및 Event ID 11 파일 생성"
     if behavior in ("non_application_tcp_connection", "exfiltration_over_c2"):
-        return "Sysmon Event ID 3 network connection"
+        return "Sysmon Event ID 3 네트워크 연결"
     if behavior in ("ingress_tool_transfer", "local_data_staging", "masquerading_legitimate_name", "archive_collected_data", "ntds_dump"):
-        return "Sysmon file/process telemetry and Windows Security audit events"
+        return "Sysmon 파일/프로세스 로그 및 Windows Security 감사 이벤트"
     if "powershell_logging" in requires or "powershell" in requires:
-        return "PowerShell 4104 and Sysmon process telemetry"
+        return "PowerShell 4104 및 Sysmon 프로세스 로그"
     if "windows_security" in requires or "active_directory" in requires:
-        return "Windows Security Log and Sysmon process telemetry"
+        return "Windows Security Log 및 Sysmon 프로세스 로그"
     if "network" in requires:
-        return "Network connection telemetry"
+        return "네트워크 연결 로그"
     if "sysmon" in requires:
-        return "Sysmon process/file/network telemetry"
-    return "Source telemetry from the mapped log source"
+        return "Sysmon 프로세스/파일/네트워크 로그"
+    return "매핑된 로그 소스의 원본 이벤트"
 
 
 def risk_level(step):
@@ -339,12 +405,12 @@ def system_impact(step):
     high_impact_keywords = ("dcsync", "golden_ticket", "ntds", "lsass", "service_execution")
 
     if any(keyword in behavior for keyword in high_impact_keywords) or "BAS_ENABLE_DOMAIN_COMPROMISE_TESTS" in safety_gates:
-        return "High - test environment only"
+        return "높음 - 테스트 환경 권장"
     if risk == "high" or safety_gates:
-        return "Medium - approval recommended"
+        return "중간 - 승인 후 실행 권장"
     if risk == "critical":
-        return "High - test environment only"
-    return "Low - safe validation"
+        return "높음 - 테스트 환경 권장"
+    return "낮음 - 안전 검증"
 
 
 def recommended_sensor(step):
@@ -373,27 +439,11 @@ def recommended_sensor(step):
 
 
 def coverage_status(detection_status):
-    return {
-        "detected": "Covered",
-        "logged_only": "Partial",
-        "alert_without_source_sample": "Partial",
-        "missed": "Gap",
-        "not_checked": "Not checked",
-        "blocked": "Blocked",
-        "execution_failed": "Execution failed",
-    }.get(detection_status, "Review")
+    return COVERAGE_STATUS_LABELS.get(detection_status, "검토 필요")
 
 
 def detection_result_label(detection_status):
-    return {
-        "detected": "Detected",
-        "logged_only": "Logged only",
-        "alert_without_source_sample": "Alert only",
-        "missed": "Missed",
-        "not_checked": "Not checked",
-        "blocked": "Blocked",
-        "execution_failed": "Execution failed",
-    }.get(detection_status, detection_status or "-")
+    return DETECTION_RESULT_LABELS.get(detection_status, detection_status or "-")
 
 
 def extract_rule_from_query(query):
@@ -413,8 +463,9 @@ def extract_rule_from_query(query):
 
 def improvement_plan(step, recommendation):
     action = recommendation.get("action") or "review_detection_logic"
-    reason = recommendation.get("reason") or ""
-    return f"{action}: {reason}" if reason else action
+    action_label = ACTION_LABELS.get(action, action)
+    reason = ACTION_REASONS_KO.get(action) or recommendation.get("reason") or ""
+    return f"{action_label}: {reason}" if reason else action_label
 
 
 def build_dashboard_fields(step, classification, recommendation, target):
@@ -438,7 +489,7 @@ def build_dashboard_fields(step, classification, recommendation, target):
         "detection_result": detection_result_label(classification["detection_status"]),
         "coverage_status": coverage_status(classification["detection_status"]),
         "system_impact": system_impact(step),
-        "risk_level": risk_level(step).title(),
+        "risk_level": RISK_LABELS.get(risk_level(step), risk_level(step)),
         "recommended_sensor": recommended_sensor(step),
         "improvement_plan": improvement_plan(step, recommendation),
         "resolved_queries": {
@@ -784,33 +835,35 @@ def render_summary_markdown(report):
     backlog = report.get("backlog", [])
     top_gaps = backlog[:5]
     lines = [
-        f"# {report.get('campaign_name') or report.get('campaign_id')} BAS Summary",
+        f"# {report.get('campaign_name') or report.get('campaign_id')} BAS 결과 요약",
         "",
-        "## Key Metrics",
+        "## 핵심 지표",
         "",
-        "| Metric | Value |",
+        "| 지표 | 값 |",
         "| --- | --- |",
-        f"| Final score | {summary['final_score']}/100 |",
-        f"| Real attack steps | {summary['real_attack_steps']} |",
-        f"| Detection coverage | {summary['detection_coverage'] * 100:.0f}% |",
-        f"| Telemetry coverage | {summary['telemetry_coverage'] * 100:.0f}% |",
-        f"| Alert coverage | {summary['alert_coverage'] * 100:.0f}% |",
-        f"| Logged only | {summary['logged_only_count']} |",
-        f"| Missed | {summary['missed_count']} |",
-        f"| Not checked | {summary['not_checked_count']} |",
+        f"| 준비도 점수 | {summary['final_score']}/100 |",
+        f"| Real 공격 단계 | {summary['real_attack_steps']} |",
+        f"| 탐지 커버리지 | {summary['detection_coverage'] * 100:.0f}% |",
+        f"| 로그 커버리지 | {summary['telemetry_coverage'] * 100:.0f}% |",
+        f"| 알림 커버리지 | {summary['alert_coverage'] * 100:.0f}% |",
+        f"| 로그만 확인 | {summary['logged_only_count']} |",
+        f"| 미탐 | {summary['missed_count']} |",
+        f"| 확인 필요 | {summary['not_checked_count']} |",
         "",
-        "## Top Remediation Backlog",
+        "## 우선 개선 백로그",
         "",
     ]
 
     if top_gaps:
         for item in top_gaps:
+            action = ACTION_LABELS.get(item.get("recommended_action"), item.get("recommended_action") or "-")
+            gap = GAP_LABELS.get(item.get("gap_type"), item.get("gap_type") or "-")
             lines.append(
                 f"- {item['priority']} {item['technique_id']} step {item['order']}: "
-                f"{item['gap_type']} -> {item['recommended_action']}"
+                f"{gap} -> {action}"
             )
     else:
-        lines.append("- No remediation backlog item was generated.")
+        lines.append("- 추가 개선 항목이 생성되지 않았습니다.")
 
     lines.append("")
     return "\n".join(lines)
@@ -820,7 +873,7 @@ def render_summary_html(report):
     summary = report["summary"]
     backlog = report.get("backlog", [])
     score = int(summary.get("final_score", 0))
-    score_label = "Good" if score >= 80 else "Needs improvement" if score >= 50 else "High priority"
+    score_label = "양호" if score >= 80 else "개선 필요" if score >= 50 else "우선 개선"
     score_class = "good" if score >= 80 else "warn" if score >= 50 else "critical"
 
     def text(value):
@@ -829,15 +882,40 @@ def render_summary_html(report):
     def pct(value):
         return f"{float(value or 0) * 100:.0f}%"
 
+    def badge(value, class_name="neutral"):
+        return f"<span class=\"badge {class_name}\">{text(value)}</span>"
+
+    def status_class(step):
+        return {
+            "detected": "good",
+            "logged_only": "warn",
+            "alert_without_source_sample": "warn",
+            "missed": "critical",
+            "not_checked": "neutral",
+            "blocked": "blocked",
+            "execution_failed": "critical",
+        }.get(step.get("detection_status"), "neutral")
+
+    def risk_class(step):
+        return {
+            "low": "good",
+            "medium": "warn",
+            "high": "critical",
+            "critical": "critical",
+        }.get(str(step.get("risk") or "").lower(), "neutral")
+
+    def th(ko, en):
+        return f"<th><span>{text(ko)}</span><small>{text(en)}</small></th>"
+
     metrics = [
-        ("Readiness score", f"{score}/100"),
-        ("Attack techniques", summary.get("attack_steps", 0)),
-        ("Detected", summary.get("detected_count", 0)),
-        ("Logged only", summary.get("logged_only_count", 0)),
-        ("Missed", summary.get("missed_count", 0)),
-        ("Not checked", summary.get("not_checked_count", 0)),
-        ("Telemetry coverage", pct(summary.get("telemetry_coverage"))),
-        ("Alert coverage", pct(summary.get("alert_coverage"))),
+        ("준비도 점수", f"{score}/100"),
+        ("실행 대상 Technique", summary.get("attack_steps", 0)),
+        ("탐지됨", summary.get("detected_count", 0)),
+        ("로그만 확인", summary.get("logged_only_count", 0)),
+        ("미탐", summary.get("missed_count", 0)),
+        ("확인 필요", summary.get("not_checked_count", 0)),
+        ("로그 커버리지", pct(summary.get("telemetry_coverage"))),
+        ("알림 커버리지", pct(summary.get("alert_coverage"))),
     ]
     metrics_html = "\n".join(
         f"<section class=\"metric\"><span>{text(label)}</span><strong>{text(value)}</strong></section>"
@@ -849,37 +927,37 @@ def render_summary_html(report):
             "<tr>"
             f"<td><strong>{text(item.get('priority'))}</strong></td>"
             f"<td>{text(item.get('technique_id'))}</td>"
-            f"<td>{text(item.get('gap_type'))}</td>"
-            f"<td>{text(item.get('recommended_action'))}</td>"
+            f"<td>{text(GAP_LABELS.get(item.get('gap_type'), item.get('gap_type') or '-'))}</td>"
+            f"<td>{text(ACTION_LABELS.get(item.get('recommended_action'), item.get('recommended_action') or '-'))}</td>"
             f"<td>{text(item.get('verification_method'))}</td>"
             "</tr>"
             for item in backlog[:8]
         )
     else:
-        backlog_rows = "<tr><td colspan=\"5\" class=\"empty\">No remediation backlog item was generated.</td></tr>"
+        backlog_rows = "<tr><td colspan=\"5\" class=\"empty\">추가 개선 항목이 생성되지 않았습니다.</td></tr>"
 
     meaning_items = []
     if summary.get("missed_count", 0) or summary.get("critical_gaps", 0):
-        meaning_items.append("Missed or high-risk gaps should be handled before this path is treated as validated.")
+        meaning_items.append("미탐 또는 고위험 공백은 이 공격 경로를 검증 완료로 보기 전에 우선 보완해야 합니다.")
     if summary.get("logged_only_count", 0):
-        meaning_items.append("Some techniques produced telemetry but no matching alert, so detection rule tuning is recommended.")
+        meaning_items.append("일부 Technique은 로그는 남았지만 알림이 발생하지 않았으므로 탐지 룰 튜닝이 필요합니다.")
     if summary.get("not_checked_count", 0):
-        meaning_items.append("Some checks were inconclusive. Review ELK query execution, agent status, or simulation mode.")
+        meaning_items.append("일부 검증은 확정되지 않았습니다. ELK 쿼리, Agent 상태, 실행 모드를 다시 확인하세요.")
     if not meaning_items:
-        meaning_items.append("No major detection backlog was generated from this run.")
+        meaning_items.append("이번 실행에서 큰 탐지 공백은 생성되지 않았습니다.")
     meaning_html = "\n".join(f"<li>{text(item)}</li>" for item in meaning_items)
     coverage_rows = "\n".join(
-        "<tr>"
-        f"<td>{text(step.get('technique_id'))}</td>"
-        f"<td>{text(step.get('attack_name') or step.get('name'))}</td>"
+        f"<tr class=\"row-{status_class(step)}\">"
+        f"<td><strong>{text(step.get('technique_id'))}</strong></td>"
+        f"<td><strong>{text(step.get('attack_name') or step.get('name'))}</strong></td>"
         f"<td>{text(step.get('target_asset'))}</td>"
         f"<td>{text(step.get('required_condition'))}</td>"
         f"<td>{text(step.get('expected_log'))}</td>"
         f"<td>{text(step.get('detection_rule'))}</td>"
-        f"<td>{text(step.get('detection_result'))}</td>"
-        f"<td>{text(step.get('coverage_status'))}</td>"
+        f"<td>{badge(step.get('detection_result'), status_class(step))}</td>"
+        f"<td>{badge(step.get('coverage_status'), status_class(step))}</td>"
         f"<td>{text(step.get('system_impact'))}</td>"
-        f"<td>{text(step.get('risk_level'))}</td>"
+        f"<td>{badge(step.get('risk_level'), risk_class(step))}</td>"
         f"<td>{text(step.get('recommended_sensor'))}</td>"
         f"<td>{text(step.get('improvement_plan'))}</td>"
         "</tr>"
@@ -887,31 +965,40 @@ def render_summary_html(report):
         if step.get("technique_id")
     )
     if not coverage_rows:
-        coverage_rows = "<tr><td colspan=\"12\" class=\"empty\">No BAS coverage result was generated.</td></tr>"
+        coverage_rows = "<tr><td colspan=\"12\" class=\"empty\">생성된 BAS 커버리지 결과가 없습니다.</td></tr>"
 
     return f"""<!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{text(report.get('campaign_name') or report.get('campaign_id'))} BAS Summary</title>
+  <title>{text(report.get('campaign_name') or report.get('campaign_id'))} BAS 결과 보고서</title>
   <style>
     :root {{
       color: #101820;
-      background: #eef3f7;
+      background: #eef2f6;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }}
+    * {{ box-sizing: border-box; }}
     body {{ margin: 0; padding: 32px; }}
-    main {{ max-width: 1120px; margin: 0 auto; }}
+    main {{ max-width: 1240px; margin: 0 auto; }}
     header, section.panel {{
       border: 1px solid #d7e0ea;
       border-radius: 12px;
       background: #fff;
       box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
     }}
-    header {{ display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 24px; padding: 30px; }}
+    header {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 220px;
+      gap: 24px;
+      padding: 30px;
+      border-top: 5px solid #2563eb;
+    }}
+    .eyebrow {{ margin: 0 0 8px; color: #2563eb; font-size: 12px; font-weight: 900; letter-spacing: 0; }}
     h1 {{ margin: 0 0 12px; font-size: 34px; line-height: 1.08; letter-spacing: 0; }}
-    h2 {{ margin: 0 0 16px; font-size: 19px; }}
+    h2 {{ margin: 0 0 8px; font-size: 19px; }}
+    .section-desc {{ margin: 0 0 16px; }}
     p, li {{ color: #475569; line-height: 1.65; }}
     .meta {{ display: flex; flex-wrap: wrap; gap: 10px; color: #64748b; font-size: 13px; }}
     .meta span {{ border: 1px solid #dbe3ec; border-radius: 999px; padding: 7px 10px; background: #f8fafc; }}
@@ -926,11 +1013,33 @@ def render_summary_html(report):
     .metric span {{ display: block; color: #64748b; font-size: 12px; font-weight: 800; }}
     .metric strong {{ display: block; margin-top: 8px; font-size: 24px; }}
     section.panel {{ margin-top: 18px; padding: 24px; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-    th, td {{ border-bottom: 1px solid #e2e8f0; padding: 11px; text-align: left; vertical-align: top; }}
-    th {{ color: #475569; background: #f8fafc; font-size: 12px; }}
-    .table-wrap {{ overflow-x: auto; }}
-    .coverage-table {{ min-width: 1480px; }}
+    table {{ width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }}
+    th, td {{ border-bottom: 1px solid #e2e8f0; padding: 12px; text-align: left; vertical-align: top; }}
+    th {{ color: #475569; background: #f8fafc; font-size: 12px; position: sticky; top: 0; z-index: 1; }}
+    th span, th small {{ display: block; }}
+    th span {{ color: #0f172a; font-size: 12px; font-weight: 900; }}
+    th small {{ margin-top: 3px; color: #64748b; font-size: 10px; font-weight: 800; }}
+    td {{ background: #fff; }}
+    tbody tr.row-good td:first-child {{ border-left: 4px solid #16a34a; }}
+    tbody tr.row-warn td:first-child {{ border-left: 4px solid #d97706; }}
+    tbody tr.row-critical td:first-child {{ border-left: 4px solid #dc2626; }}
+    tbody tr.row-blocked td:first-child {{ border-left: 4px solid #64748b; }}
+    .table-wrap {{ overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 10px; }}
+    .coverage-table {{ min-width: 1680px; }}
+    .badge {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }}
+    .badge.good {{ color: #166534; background: #dcfce7; }}
+    .badge.warn {{ color: #92400e; background: #fef3c7; }}
+    .badge.critical {{ color: #991b1b; background: #fee2e2; }}
+    .badge.blocked, .badge.neutral {{ color: #334155; background: #e2e8f0; }}
     .empty {{ color: #64748b; text-align: center; }}
     @media (max-width: 820px) {{
       body {{ padding: 16px; }}
@@ -943,12 +1052,13 @@ def render_summary_html(report):
   <main>
     <header>
       <div>
-        <h1>{text(report.get('campaign_name') or report.get('campaign_id'))} BAS Executive Summary</h1>
-        <p>This report summarizes detection readiness, telemetry evidence, alert coverage, and the next remediation actions from the BAS run.</p>
+        <p class="eyebrow">BAS 탐지 커버리지 검증 보고서</p>
+        <h1>{text(report.get('campaign_name') or report.get('campaign_id'))} 실행 결과</h1>
+        <p>이 보고서는 공격 성공 여부보다 로그 수집, 탐지 룰, 커버리지 공백, 시스템 영향도, 개선 방향을 기준으로 BAS 실행 결과를 정리합니다.</p>
         <div class="meta">
           <span>Report {text(report.get('report_id'))}</span>
-          <span>Target {text(report.get('campaign_id'))}</span>
-          <span>Generated {text(report.get('generated_at'))}</span>
+          <span>대상 {text(report.get('campaign_id'))}</span>
+          <span>생성 시각 {text(report.get('generated_at'))}</span>
         </div>
       </div>
       <div class="score {score_class}">
@@ -957,22 +1067,33 @@ def render_summary_html(report):
       </div>
     </header>
     <section class="panel">
-      <h2>Key Metrics</h2>
+      <h2>핵심 지표</h2>
+      <p class="section-desc">탐지 체계가 실제 로그와 알림까지 이어졌는지 요약한 값입니다.</p>
       <div class="grid">{metrics_html}</div>
     </section>
     <section class="panel">
-      <h2>What This Means</h2>
+      <h2>해석</h2>
       <ul>{meaning_html}</ul>
     </section>
     <section class="panel">
-      <h2>BAS Coverage Result Table</h2>
+      <h2>BAS 상세 결과표</h2>
+      <p class="section-desc">멘토링 피드백 기준의 필수 항목을 Technique 단위로 정리했습니다. 룰 이름, 센서명, 쿼리 식별자는 원문을 유지합니다.</p>
       <div class="table-wrap">
         <table class="coverage-table">
           <thead>
             <tr>
-              <th>Technique ID</th><th>Attack Name</th><th>Target Asset</th><th>Required Condition</th>
-              <th>Expected Log</th><th>Detection Rule</th><th>Detection Result</th><th>Coverage Status</th>
-              <th>System Impact</th><th>Risk Level</th><th>Recommended Sensor</th><th>Improvement Plan</th>
+              {th("테크닉 ID", "Technique ID")}
+              {th("공격명", "Attack Name")}
+              {th("대상 자산", "Target Asset")}
+              {th("필수 조건", "Required Condition")}
+              {th("기대 로그", "Expected Log")}
+              {th("탐지 룰", "Detection Rule")}
+              {th("탐지 결과", "Detection Result")}
+              {th("커버리지 상태", "Coverage Status")}
+              {th("시스템 영향도", "System Impact")}
+              {th("위험도", "Risk Level")}
+              {th("권장 센서", "Recommended Sensor")}
+              {th("개선 계획", "Improvement Plan")}
             </tr>
           </thead>
           <tbody>{coverage_rows}</tbody>
@@ -980,10 +1101,16 @@ def render_summary_html(report):
       </div>
     </section>
     <section class="panel">
-      <h2>Recommended Remediation</h2>
+      <h2>개선 백로그</h2>
       <table>
         <thead>
-          <tr><th>Priority</th><th>Technique</th><th>Gap</th><th>Action</th><th>Verify</th></tr>
+          <tr>
+            {th("우선순위", "Priority")}
+            {th("Technique", "Technique")}
+            {th("공백 유형", "Gap")}
+            {th("권장 조치", "Action")}
+            {th("검증 방법", "Verify")}
+          </tr>
         </thead>
         <tbody>{backlog_rows}</tbody>
       </table>
@@ -994,53 +1121,57 @@ def render_summary_html(report):
 
 
 def render_technical_markdown(report):
+    def cell(value):
+        return str(value if value is not None else "-").replace("|", "\\|").replace("\n", " ")
+
     lines = [
-        f"# {report.get('campaign_name') or report.get('campaign_id')} Technical Detection Report",
+        f"# {report.get('campaign_name') or report.get('campaign_id')} BAS 상세 탐지 보고서",
         "",
-        "## BAS Coverage Result Table",
+        "## BAS 상세 결과표",
         "",
-        "| Technique ID | Attack Name | Target Asset | Required Condition | Expected Log | Detection Rule | Detection Result | Coverage Status | System Impact | Risk Level | Recommended Sensor | Improvement Plan |",
+        "| 테크닉 ID | 공격명 | 대상 자산 | 필수 조건 | 기대 로그 | 탐지 룰 | 탐지 결과 | 커버리지 상태 | 시스템 영향도 | 위험도 | 권장 센서 | 개선 계획 |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for step in report.get("steps", []):
         lines.append(
-            f"| {step.get('technique_id') or '-'} | {step.get('attack_name') or step.get('name') or '-'} | "
-            f"{step.get('target_asset') or '-'} | {step.get('required_condition') or '-'} | "
-            f"{step.get('expected_log') or '-'} | {step.get('detection_rule') or '-'} | "
-            f"{step.get('detection_result') or step.get('detection_status') or '-'} | "
-            f"{step.get('coverage_status') or '-'} | {step.get('system_impact') or '-'} | "
-            f"{step.get('risk_level') or step.get('risk') or '-'} | {step.get('recommended_sensor') or '-'} | "
-            f"{step.get('improvement_plan') or step.get('recommendation', {}).get('action') or '-'} |"
+            f"| {cell(step.get('technique_id') or '-')} | {cell(step.get('attack_name') or step.get('name') or '-')} | "
+            f"{cell(step.get('target_asset') or '-')} | {cell(step.get('required_condition') or '-')} | "
+            f"{cell(step.get('expected_log') or '-')} | {cell(step.get('detection_rule') or '-')} | "
+            f"{cell(step.get('detection_result') or step.get('detection_status') or '-')} | "
+            f"{cell(step.get('coverage_status') or '-')} | {cell(step.get('system_impact') or '-')} | "
+            f"{cell(step.get('risk_level') or step.get('risk') or '-')} | {cell(step.get('recommended_sensor') or '-')} | "
+            f"{cell(step.get('improvement_plan') or step.get('recommendation', {}).get('action') or '-')} |"
         )
 
     lines.extend([
         "",
-        "## Step Diagnostics",
+        "## 단계별 진단",
         "",
-        "| Order | Technique | Execution | Source Log | Alert | Detection | Gap | Action |",
+        "| 순서 | Technique | 실행 | 원본 로그 | 알림 | 탐지 | 공백 유형 | 조치 |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ])
 
     for step in report.get("steps", []):
         action = step.get("recommendation", {}).get("action") or ""
+        gap = step.get("gap_type") or "-"
         lines.append(
-            f"| {step.get('order')} | {step.get('technique_id') or '-'} | "
-            f"{step.get('execution_status')} | {step.get('source_status')} | "
-            f"{step.get('alert_status')} | {step.get('detection_status')} | "
-            f"{step.get('gap_type') or '-'} | {action} |"
+            f"| {cell(step.get('order'))} | {cell(step.get('technique_id') or '-')} | "
+            f"{cell(EXECUTION_STATUS_LABELS.get(step.get('execution_status'), step.get('execution_status')))} | {cell(step.get('source_status'))} | "
+            f"{cell(step.get('alert_status'))} | {cell(DETECTION_RESULT_LABELS.get(step.get('detection_status'), step.get('detection_status')))} | "
+            f"{cell(GAP_LABELS.get(gap, gap))} | {cell(ACTION_LABELS.get(action, action))} |"
         )
 
-    lines.extend(["", "## Query Evidence", ""])
+    lines.extend(["", "## 쿼리 증거", ""])
     for step in report.get("steps", []):
         if not step.get("technique_id"):
             continue
         lines.extend([
             f"### Step {step.get('order')} {step.get('technique_id')} {step.get('name')}",
             "",
-            f"- Detection status: {step.get('detection_status')}",
-            f"- Source events: {step.get('source_event_count')}",
-            f"- Alerts: {step.get('alert_count')}",
+            f"- 탐지 상태: {DETECTION_RESULT_LABELS.get(step.get('detection_status'), step.get('detection_status'))}",
+            f"- 원본 이벤트 수: {step.get('source_event_count')}",
+            f"- 알림 수: {step.get('alert_count')}",
             f"- Source query: `{step.get('queries', {}).get('source') or ''}`",
             f"- Alert query: `{step.get('queries', {}).get('alert') or ''}`",
             "",

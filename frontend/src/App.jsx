@@ -875,8 +875,26 @@ export default function App() {
                     </div>
                   )}
                   <div className="queue-move-row">
-                    <button type="button" onClick={() => moveStep(selectionId, -1)} disabled={index === 0}>위</button>
-                    <button type="button" onClick={() => moveStep(selectionId, 1)} disabled={index === selectedSteps.length - 1}>아래</button>
+                    <button
+                      type="button"
+                      className="queue-arrow-button"
+                      onClick={() => moveStep(selectionId, -1)}
+                      disabled={index === 0}
+                      aria-label="위로 이동"
+                      title="위로 이동"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="queue-arrow-button"
+                      onClick={() => moveStep(selectionId, 1)}
+                      disabled={index === selectedSteps.length - 1}
+                      aria-label="아래로 이동"
+                      title="아래로 이동"
+                    >
+                      ↓
+                    </button>
                     <button type="button" onClick={() => toggleStep(step)}>제거</button>
                   </div>
                 </div>

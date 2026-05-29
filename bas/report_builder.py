@@ -89,6 +89,64 @@ ACTION_REASONS_KO = {
     "review_detection_logic": "알림 증거와 원본 로그 샘플의 매칭 조건을 다시 확인해야 합니다.",
 }
 
+TACTIC_ORDER = [
+    "initial_access",
+    "execution",
+    "command_and_control",
+    "discovery",
+    "credential_access",
+    "lateral_movement",
+    "collection",
+    "exfiltration",
+    "defense_evasion",
+    "persistence",
+    "privilege_escalation",
+    "other",
+]
+
+TACTIC_LABELS = {
+    "initial_access": "초기 침투",
+    "execution": "실행",
+    "command_and_control": "C2",
+    "discovery": "탐색",
+    "credential_access": "자격 증명 접근",
+    "lateral_movement": "측면 이동",
+    "collection": "수집",
+    "exfiltration": "유출",
+    "defense_evasion": "방어 회피",
+    "persistence": "지속성",
+    "privilege_escalation": "권한 상승",
+    "other": "기타",
+}
+
+TECHNIQUE_TACTICS = {
+    "T1204.002": "initial_access",
+    "T1059.003": "execution",
+    "T1059.001": "execution",
+    "T1095": "command_and_control",
+    "T1105": "command_and_control",
+    "T1018": "discovery",
+    "T1033": "discovery",
+    "T1069": "discovery",
+    "T1069.002": "discovery",
+    "T1087.001": "discovery",
+    "T1087.002": "discovery",
+    "T1135": "discovery",
+    "T1558.003": "credential_access",
+    "T1003.001": "credential_access",
+    "T1003.003": "credential_access",
+    "T1003.006": "credential_access",
+    "T1021.006": "lateral_movement",
+    "T1074.001": "collection",
+    "T1560.001": "collection",
+    "T1041": "exfiltration",
+    "T1036.005": "defense_evasion",
+    "T1218.011": "defense_evasion",
+    "T1558.001": "persistence",
+    "T1078.002": "persistence",
+    "T1569.002": "privilege_escalation",
+}
+
 
 def now_kst():
     return datetime.now(KST).isoformat(timespec="seconds")
@@ -771,6 +829,7 @@ def build_report(source, source_type):
         },
         "mitre": build_mitre_summary(steps),
         "steps": steps,
+        "asset_control_mapping": build_asset_control_mapping(target, steps),
         "recommendations": build_recommendations(steps),
         "backlog": backlog,
     }
@@ -869,6 +928,139 @@ def render_summary_markdown(report):
     return "\n".join(lines)
 
 
+def tactic_key_for_step(step):
+    technique_id = str(step.get("technique_id") or "").strip()
+    return TECHNIQUE_TACTICS.get(technique_id, "other")
+
+
+def build_tactic_coverage(steps):
+    grouped = {}
+    for step in steps:
+        if not step.get("technique_id"):
+            continue
+        tactic = tactic_key_for_step(step)
+        if tactic not in grouped:
+            grouped[tactic] = {
+                "key": tactic,
+                "label": TACTIC_LABELS.get(tactic, tactic),
+                "total": 0,
+                "log_matched": 0,
+                "alert_matched": 0,
+                "not_checked": 0,
+            }
+        row = grouped[tactic]
+        row["total"] += 1
+        if step.get("source_status") == "matched":
+            row["log_matched"] += 1
+        if step.get("alert_status") == "matched":
+            row["alert_matched"] += 1
+        if step.get("source_status") == "not_checked" and step.get("alert_status") == "not_checked":
+            row["not_checked"] += 1
+
+    order_index = {key: index for index, key in enumerate(TACTIC_ORDER)}
+    return sorted(grouped.values(), key=lambda item: order_index.get(item["key"], 999))
+
+
+def build_asset_control_mapping(target, steps):
+    assets = normalize_list((target or {}).get("assets"))
+    control_lookup = {
+        control.get("control_id"): control.get("name") or control.get("control_id")
+        for control in normalize_list((target or {}).get("security_controls"))
+    }
+    rows = []
+
+    for asset in assets:
+        asset_id = str(asset.get("asset_id") or "").lower()
+        asset_names = {
+            asset_id,
+            str(asset.get("name") or "").lower(),
+            str(asset.get("hostname") or "").lower(),
+        }
+        related_steps = [
+            step for step in steps
+            if str(step.get("target_asset") or "").lower() in asset_names
+            or str(step.get("asset_id") or "").lower() in asset_names
+        ]
+        statuses = {step.get("detection_status") for step in related_steps}
+
+        if "detected" in statuses:
+            coverage = "Covered"
+        elif "logged_only" in statuses or "alert_without_source_sample" in statuses:
+            coverage = "Partial"
+        elif "missed" in statuses:
+            coverage = "Gap"
+        elif statuses:
+            coverage = "검증 필요"
+        elif asset.get("log_collection_status") in ("Active", "Detection Backend"):
+            coverage = "Planned"
+        else:
+            coverage = "Manual"
+
+        control_ids = normalize_list(asset.get("controls"))
+        controls = [
+            control_lookup.get(control_id, control_id)
+            for control_id in control_ids
+        ]
+
+        rows.append({
+            "asset": asset.get("name") or asset.get("asset_id") or "-",
+            "role": asset.get("role") or "-",
+            "security_control": ", ".join(controls) if controls else "-",
+            "log_source": asset.get("log_collection_detail") or asset.get("log_collection_status") or "-",
+            "coverage": coverage,
+        })
+
+    if rows:
+        return rows
+
+    grouped = {}
+    for step in steps:
+        asset_name = step.get("target_asset") or step.get("execution_host") or step.get("agent_role")
+        if not asset_name:
+            continue
+        key = str(asset_name).lower()
+        row = grouped.setdefault(key, {
+            "asset": asset_name,
+            "role": step.get("agent_role") or "-",
+            "security_control": set(),
+            "log_source": set(),
+            "statuses": set(),
+        })
+        if step.get("recommended_sensor"):
+            row["security_control"].update(part.strip() for part in str(step.get("recommended_sensor")).split(",") if part.strip())
+        if step.get("expected_log"):
+            row["log_source"].update(part.strip() for part in str(step.get("expected_log")).split(",") if part.strip())
+        if step.get("detection_status"):
+            row["statuses"].add(step.get("detection_status"))
+
+    fallback_rows = []
+    for row in grouped.values():
+        statuses = row.pop("statuses")
+        if "detected" in statuses:
+            coverage = "Covered"
+        elif "logged_only" in statuses or "alert_without_source_sample" in statuses:
+            coverage = "Partial"
+        elif "missed" in statuses:
+            coverage = "Gap"
+        elif statuses:
+            coverage = "검증 필요"
+        else:
+            coverage = "Manual"
+
+        fallback_rows.append({
+            "asset": row["asset"],
+            "role": row["role"],
+            "security_control": ", ".join(sorted(row["security_control"])) if row["security_control"] else "-",
+            "log_source": ", ".join(sorted(row["log_source"])) if row["log_source"] else "-",
+            "coverage": coverage,
+        })
+
+    if fallback_rows:
+        return sorted(fallback_rows, key=lambda row: str(row.get("asset") or ""))
+
+    return rows
+
+
 def render_summary_html(report):
     summary = report["summary"]
     backlog = report.get("backlog", [])
@@ -907,6 +1099,22 @@ def render_summary_html(report):
     def th(ko, en):
         return f"<th><span>{text(ko)}</span><small>{text(en)}</small></th>"
 
+    def stacked_bar(row, matched_key, matched_label, missed_label, class_name):
+        total = row.get("total") or 0
+        matched = row.get(matched_key) or 0
+        matched_percent = round((matched / total) * 100) if total else 0
+        missed_percent = max(0, 100 - matched_percent)
+        return (
+            "<div class=\"stacked-bar-item\">"
+            "<div class=\"stacked-bar\">"
+            f"<i class=\"not-covered\" style=\"height: {missed_percent}%\" title=\"{text(missed_label)} {total - matched}/{total}\"></i>"
+            f"<i class=\"covered {class_name}\" style=\"height: {matched_percent}%\" title=\"{text(matched_label)} {matched}/{total}\"></i>"
+            "</div>"
+            f"<strong>{matched}/{total}</strong>"
+            f"<span>{text(row.get('label'))}</span>"
+            "</div>"
+        )
+
     metrics = [
         ("준비도 점수", f"{score}/100"),
         ("실행 대상 Technique", summary.get("attack_steps", 0)),
@@ -921,6 +1129,38 @@ def render_summary_html(report):
         f"<section class=\"metric\"><span>{text(label)}</span><strong>{text(value)}</strong></section>"
         for label, value in metrics
     )
+
+    tactic_rows = build_tactic_coverage(report.get("steps", []))
+    log_chart_html = "\n".join(
+        stacked_bar(row, "log_matched", "Logged", "Not Logged", "log")
+        for row in tactic_rows
+    )
+    alert_chart_html = "\n".join(
+        stacked_bar(row, "alert_matched", "Alert", "No Alert", "alert")
+        for row in tactic_rows
+    )
+    tactic_chart_html = (
+        "<article class=\"tactic-chart\">"
+        "<h3>Log Coverage Summary by Tactic</h3>"
+        "<div class=\"chart-body\"><div class=\"chart-axis\">"
+        "<span>100%</span><span>90%</span><span>80%</span><span>70%</span><span>60%</span>"
+        "<span>50%</span><span>40%</span><span>30%</span><span>20%</span><span>10%</span>"
+        "</div>"
+        f"<div class=\"stacked-chart\">{log_chart_html}</div></div>"
+        "<div class=\"chart-legend\"><span class=\"log-dot\">Logged</span><span class=\"miss-dot\">Not Logged</span></div>"
+        "</article>"
+        "<article class=\"tactic-chart\">"
+        "<h3>Actionable Alert Summary by Tactic</h3>"
+        "<div class=\"chart-body\"><div class=\"chart-axis\">"
+        "<span>100%</span><span>90%</span><span>80%</span><span>70%</span><span>60%</span>"
+        "<span>50%</span><span>40%</span><span>30%</span><span>20%</span><span>10%</span>"
+        "</div>"
+        f"<div class=\"stacked-chart\">{alert_chart_html}</div></div>"
+        "<div class=\"chart-legend\"><span class=\"alert-dot\">Alert</span><span class=\"miss-dot\">No Alert</span></div>"
+        "</article>"
+    )
+    if not tactic_chart_html:
+        tactic_chart_html = "<p class=\"empty\">전술별 커버리지 데이터를 만들 수 없습니다.</p>"
 
     if backlog:
         backlog_rows = "\n".join(
@@ -966,6 +1206,19 @@ def render_summary_html(report):
     )
     if not coverage_rows:
         coverage_rows = "<tr><td colspan=\"12\" class=\"empty\">생성된 BAS 커버리지 결과가 없습니다.</td></tr>"
+
+    asset_mapping = report.get("asset_control_mapping") or build_asset_control_mapping(report.get("target"), report.get("steps", []))
+    asset_mapping_rows = "\n".join(
+        "<tr>"
+        f"<td><strong>{text(row.get('asset'))}</strong><small>{text(row.get('role'))}</small></td>"
+        f"<td>{text(row.get('security_control'))}</td>"
+        f"<td>{text(row.get('log_source'))}</td>"
+        f"<td>{badge(row.get('coverage'), 'good' if row.get('coverage') == 'Covered' else 'warn' if row.get('coverage') in ('Partial', '검증 필요') else 'critical' if row.get('coverage') == 'Gap' else 'neutral')}</td>"
+        "</tr>"
+        for row in asset_mapping
+    )
+    if not asset_mapping_rows:
+        asset_mapping_rows = "<tr><td colspan=\"4\" class=\"empty\">자산/보안 솔루션 매핑 정보가 없습니다.</td></tr>"
 
     return f"""<!doctype html>
 <html lang="ko">
@@ -1013,6 +1266,60 @@ def render_summary_html(report):
     .metric span {{ display: block; color: #64748b; font-size: 12px; font-weight: 800; }}
     .metric strong {{ display: block; margin-top: 8px; font-size: 24px; }}
     section.panel {{ margin-top: 18px; padding: 24px; }}
+    .tactic-grid {{ display: grid; gap: 16px; }}
+    .tactic-chart {{
+      border: 1px solid #dbe3ec;
+      border-radius: 10px;
+      background: #fbfdff;
+      overflow: hidden;
+      padding: 16px 16px 12px;
+    }}
+    .tactic-chart h3 {{ margin: 0 0 12px; color: #1d4ed8; font-size: 16px; text-align: center; }}
+    .chart-body {{ display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 8px; align-items: start; }}
+    .chart-axis {{
+      display: grid;
+      grid-template-rows: repeat(10, 16px);
+      height: 160px;
+      padding-top: 1px;
+      color: #1d4ed8;
+      font-size: 10px;
+      font-weight: 800;
+      text-align: right;
+    }}
+    .stacked-chart {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
+      align-items: end;
+      column-gap: 7px;
+      min-height: 214px;
+      padding: 8px 0 0;
+      background-image: linear-gradient(to top, #bfdbfe 1px, transparent 1px);
+      background-size: 100% 16px;
+      border-bottom: 2px solid #cbd5e1;
+    }}
+    .stacked-bar-item {{ display: grid; grid-template-rows: 160px 18px minmax(34px, auto); justify-items: center; gap: 5px; min-width: 0; }}
+    .stacked-bar {{
+      align-self: end;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      width: 32px;
+      height: 160px;
+      overflow: hidden;
+      background: #e2e8f0;
+      border: 1px solid #dbe3ec;
+    }}
+    .stacked-bar i {{ display: block; width: 100%; min-height: 0; }}
+    .stacked-bar .covered.log {{ background: #f97316; }}
+    .stacked-bar .covered.alert {{ background: #f97316; }}
+    .stacked-bar .not-covered {{ background: #334155; }}
+    .stacked-bar-item strong {{ color: #334155; font-size: 11px; }}
+    .stacked-bar-item span {{ color: #1d4ed8; font-size: 10px; font-weight: 800; line-height: 1.15; text-align: center; word-break: keep-all; }}
+    .chart-legend {{ display: flex; justify-content: center; gap: 16px; margin-top: 10px; color: #334155; font-size: 11px; font-weight: 900; }}
+    .chart-legend span::before {{ content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 5px; border-radius: 2px; vertical-align: -1px; }}
+    .chart-legend .log-dot::before,
+    .chart-legend .alert-dot::before {{ background: #f97316; }}
+    .chart-legend .miss-dot::before {{ background: #334155; }}
     table {{ width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }}
     th, td {{ border-bottom: 1px solid #e2e8f0; padding: 12px; text-align: left; vertical-align: top; }}
     th {{ color: #475569; background: #f8fafc; font-size: 12px; position: sticky; top: 0; z-index: 1; }}
@@ -1026,6 +1333,7 @@ def render_summary_html(report):
     tbody tr.row-blocked td:first-child {{ border-left: 4px solid #64748b; }}
     .table-wrap {{ overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 10px; }}
     .coverage-table {{ min-width: 1680px; }}
+    .asset-control-table td:first-child small {{ display: block; margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 800; }}
     .badge {{
       display: inline-flex;
       align-items: center;
@@ -1045,6 +1353,8 @@ def render_summary_html(report):
       body {{ padding: 16px; }}
       header {{ grid-template-columns: 1fr; }}
       .grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .chart-body {{ grid-template-columns: 36px minmax(0, 1fr); }}
+      .stacked-chart {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     }}
   </style>
 </head>
@@ -1070,6 +1380,28 @@ def render_summary_html(report):
       <h2>핵심 지표</h2>
       <p class="section-desc">탐지 체계가 실제 로그와 알림까지 이어졌는지 요약한 값입니다.</p>
       <div class="grid">{metrics_html}</div>
+    </section>
+    <section class="panel">
+      <h2>전술별 로그/알림 커버리지</h2>
+      <p class="section-desc">NetSPI BAS 샘플 레포트처럼 tactic 단위로 로그 수집과 알림 발생 여부를 먼저 볼 수 있게 배치했습니다.</p>
+      <div class="tactic-grid">{tactic_chart_html}</div>
+    </section>
+    <section class="panel">
+      <h2>자산/보안 솔루션 매핑</h2>
+      <p class="section-desc">우리 환경의 어떤 보안 자산으로 각 공격 흐름을 볼 수 있는지 정리했습니다. 실제 솔루션이 많지 않아도 현재 보유한 로그 소스와 탐지 백엔드를 기준으로 표시합니다.</p>
+      <div class="table-wrap">
+        <table class="asset-control-table">
+          <thead>
+            <tr>
+              {th("자산", "Asset")}
+              {th("보안 솔루션", "Security Control")}
+              {th("로그 소스", "Log Source")}
+              {th("커버리지", "Coverage")}
+            </tr>
+          </thead>
+          <tbody>{asset_mapping_rows}</tbody>
+        </table>
+      </div>
     </section>
     <section class="panel">
       <h2>해석</h2>

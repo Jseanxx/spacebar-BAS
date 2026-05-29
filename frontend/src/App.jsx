@@ -235,6 +235,86 @@ function getCoverageFields(step, detectionStatus) {
   ];
 }
 
+function getStepRiskLevel(step) {
+  return String(step?.risk || step?.params?.risk || "medium").toLowerCase();
+}
+
+function getSafetyGates(step) {
+  return normalizeList(step?.params?.safety_gates || step?.safety_gates);
+}
+
+function getSafetyProfile(step) {
+  const risk = getStepRiskLevel(step);
+  const gates = getSafetyGates(step);
+  const behavior = String(step?.params?.behavior || step?.behavior || "").toLowerCase();
+  const requires = normalizeList(step?.requires).join(" ").toLowerCase();
+  const name = String(step?.name || "").toLowerCase();
+  const combined = `${behavior} ${requires} ${name} ${gates.join(" ")}`.toLowerCase();
+
+  const domainCompromise = /dcsync|golden|ntds|domain_compromise|krbtgt|secretsdump/.test(combined);
+  const credentialDump = /lsass|credential|dump|comsvcs|sam|ntds/.test(combined);
+  const serviceExecution = /service_execution|psexec|service/.test(combined);
+  const networkHeavy = /dos|scan|sweep|flood|spoof/.test(combined);
+  const networkTouch = /network|tcp|c2|exfiltration|tool_transfer|winrm|remote/.test(combined);
+
+  const highImpact = risk === "critical" || domainCompromise || credentialDump || serviceExecution || networkHeavy;
+  const mediumImpact = risk === "high" || risk === "medium" || gates.length > 0 || networkTouch;
+  const impact = highImpact ? "High" : mediumImpact ? "Medium" : "Low";
+  const failurePossibility = highImpact ? "있음" : mediumImpact ? "낮음" : "없음";
+  const networkLoad = networkHeavy ? "높음" : networkTouch ? "낮음" : "없음";
+  const serviceDownPossibility = networkHeavy || serviceExecution || domainCompromise ? "있음" : "N/A";
+  const warningRequired = impact === "High" || risk === "high" || risk === "critical" || gates.length > 1 ? "필요" : "불필요";
+  const executionRecommendation = highImpact || networkHeavy
+    ? "운영환경 금지"
+    : mediumImpact
+      ? "테스트환경 권장"
+      : "안전";
+  const className = executionRecommendation === "운영환경 금지"
+    ? "danger"
+    : executionRecommendation === "테스트환경 권장"
+      ? "warn"
+      : "safe";
+
+  return {
+    risk,
+    impact,
+    failurePossibility,
+    networkLoad,
+    serviceDownPossibility,
+    warningRequired,
+    executionRecommendation,
+    className,
+    gates,
+  };
+}
+
+function getImpactLabel(value) {
+  return { High: "높음", Medium: "중간", Low: "낮음" }[value] || value;
+}
+
+function getRecommendationShort(value) {
+  return {
+    "운영환경 금지": "금지",
+    "테스트환경 권장": "주의",
+    "안전": "안전",
+  }[value] || value;
+}
+
+function summarizeSafetyProfiles(steps) {
+  const profiles = steps.map(getSafetyProfile);
+  const severity = { safe: 1, warn: 2, danger: 3 };
+  const highest = profiles.reduce((current, profile) => (
+    !current || severity[profile.className] > severity[current.className] ? profile : current
+  ), null);
+
+  return {
+    highest,
+    safe: profiles.filter((profile) => profile.className === "safe").length,
+    warn: profiles.filter((profile) => profile.className === "warn").length,
+    danger: profiles.filter((profile) => profile.className === "danger").length,
+  };
+}
+
 export default function App() {
   const [health, setHealth] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
@@ -244,6 +324,7 @@ export default function App() {
   const [agents, setAgents] = useState([]);
   const [operations, setOperations] = useState([]);
   const [runs, setRuns] = useState([]);
+  const [reports, setReports] = useState([]);
   const [library, setLibrary] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [techniqueInputs, setTechniqueInputs] = useState({});
@@ -278,18 +359,21 @@ export default function App() {
   }
 
   async function refreshRuntime() {
-    const [agentData, operationData, runData] = await Promise.all([
+    const [agentData, operationData, runData, reportData] = await Promise.all([
       fetchJson("/agents"),
       fetchJson("/operations"),
       fetchJson("/runs"),
+      fetchJson("/reports"),
     ]);
     setAgents(agentData.agents || []);
     setOperations(operationData.operations || []);
     setRuns(runData.runs || []);
+    setReports(reportData.reports || []);
     return {
       agents: agentData.agents || [],
       operations: operationData.operations || [],
       runs: runData.runs || [],
+      reports: reportData.reports || [],
     };
   }
 
@@ -428,7 +512,8 @@ export default function App() {
     return { ...counts, [status]: (counts[status] || 0) + 1 };
   }, {});
   const operationSummary = latestOperation?.summary || {};
-  const reportSummary = latestOperation?.report?.summary || {};
+  const latestReport = latestOperation?.report || reports.find((report) => report.campaign_id === campaignId) || reports[0] || null;
+  const reportSummary = latestReport?.summary || {};
   const selectedOperationKey = latestOperation?.operation_id || "";
   const executionTotal = operationSummary.total || evidenceSteps.length || selectedSteps.length || 0;
   const executionSucceeded = (operationSummary.success || 0) + (operationSummary.completed || 0);
@@ -472,6 +557,7 @@ export default function App() {
   const selectedFilteredCount = useMemo(() => (
     filteredSelectionIds.filter((id) => selectedIds.includes(id)).length
   ), [filteredSelectionIds, selectedIds]);
+  const safetySummary = useMemo(() => summarizeSafetyProfiles(selectedSteps), [selectedSteps]);
 
   function toggleStep(step) {
     const selectionId = getStepSelectionId(step, campaignId);
@@ -790,6 +876,7 @@ export default function App() {
               const selectionId = getStepSelectionId(step, campaignId);
               const selected = selectedIds.includes(selectionId);
               const phase = step.phase || "attack";
+              const safety = getSafetyProfile(step);
               return (
                 <button
                   key={selectionId}
@@ -803,6 +890,9 @@ export default function App() {
                   </span>
                   <strong>{step.name}</strong>
                   <small>{getStepSourceId(step, campaignId)} · {getStepRole(step)}</small>
+                  <span className={`safety-mini ${safety.className}`}>
+                    영향도 {safety.impact} · {safety.executionRecommendation}
+                  </span>
                 </button>
               );
             })}
@@ -834,11 +924,25 @@ export default function App() {
               <option value="simulation">Simulation</option>
             </select>
           </label>
+          {selectedSteps.length > 0 && (
+            <div className={`safety-summary ${safetySummary.highest?.className || "safe"}`}>
+              <div>
+                <span>실행 전 안전성</span>
+                <strong>{safetySummary.highest?.executionRecommendation || "안전"}</strong>
+              </div>
+              <div className="safety-counts">
+                <b className="danger">금지 {safetySummary.danger}</b>
+                <b className="warn">주의 {safetySummary.warn}</b>
+                <b className="safe">안전 {safetySummary.safe}</b>
+              </div>
+            </div>
+          )}
           <div className="queue-stack">
             {selectedSteps.map((step, index) => {
               const selectionId = getStepSelectionId(step, campaignId);
               const inputDefs = normalizeList(step.inputs);
               const isOpen = openInputIds.includes(selectionId);
+              const safety = getSafetyProfile(step);
               return (
                 <div key={selectionId} className="queue-card">
                   <div className="queue-card-head">
@@ -848,6 +952,23 @@ export default function App() {
                       <small>{getStepAssetId(step).toUpperCase()} · {getStepRole(step)}</small>
                     </div>
                   </div>
+                  <div className={`safety-strip ${safety.className}`}>
+                    <span><small>영향</small><strong>{getImpactLabel(safety.impact)}</strong></span>
+                    <span><small>장애</small><strong>{safety.failurePossibility}</strong></span>
+                    <span><small>부하</small><strong>{safety.networkLoad}</strong></span>
+                    <b>{getRecommendationShort(safety.executionRecommendation)}</b>
+                  </div>
+                  <details className="safety-details">
+                    <summary>세부 안전성</summary>
+                    <div className={`safety-checklist ${safety.className}`}>
+                      <div><span>시스템 영향도</span><strong>{safety.impact}</strong></div>
+                      <div><span>장애 가능성</span><strong>{safety.failurePossibility}</strong></div>
+                      <div><span>네트워크 부하</span><strong>{safety.networkLoad}</strong></div>
+                      <div><span>서비스 다운</span><strong>{safety.serviceDownPossibility}</strong></div>
+                      <div><span>사전 경고</span><strong>{safety.warningRequired}</strong></div>
+                      <div><span>실행 권장</span><strong>{safety.executionRecommendation}</strong></div>
+                    </div>
+                  </details>
                   {inputDefs.length > 0 && (
                     <button
                       type="button"
@@ -945,16 +1066,16 @@ export default function App() {
           <div><span>미탐</span><strong>{detectionCounts.missed || 0}</strong></div>
           <div><span>미확인</span><strong>{detectionCounts.not_checked || 0}</strong></div>
         </div>
-        {latestOperation?.report?.report_id && (
+        {latestReport?.report_id && (
           <div className="report-card">
             <span>Report</span>
-            <strong>{latestOperation.report.report_id}</strong>
+            <strong>{latestReport.report_id}</strong>
             <small>
               Score {reportSummary.final_score ?? "-"} · Detection {formatCoverage(reportSummary.detection_coverage)}
             </small>
             <a
               className="artifact-link"
-              href={`${API_BASE}/reports/${latestOperation.report.report_id}/summary.html`}
+              href={`${API_BASE}/reports/${latestReport.report_id}/summary.html`}
               target="_blank"
               rel="noreferrer"
             >
@@ -1163,14 +1284,14 @@ export default function App() {
                 <strong>{detectionChecked}/{executionTotal}</strong>
                 <small>{detectionCounts.detected || 0} detected · {detectionCounts.logged_only || 0} logged · {detectionCounts.missed || 0} missed · {detectionCounts.not_checked || 0} not checked</small>
               </div>
-              {latestOperation?.report?.report_id && (
+              {latestReport?.report_id && (
                 <div>
                   <span>Report</span>
                   <strong>{reportSummary.final_score ?? "-"} / 100</strong>
-                  <small>{latestOperation.report.report_id}</small>
+                  <small>{latestReport.report_id}</small>
                   <a
                     className="artifact-link compact"
-                    href={`${API_BASE}/reports/${latestOperation.report.report_id}/summary.html`}
+                    href={`${API_BASE}/reports/${latestReport.report_id}/summary.html`}
                     target="_blank"
                     rel="noreferrer"
                   >

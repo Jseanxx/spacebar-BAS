@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from datetime import datetime, timezone, timedelta
+from html import escape
 from pathlib import Path
 
 from bas.loader import load_campaign
@@ -545,6 +546,7 @@ def write_report_artifacts(report):
     artifacts = {
         "json": base.with_suffix(".report.json"),
         "summary": base.with_suffix(".summary.md"),
+        "summary_html": base.with_suffix(".summary.html"),
         "technical": base.with_suffix(".technical.md"),
         "backlog": base.with_suffix(".detection-backlog.csv"),
         "navigator": base.with_suffix(".attack-navigator.json"),
@@ -552,6 +554,7 @@ def write_report_artifacts(report):
 
     write_json(artifacts["json"], {key: value for key, value in report.items() if key != "artifact_paths"})
     artifacts["summary"].write_text(render_summary_markdown(report), encoding="utf-8")
+    artifacts["summary_html"].write_text(render_summary_html(report), encoding="utf-8")
     artifacts["technical"].write_text(render_technical_markdown(report), encoding="utf-8")
     write_backlog_csv(artifacts["backlog"], report.get("backlog", []))
     write_json(artifacts["navigator"], build_navigator_layer(report))
@@ -597,6 +600,146 @@ def render_summary_markdown(report):
 
     lines.append("")
     return "\n".join(lines)
+
+
+def render_summary_html(report):
+    summary = report["summary"]
+    backlog = report.get("backlog", [])
+    score = int(summary.get("final_score", 0))
+    score_label = "Good" if score >= 80 else "Needs improvement" if score >= 50 else "High priority"
+    score_class = "good" if score >= 80 else "warn" if score >= 50 else "critical"
+
+    def text(value):
+        return escape(str(value if value is not None else "-"))
+
+    def pct(value):
+        return f"{float(value or 0) * 100:.0f}%"
+
+    metrics = [
+        ("Readiness score", f"{score}/100"),
+        ("Attack techniques", summary.get("attack_steps", 0)),
+        ("Detected", summary.get("detected_count", 0)),
+        ("Logged only", summary.get("logged_only_count", 0)),
+        ("Missed", summary.get("missed_count", 0)),
+        ("Not checked", summary.get("not_checked_count", 0)),
+        ("Telemetry coverage", pct(summary.get("telemetry_coverage"))),
+        ("Alert coverage", pct(summary.get("alert_coverage"))),
+    ]
+    metrics_html = "\n".join(
+        f"<section class=\"metric\"><span>{text(label)}</span><strong>{text(value)}</strong></section>"
+        for label, value in metrics
+    )
+
+    if backlog:
+        backlog_rows = "\n".join(
+            "<tr>"
+            f"<td><strong>{text(item.get('priority'))}</strong></td>"
+            f"<td>{text(item.get('technique_id'))}</td>"
+            f"<td>{text(item.get('gap_type'))}</td>"
+            f"<td>{text(item.get('recommended_action'))}</td>"
+            f"<td>{text(item.get('verification_method'))}</td>"
+            "</tr>"
+            for item in backlog[:8]
+        )
+    else:
+        backlog_rows = "<tr><td colspan=\"5\" class=\"empty\">No remediation backlog item was generated.</td></tr>"
+
+    meaning_items = []
+    if summary.get("missed_count", 0) or summary.get("critical_gaps", 0):
+        meaning_items.append("Missed or high-risk gaps should be handled before this path is treated as validated.")
+    if summary.get("logged_only_count", 0):
+        meaning_items.append("Some techniques produced telemetry but no matching alert, so detection rule tuning is recommended.")
+    if summary.get("not_checked_count", 0):
+        meaning_items.append("Some checks were inconclusive. Review ELK query execution, agent status, or simulation mode.")
+    if not meaning_items:
+        meaning_items.append("No major detection backlog was generated from this run.")
+    meaning_html = "\n".join(f"<li>{text(item)}</li>" for item in meaning_items)
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{text(report.get('campaign_name') or report.get('campaign_id'))} BAS Summary</title>
+  <style>
+    :root {{
+      color: #101820;
+      background: #eef3f7;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    body {{ margin: 0; padding: 32px; }}
+    main {{ max-width: 1120px; margin: 0 auto; }}
+    header, section.panel {{
+      border: 1px solid #d7e0ea;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+    }}
+    header {{ display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 24px; padding: 30px; }}
+    h1 {{ margin: 0 0 12px; font-size: 34px; line-height: 1.08; letter-spacing: 0; }}
+    h2 {{ margin: 0 0 16px; font-size: 19px; }}
+    p, li {{ color: #475569; line-height: 1.65; }}
+    .meta {{ display: flex; flex-wrap: wrap; gap: 10px; color: #64748b; font-size: 13px; }}
+    .meta span {{ border: 1px solid #dbe3ec; border-radius: 999px; padding: 7px 10px; background: #f8fafc; }}
+    .score {{ display: grid; align-content: center; justify-items: center; border-radius: 10px; padding: 18px; background: #f8fafc; border: 1px solid #dbe3ec; }}
+    .score strong {{ font-size: 48px; line-height: 1; }}
+    .score span {{ margin-top: 10px; font-weight: 800; }}
+    .score.good strong {{ color: #15803d; }}
+    .score.warn strong {{ color: #b45309; }}
+    .score.critical strong {{ color: #b91c1c; }}
+    .grid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }}
+    .metric {{ border: 1px solid #dbe3ec; border-radius: 10px; padding: 14px; background: #f8fafc; }}
+    .metric span {{ display: block; color: #64748b; font-size: 12px; font-weight: 800; }}
+    .metric strong {{ display: block; margin-top: 8px; font-size: 24px; }}
+    section.panel {{ margin-top: 18px; padding: 24px; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+    th, td {{ border-bottom: 1px solid #e2e8f0; padding: 11px; text-align: left; vertical-align: top; }}
+    th {{ color: #475569; background: #f8fafc; font-size: 12px; }}
+    .empty {{ color: #64748b; text-align: center; }}
+    @media (max-width: 820px) {{
+      body {{ padding: 16px; }}
+      header {{ grid-template-columns: 1fr; }}
+      .grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>{text(report.get('campaign_name') or report.get('campaign_id'))} BAS Executive Summary</h1>
+        <p>This report summarizes detection readiness, telemetry evidence, alert coverage, and the next remediation actions from the BAS run.</p>
+        <div class="meta">
+          <span>Report {text(report.get('report_id'))}</span>
+          <span>Target {text(report.get('campaign_id'))}</span>
+          <span>Generated {text(report.get('generated_at'))}</span>
+        </div>
+      </div>
+      <div class="score {score_class}">
+        <strong>{score}</strong>
+        <span>{text(score_label)}</span>
+      </div>
+    </header>
+    <section class="panel">
+      <h2>Key Metrics</h2>
+      <div class="grid">{metrics_html}</div>
+    </section>
+    <section class="panel">
+      <h2>What This Means</h2>
+      <ul>{meaning_html}</ul>
+    </section>
+    <section class="panel">
+      <h2>Recommended Remediation</h2>
+      <table>
+        <thead>
+          <tr><th>Priority</th><th>Technique</th><th>Gap</th><th>Action</th><th>Verify</th></tr>
+        </thead>
+        <tbody>{backlog_rows}</tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>"""
 
 
 def render_technical_markdown(report):

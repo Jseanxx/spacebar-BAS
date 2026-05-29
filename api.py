@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from bas.controller import run_campaign
 from bas.elk_checker import check_elk, resolve_query
 from bas.loader import load_campaign, load_target
-from bas.report_builder import REPORTS_DIR, build_report_from_operation, build_report_from_run
+from bas.report_builder import REPORTS_DIR, build_report_from_operation, build_report_from_run, render_summary_html
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -909,6 +909,7 @@ def build_operation_summary(final_steps):
         "blocked": 0,
         "simulated": 0,
         "pending": 0,
+        "cancelled": 0,
     }
 
     for step in final_steps:
@@ -922,6 +923,8 @@ def build_operation_summary(final_steps):
             summary["failed"] += 1
         elif status == "blocked":
             summary["blocked"] += 1
+        elif status == "cancelled":
+            summary["cancelled"] += 1
         elif status == "running":
             summary["running"] += 1
         elif status == "queued":
@@ -936,8 +939,12 @@ def create_operation_job(operation, step_entry):
     agent = select_online_agent(operation["campaign_id"], step_entry["agent_role"])
 
     if not agent:
-        step_entry["status"] = "simulated"
-        step_entry["simulation_reason"] = "agent_offline"
+        if operation.get("execution_mode") == "simulation":
+            step_entry["status"] = "simulated"
+            step_entry["simulation_reason"] = "agent_offline"
+        else:
+            step_entry["status"] = "blocked"
+            step_entry["blocked_reason"] = "agent_offline"
         step_entry["would_route_to"] = step_entry["agent_role"]
         step_entry["finished_at"] = now_kst()
         operation["summary"] = build_operation_summary(operation["final_steps"])
@@ -1010,7 +1017,14 @@ def enqueue_next_operation_job(operation):
 
         if not next_step:
             summary = build_operation_summary(operation["final_steps"])
-            operation["status"] = "simulated" if summary["simulated"] == summary["total"] else "completed"
+            if summary["blocked"] == summary["total"]:
+                operation["status"] = "blocked"
+            elif summary["cancelled"] == summary["total"]:
+                operation["status"] = "cancelled"
+            elif summary["simulated"] == summary["total"]:
+                operation["status"] = "simulated"
+            else:
+                operation["status"] = "completed"
             operation["finished_at"] = now_kst()
             operation["summary"] = summary
             operation = attach_deferred_elk_checks(operation)
@@ -1042,7 +1056,7 @@ def resolve_operation_step_status(job):
         return step_status
 
     if step_status in ("manual_required", "not_supported"):
-        return "simulated"
+        return "simulated" if job.get("execution_mode") == "simulation" else "blocked"
 
     return "success"
 
@@ -1059,6 +1073,8 @@ def sync_operation_result_fields(step_entry, job):
 
     if step_entry.get("status") == "simulated" and not step_entry.get("simulation_reason"):
         step_entry["simulation_reason"] = result_step.get("module_result", {}).get("message") or "module_simulated"
+    if step_entry.get("status") == "blocked" and not step_entry.get("blocked_reason"):
+        step_entry["blocked_reason"] = result_step.get("status") or result_step.get("module_result", {}).get("message") or "real_execution_blocked"
 
 
 def finalize_operation_if_done(operation):
@@ -1066,7 +1082,11 @@ def finalize_operation_if_done(operation):
     operation["summary"] = summary
 
     if summary["pending"] == 0 and summary["queued"] == 0 and summary["running"] == 0:
-        if summary["simulated"] == summary["total"]:
+        if summary["blocked"] == summary["total"]:
+            operation["status"] = "blocked"
+        elif summary["cancelled"] == summary["total"]:
+            operation["status"] = "cancelled"
+        elif summary["simulated"] == summary["total"]:
             operation["status"] = "simulated"
         elif summary["failed"] == summary["total"]:
             operation["status"] = "failed"
@@ -1362,6 +1382,60 @@ def cancel_operation(operation_id: str):
     }
 
 
+@app.post("/operations/{operation_id}/steps/{step_index}/cancel")
+def cancel_operation_step(operation_id: str, step_index: int):
+    operation = load_operation(operation_id)
+    steps = operation.get("final_steps", [])
+
+    if step_index < 0 or step_index >= len(steps):
+        raise HTTPException(status_code=404, detail="Operation step not found")
+
+    step = steps[step_index]
+    status = step.get("status", "pending")
+
+    if status == "running":
+        raise HTTPException(status_code=409, detail="Running step cannot be cancelled from the UI")
+
+    if status in ("completed", "success", "simulated", "failed", "blocked", "cancelled"):
+        return {
+            "message": "step already finished",
+            "operation": operation,
+        }
+
+    job_id = step.get("job_id")
+    if job_id:
+        try:
+            job = load_job(job_id)
+            if job.get("status") == "queued":
+                job["status"] = "cancelled"
+                job["finished_at"] = now_kst()
+                job["error"] = "cancelled_by_user"
+                write_json_file(get_job_path(job_id), job)
+            elif job.get("status") == "running":
+                raise HTTPException(status_code=409, detail="Running step cannot be cancelled from the UI")
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                raise
+
+    step["status"] = "cancelled"
+    step["cancelled_reason"] = "cancelled_by_user"
+    step["finished_at"] = now_kst()
+    operation["summary"] = build_operation_summary(steps)
+    write_operation(operation)
+
+    operation = load_operation(operation_id)
+    operation = finalize_operation_if_done(operation)
+
+    if operation.get("status") not in ("completed", "failed", "blocked", "cancelled", "simulated"):
+        enqueue_next_operation_job(operation)
+        operation = load_operation(operation_id)
+
+    return {
+        "message": "step cancelled",
+        "operation": operation,
+    }
+
+
 def normalize_report_source_id(report_id):
     if report_id.startswith("report-"):
         candidate = report_id.removeprefix("report-")
@@ -1453,6 +1527,17 @@ def get_report(report_id: str):
 @app.get("/reports/{report_id}/summary.md")
 def get_report_summary(report_id: str):
     return read_report_artifact(report_id, "summary.md", "text/markdown")
+
+
+@app.get("/reports/{report_id}/summary.html")
+def get_report_summary_html(report_id: str):
+    source_id = normalize_report_source_id(report_id)
+    path = REPORTS_DIR / f"{source_id}.summary.html"
+
+    if path.exists():
+        return Response(content=path.read_text(encoding="utf-8"), media_type="text/html")
+
+    return Response(content=render_summary_html(load_report(report_id)), media_type="text/html")
 
 
 @app.get("/reports/{report_id}/technical.md")

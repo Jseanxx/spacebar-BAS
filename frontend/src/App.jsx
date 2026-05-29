@@ -204,6 +204,17 @@ function getStepEvidenceText(step) {
   return `ELK source events ${eventCount}건 · detection alerts ${alertCount}건 · ${getDetectionLabel(detectionStatus)}`;
 }
 
+function getStepQueries(step) {
+  const elkCheck = step?.elk_check || step?.result_step?.elk_check || {};
+  const alertCheck = elkCheck?.alert_check || step?.alert_check || {};
+  const queries = step?.queries || {};
+
+  return {
+    source: queries.source || step?.source_query || elkCheck?.query || "",
+    alert: queries.alert || step?.alert_query || alertCheck?.query || "",
+  };
+}
+
 export default function App() {
   const [health, setHealth] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
@@ -398,6 +409,7 @@ export default function App() {
   }, {});
   const operationSummary = latestOperation?.summary || {};
   const reportSummary = latestOperation?.report?.summary || {};
+  const selectedOperationKey = latestOperation?.operation_id || "";
   const executionTotal = operationSummary.total || evidenceSteps.length || selectedSteps.length || 0;
   const executionSucceeded = (operationSummary.success || 0) + (operationSummary.completed || 0);
   const executionFailed = (operationSummary.failed || 0) + (operationSummary.blocked || 0);
@@ -612,6 +624,37 @@ export default function App() {
       setError(err.message);
     } finally {
       setIsCancelling(false);
+    }
+  }
+
+  async function cancelOperationStep(stepIndex, operationId = latestOperation?.operation_id) {
+    if (!operationId) return;
+
+    try {
+      setError("");
+      const response = await fetchJson(`/operations/${operationId}/steps/${stepIndex}/cancel`, { method: "POST" });
+      const operation = response.operation || response;
+      setSelectedOperation(operation);
+      setNotice("선택한 Technique을 이번 런에서 제외했습니다.");
+      await refreshRuntime();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function chooseOperation(operationId) {
+    if (!operationId) {
+      setSelectedOperation(null);
+      return;
+    }
+
+    try {
+      const operation = await fetchJson(`/operations/${operationId}`);
+      setSelectedOperation(operation);
+      setSelectedRun(null);
+      setActivePanel("evidence");
+    } catch (err) {
+      setError(err.message);
     }
   }
 
@@ -831,6 +874,17 @@ export default function App() {
           <span>Evidence</span>
           <strong>{latestOperation?.operation_id || latestRun?.execution_id || "선택된 결과 없음"}</strong>
         </div>
+        <label className="result-select-field">
+          <span>결과 선택</span>
+          <select value={selectedOperationKey} onChange={(event) => chooseOperation(event.target.value)}>
+            <option value="">최신 결과</option>
+            {operations.slice(0, 12).map((operation) => (
+              <option key={operation.operation_id} value={operation.operation_id}>
+                {operation.operation_id} · {operation.campaign_id} · {getStatusLabel(operation.status)}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="evidence-callout">
           <span>현재 결과</span>
           <strong>{latestOperation?.status ? getStatusLabel(latestOperation.status) : "런 선택 전"}</strong>
@@ -862,7 +916,7 @@ export default function App() {
             </small>
             <a
               className="artifact-link"
-              href={`${API_BASE}/reports/${latestOperation.report.report_id}/summary.md`}
+              href={`${API_BASE}/reports/${latestOperation.report.report_id}/summary.html`}
               target="_blank"
               rel="noreferrer"
             >
@@ -1024,11 +1078,12 @@ export default function App() {
                 <span>Live Tactics</span>
                 <strong>{visibleSteps.length || "대기 중"}</strong>
               </div>
-              <button type="button" className="ghost-button" onClick={refreshRuntime}>새로고침</button>
             </div>
             <div className="timeline-list">
               {visibleSteps.map((step, index) => {
                 const status = step.status || (selectedIds.includes(getStepSelectionId(step, campaignId)) ? "queued" : "planned");
+                const canCancelStep = Boolean(latestOperation?.operation_id && ["pending", "queued"].includes(status));
+                const isRunningStep = status === "running";
                 return (
                   <div key={`${step.order}-${step.technique_id || index}`} className={`timeline-row ${status}`}>
                     <span>{String(index + 1).padStart(2, "0")}</span>
@@ -1036,6 +1091,15 @@ export default function App() {
                       <strong>{getTechniqueLabel(step)}</strong>
                       <small>{getStepAssetId(step).toUpperCase()} · {getExecutionLabel(status)} · {getDetectionLabel(getDetectionStatus(step))}</small>
                     </div>
+                    <button
+                      type="button"
+                      className="timeline-cancel-button"
+                      onClick={() => cancelOperationStep(index)}
+                      disabled={!canCancelStep}
+                      title={isRunningStep ? "이미 Agent가 실행 중인 Technique은 여기서 중단할 수 없습니다." : "아직 실행되지 않은 Technique을 이번 런에서 제외"}
+                    >
+                      취소
+                    </button>
                   </div>
                 );
               })}
@@ -1068,7 +1132,7 @@ export default function App() {
                   <small>{latestOperation.report.report_id}</small>
                   <a
                     className="artifact-link compact"
-                    href={`${API_BASE}/reports/${latestOperation.report.report_id}/summary.md`}
+                    href={`${API_BASE}/reports/${latestOperation.report.report_id}/summary.html`}
                     target="_blank"
                     rel="noreferrer"
                   >
@@ -1081,6 +1145,8 @@ export default function App() {
               {evidenceSteps.map((step) => {
                 const detectionStatus = getDetectionStatus(step);
                 const executionStatus = step.execution_status || step.status;
+                const queries = getStepQueries(step);
+                const hasQuery = queries.source || queries.alert;
                 return (
                   <div key={`${step.order}-${step.technique_id}`} className="evidence-row">
                     <div className="result-pill-stack">
@@ -1090,6 +1156,26 @@ export default function App() {
                     <div>
                       <strong>{getTechniqueLabel(step)}</strong>
                       <small>{getStepAssetId(step).toUpperCase()} · {getStepEvidenceText(step)}</small>
+                      <div className="query-stack">
+                        {queries.source && (
+                          <div>
+                            <span>Source Query</span>
+                            <code>{queries.source}</code>
+                          </div>
+                        )}
+                        {queries.alert && (
+                          <div>
+                            <span>Alert Query</span>
+                            <code>{queries.alert}</code>
+                          </div>
+                        )}
+                        {!hasQuery && (
+                          <div className="query-empty">
+                            <span>Query</span>
+                            <code>{executionStatus === "blocked" ? "Agent 실행 전 차단되어 ELK query가 수행되지 않았습니다." : "표시할 ELK query가 없습니다."}</code>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

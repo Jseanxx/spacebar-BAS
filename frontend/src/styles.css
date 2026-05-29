@@ -376,7 +376,8 @@ button {
 
 .secondary-button,
 .ghost-button,
-.run-button {
+.run-button,
+.danger-button {
   min-height: 40px;
   border-radius: 8px;
   padding: 0 13px;
@@ -410,9 +411,17 @@ button {
   min-width: 108px;
 }
 
+.danger-button {
+  border: 1px solid #dc2626;
+  background: #ffffff;
+  color: #b91c1c;
+  min-width: 96px;
+}
+
 .secondary-button:disabled,
 .ghost-button:disabled,
 .run-button:disabled,
+.danger-button:disabled,
 .queue-move-row button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
@@ -734,6 +743,12 @@ button {
   color: #101820;
   font-size: 30px;
   line-height: 1.12;
+}
+
+.stage-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .asset-map-card,
@@ -1323,7 +1338,9 @@ button {
     flex-direction: column;
   }
 
-  .run-button {
+  .stage-actions,
+  .run-button,
+  .danger-button {
     width: 100%;
   }
 

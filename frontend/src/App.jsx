@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import spacebarLogo from "./assets/spacebar-logo.png";
 import "./styles.css";
 
@@ -97,6 +97,7 @@ function getStatusLabel(status) {
     simulated: "시뮬레이션",
     failed: "실패",
     blocked: "차단",
+    cancelled: "취소됨",
     success: "성공",
   };
   return labels[status] || status || "대기";
@@ -224,8 +225,10 @@ export default function App() {
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedOperation, setSelectedOperation] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const cancelRequestedRef = useRef(false);
 
   async function fetchJson(path, options) {
     const response = await fetch(`${API_BASE}${path}`, options);
@@ -374,6 +377,9 @@ export default function App() {
   }, [library, campaign, campaignId, selectedIds]);
 
   const latestOperation = selectedOperation || operations[0] || null;
+  const canCancelLatestOperation = Boolean(
+    latestOperation?.operation_id && ["pending", "queued", "running"].includes(latestOperation.status),
+  );
   const latestRun = selectedRun || runs[0] || null;
   const operationSteps = normalizeList(latestOperation?.final_steps || latestOperation?.steps);
   const evidenceSteps = operationSteps.length > 0 ? operationSteps : normalizeList(latestRun?.steps);
@@ -513,6 +519,11 @@ export default function App() {
 
   async function pollOperation(operationId) {
     for (let attempt = 0; attempt < POLL_LIMIT; attempt += 1) {
+      if (cancelRequestedRef.current) {
+        await refreshRuntime();
+        return;
+      }
+
       const operation = await fetchJson(`/operations/${operationId}`);
       setSelectedOperation(operation);
 
@@ -522,7 +533,13 @@ export default function App() {
         return;
       }
 
-      if (["blocked", "failed", "cancelled"].includes(operation.status)) {
+      if (operation.status === "cancelled") {
+        setNotice("런 취소 요청이 반영되었습니다.");
+        await refreshRuntime();
+        return;
+      }
+
+      if (["blocked", "failed"].includes(operation.status)) {
         await refreshRuntime();
         throw new Error(`Operation ${operation.status}`);
       }
@@ -536,6 +553,7 @@ export default function App() {
 
   async function runQueue() {
     try {
+      cancelRequestedRef.current = false;
       setIsRunning(true);
       setError("");
 
@@ -571,6 +589,29 @@ export default function App() {
       setError(err.message);
     } finally {
       setIsRunning(false);
+    }
+  }
+
+  async function cancelOperation(operationId = latestOperation?.operation_id) {
+    if (!operationId) return;
+
+    try {
+      cancelRequestedRef.current = true;
+      setIsCancelling(true);
+      setError("");
+      setNotice("런 취소 요청 중...");
+
+      const response = await fetchJson(`/operations/${operationId}/cancel`, { method: "POST" });
+      const operation = response.operation || response;
+
+      setSelectedOperation(operation);
+      setIsRunning(false);
+      setNotice("런 취소 요청을 보냈습니다. 현재 실행 중인 step은 끝날 수 있습니다.");
+      await refreshRuntime();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsCancelling(false);
     }
   }
 
@@ -900,9 +941,19 @@ export default function App() {
             <span>Breach and Attack Simulation</span>
             <h1>Attack Map</h1>
           </div>
-          <button type="button" className="run-button" onClick={runQueue} disabled={isRunning || selectedSteps.length === 0}>
-            {isRunning ? "실행 중" : "Run"}
-          </button>
+          <div className="stage-actions">
+            <button type="button" className="run-button" onClick={runQueue} disabled={isRunning || selectedSteps.length === 0}>
+              {isRunning ? "실행 중" : "Run"}
+            </button>
+            <button
+              type="button"
+              className="danger-button"
+              onClick={() => cancelOperation()}
+              disabled={!canCancelLatestOperation || isCancelling}
+            >
+              {isCancelling ? "취소 중" : "Cancel"}
+            </button>
+          </div>
         </header>
 
         <section className="asset-map-card">

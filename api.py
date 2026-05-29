@@ -1747,6 +1747,13 @@ def submit_job_result(agent_id: str, job_id: str, request: JobResultRequest):
     if job.get("agent_id") != agent_id:
         raise HTTPException(status_code=403, detail="Job does not belong to this agent")
 
+    agent_path = get_agent_path(agent_id)
+    agent = read_json_file(agent_path, None)
+    if agent:
+        agent["status"] = "online"
+        agent["last_heartbeat_at"] = now_kst()
+        write_json_file(agent_path, agent)
+
     job["status"] = request.status
     job["finished_at"] = now_kst()
     job["execution_id"] = request.execution_id

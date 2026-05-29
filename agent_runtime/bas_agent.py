@@ -3,6 +3,7 @@ import argparse
 import os
 import sys
 import json
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -217,10 +218,31 @@ class BasAgent:
 
         return response.get("job")
 
+    def keep_heartbeat_during_job(self, stop_event):
+        """
+        Long-running attack jobs can exceed the controller's stale-agent window.
+        Keep sending heartbeats while a job is executing so the next queued step
+        is not incorrectly blocked as agent_offline.
+        """
+
+        while not stop_event.wait(self.interval_seconds):
+            try:
+                self.heartbeat()
+            except Exception as exc:
+                print(f"[!] Heartbeat during job failed: {exc}")
+
     def execute_job(self, job):
         job_id = job["job_id"]
 
         print(f"[+] Job received: {job_id}")
+
+        stop_heartbeat = threading.Event()
+        heartbeat_thread = threading.Thread(
+            target=self.keep_heartbeat_during_job,
+            args=(stop_heartbeat,),
+            daemon=True,
+        )
+        heartbeat_thread.start()
 
         try:
             execution_mode = job.get("execution_mode") or self.execution_mode
@@ -283,6 +305,9 @@ class BasAgent:
                 result=None,
                 error=str(exc),
             )
+        finally:
+            stop_heartbeat.set()
+            heartbeat_thread.join(timeout=2)
 
     def submit_result(self, job_id, status, execution_id, result, error):
         payload = {

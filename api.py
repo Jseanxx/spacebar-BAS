@@ -1,6 +1,9 @@
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 import json
+import os
+import time
 import uuid
 
 from fastapi import FastAPI, HTTPException, Response
@@ -8,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from bas.controller import run_campaign
-from bas.elk_checker import resolve_query
+from bas.elk_checker import check_elk, resolve_query
 from bas.loader import load_campaign, load_target
 from bas.report_builder import REPORTS_DIR, build_report_from_operation, build_report_from_run
 
@@ -815,6 +818,87 @@ def attach_operation_report(operation):
     return operation
 
 
+def get_operation_step_evidence(step):
+    module_result = step.get("module_result") or {}
+    result_step = step.get("result_step") or {}
+    result_module = result_step.get("module_result") or {}
+
+    return {
+        "evidence_key": module_result.get("evidence_key") or result_module.get("evidence_key"),
+        "target_id": step.get("target_id") or result_step.get("target_id"),
+    }
+
+
+def should_defer_check_step(step):
+    if step.get("status") in ("simulated", "blocked", "failed"):
+        return False
+
+    evidence = get_operation_step_evidence(step)
+    return bool(evidence["evidence_key"] and evidence["target_id"])
+
+
+def run_step_elk_check(step):
+    evidence = get_operation_step_evidence(step)
+    target = load_target(evidence["target_id"])
+    return check_elk(target, evidence["evidence_key"])
+
+
+def attach_deferred_elk_checks(operation):
+    if operation.get("execution_mode") == "simulation":
+        return operation
+
+    steps_to_check = [
+        step
+        for step in operation.get("final_steps", [])
+        if should_defer_check_step(step)
+    ]
+    if not steps_to_check:
+        return operation
+
+    if all((step.get("elk_check") or {}).get("checked") for step in steps_to_check):
+        return operation
+
+    wait_seconds = int(os.environ.get(
+        "BAS_OPERATION_ELK_WAIT_SECONDS",
+        os.environ.get("BAS_STEP_ALERT_WAIT_SECONDS", "0"),
+    ) or "0")
+
+    operation["elk_validation_status"] = "waiting" if wait_seconds > 0 else "running"
+    operation["elk_validation_strategy"] = "deferred_parallel"
+    operation["elk_validation_started_at"] = now_kst()
+    write_operation(operation)
+
+    if wait_seconds > 0:
+        time.sleep(wait_seconds)
+
+    max_workers = int(os.environ.get("BAS_ELK_PARALLEL_WORKERS", "8") or "8")
+    max_workers = max(1, min(max_workers, len(steps_to_check)))
+    step_indices = {id(step): index for index, step in enumerate(operation.get("final_steps", []))}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_by_index = {
+            executor.submit(run_step_elk_check, step): step_indices[id(step)]
+            for step in steps_to_check
+        }
+
+        for future in as_completed(future_by_index):
+            step_index = future_by_index[future]
+            try:
+                operation["final_steps"][step_index]["elk_check"] = future.result()
+            except Exception as exc:
+                operation["final_steps"][step_index]["elk_check"] = {
+                    "checked": False,
+                    "matched": None,
+                    "event_count": None,
+                    "sample_events": [],
+                    "message": f"Deferred ELK check failed: {exc}",
+                }
+
+    operation["elk_validation_status"] = "completed"
+    operation["elk_validation_finished_at"] = now_kst()
+    return operation
+
+
 def build_operation_summary(final_steps):
     summary = {
         "total": len(final_steps),
@@ -877,6 +961,7 @@ def create_operation_job(operation, step_entry):
         ],
         "include_normal": False,
         "execution_mode": operation.get("execution_mode"),
+        "defer_elk_checks": True,
         "status": "queued",
         "created_at": now_kst(),
         "started_at": None,
@@ -928,6 +1013,7 @@ def enqueue_next_operation_job(operation):
             operation["status"] = "simulated" if summary["simulated"] == summary["total"] else "completed"
             operation["finished_at"] = now_kst()
             operation["summary"] = summary
+            operation = attach_deferred_elk_checks(operation)
             operation = attach_operation_report(operation)
             write_operation(operation)
             return None
@@ -969,6 +1055,7 @@ def sync_operation_result_fields(step_entry, job):
         step_entry["elk_check"] = result_step.get("elk_check")
         step_entry["module_result"] = result_step.get("module_result")
         step_entry["result_step"] = result_step
+        step_entry["target_id"] = result_step.get("target_id")
 
     if step_entry.get("status") == "simulated" and not step_entry.get("simulation_reason"):
         step_entry["simulation_reason"] = result_step.get("module_result", {}).get("message") or "module_simulated"
@@ -986,6 +1073,7 @@ def finalize_operation_if_done(operation):
         else:
             operation["status"] = "completed"
         operation["finished_at"] = now_kst()
+        operation = attach_deferred_elk_checks(operation)
         operation = attach_operation_report(operation)
         write_operation(operation)
 

@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+import os
 import sys
 import json
 import time
@@ -198,13 +199,23 @@ class BasAgent:
                     f"Unsupported execution_mode: {execution_mode}. "
                     "Allowed modes: simulation, real."
                 )
-            result, output_path = run_campaign(
-                campaign_id=job["campaign_id"],
-                selected_orders=job.get("selected_orders"),
-                selected_steps=job.get("selected_steps"),
-                include_normal=job.get("include_normal", True),
-                execution_mode=execution_mode,
-            )
+            previous_defer_elk = os.environ.get("BAS_DEFER_ELK_CHECKS")
+            if job.get("defer_elk_checks", False):
+                os.environ["BAS_DEFER_ELK_CHECKS"] = "1"
+
+            try:
+                result, output_path = run_campaign(
+                    campaign_id=job["campaign_id"],
+                    selected_orders=job.get("selected_orders"),
+                    selected_steps=job.get("selected_steps"),
+                    include_normal=job.get("include_normal", True),
+                    execution_mode=execution_mode,
+                )
+            finally:
+                if previous_defer_elk is None:
+                    os.environ.pop("BAS_DEFER_ELK_CHECKS", None)
+                else:
+                    os.environ["BAS_DEFER_ELK_CHECKS"] = previous_defer_elk
 
             print(f"[+] Job completed: {job_id}")
             print(f"[+] Result saved: {output_path}")

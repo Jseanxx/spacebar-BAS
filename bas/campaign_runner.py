@@ -288,13 +288,14 @@ class CampaignRunner:
 
         evidence_key = module_result.get("evidence_key")
 
+        defer_elk_checks = os.environ.get("BAS_DEFER_ELK_CHECKS", "").lower() in ("1", "true", "yes")
         wait_seconds = int(os.environ.get("BAS_STEP_ALERT_WAIT_SECONDS", "0") or "0")
-        if wait_seconds > 0 and status not in ("simulated", "blocked", "failed"):
+        if not defer_elk_checks and wait_seconds > 0 and status not in ("simulated", "blocked", "failed"):
             time.sleep(wait_seconds)
 
         # simulation은 실제 공격 행위가 없으므로 과거 로그와 섞이지 않게 ELK 검증을 생략합니다.
         elk_result = None
-        if evidence_key and status not in ("simulated", "blocked", "failed"):
+        if evidence_key and not defer_elk_checks and status not in ("simulated", "blocked", "failed"):
             elk_result = check_elk(target, evidence_key)
 
         return {

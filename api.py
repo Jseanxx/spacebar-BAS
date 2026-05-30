@@ -1058,9 +1058,6 @@ def get_primary_job_step(job):
 
 
 def resolve_operation_step_status(job):
-    if job.get("status") != "completed":
-        return "failed"
-
     result_step = get_primary_job_step(job)
     step_status = result_step.get("status")
 
@@ -1069,6 +1066,9 @@ def resolve_operation_step_status(job):
 
     if step_status in ("manual_required", "not_supported"):
         return "simulated" if job.get("execution_mode") == "simulation" else "blocked"
+
+    if job.get("status") != "completed":
+        return "failed"
 
     return "success"
 
@@ -1130,10 +1130,19 @@ def update_operation_from_job_result(job):
     if not step_entry:
         return operation
 
-    step_entry["status"] = resolve_operation_step_status(job)
+    if (
+        step_entry.get("status") == "success"
+        and job.get("status") == "failed"
+        and not job.get("result")
+        and str(job.get("error") or "").lower() == "timed out"
+    ):
+        return operation
+
+    resolved_status = resolve_operation_step_status(job)
+    step_entry["status"] = resolved_status
     step_entry["finished_at"] = job.get("finished_at")
     step_entry["execution_id"] = job.get("execution_id")
-    step_entry["error"] = job.get("error")
+    step_entry["error"] = job.get("error") if resolved_status == "failed" else None
     step_entry["result"] = job.get("result")
     sync_operation_result_fields(step_entry, job)
     operation["sub_jobs"] = merge_unique_lists(operation.get("sub_jobs"), [job.get("job_id")])
@@ -1753,6 +1762,20 @@ def submit_job_result(agent_id: str, job_id: str, request: JobResultRequest):
         agent["status"] = "online"
         agent["last_heartbeat_at"] = now_kst()
         write_json_file(agent_path, agent)
+
+    if (
+        request.status == "failed"
+        and not request.result
+        and str(request.error or "").lower() == "timed out"
+        and job.get("status") == "completed"
+        and job.get("result")
+    ):
+        operation = load_operation(job.get("operation_id")) if job.get("operation_id") else None
+        return {
+            "message": "late timeout result ignored",
+            "job": job,
+            "operation": operation,
+        }
 
     job["status"] = request.status
     job["finished_at"] = now_kst()

@@ -111,7 +111,8 @@ def request_json(method, url, payload=None):
         method=method,
     )
 
-    with urllib.request.urlopen(request, timeout=10) as response:
+    timeout = int(os.environ.get("BAS_CONTROLLER_REQUEST_TIMEOUT", "90") or "90")
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         response_body = response.read().decode("utf-8")
 
     if not response_body:

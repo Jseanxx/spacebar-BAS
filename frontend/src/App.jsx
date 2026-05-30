@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import spacebarLogo from "./assets/spacebar-logo.png";
 import "./styles.css";
 
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 const POLL_INTERVAL_MS = 900;
 const POLL_LIMIT = 70;
 const DASHBOARD_CACHE_KEY = "bas-dashboard-cache-v1";
@@ -309,11 +309,11 @@ function getSafetyProfile(step) {
   );
   const warningRequired = impact === "High" || risk === "high" || risk === "critical" || gates.length > 1 ? "필요" : "불필요";
   const executionRecommendation = highImpact || networkHeavy
-    ? "운영환경 금지"
+    ? "위험 테크닉"
     : mediumImpact
       ? "테스트환경 권장"
       : "안전";
-  const className = executionRecommendation === "운영환경 금지"
+  const className = executionRecommendation === "위험 테크닉"
     ? "danger"
     : executionRecommendation === "테스트환경 권장"
       ? "warn"
@@ -340,7 +340,7 @@ function getImpactLabel(value) {
 
 function getRecommendationShort(value) {
   return {
-    "운영환경 금지": "금지",
+    "위험 테크닉": "위험",
     "테스트환경 권장": "주의",
     "안전": "안전",
   }[value] || value;
@@ -403,6 +403,7 @@ export default function App() {
   const [executionMode, setExecutionMode] = useState("real");
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedOperation, setSelectedOperation] = useState(null);
+  const [expandedEvidenceKey, setExpandedEvidenceKey] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [notice, setNotice] = useState("");
@@ -643,14 +644,20 @@ export default function App() {
   );
   const latestRun = selectedRun || runs[0] || null;
   const operationSteps = normalizeList(latestOperation?.final_steps || latestOperation?.steps);
+  const shouldShowOperationTimeline = Boolean(
+    selectedOperation || (latestOperation?.operation_id && ["pending", "queued", "running"].includes(latestOperation.status)),
+  );
+  const timelineOperationSteps = shouldShowOperationTimeline ? operationSteps : [];
   const evidenceSteps = operationSteps.length > 0 ? operationSteps : normalizeList(latestRun?.steps);
-  const visibleSteps = operationSteps.length > 0 ? operationSteps : selectedSteps;
-  const runningStep = operationSteps.find((step) => step.status === "running")
-    || operationSteps.find((step) => step.status === "queued")
+  const visibleSteps = timelineOperationSteps.length > 0 ? timelineOperationSteps : selectedSteps;
+  const runningStep = timelineOperationSteps.find((step) => step.status === "running")
+    || timelineOperationSteps.find((step) => step.status === "queued")
     || null;
   const activeAssetId = runningStep ? getStepAssetId(runningStep) : (isRunning && selectedSteps[0] ? getStepAssetId(selectedSteps[0]) : "");
-  const completedCount = operationSteps.filter((step) => ["completed", "success", "simulated"].includes(step.status)).length;
-  const totalOperationSteps = latestOperation?.summary?.total || operationSteps.length || selectedSteps.length;
+  const completedCount = timelineOperationSteps.filter((step) => ["completed", "success", "simulated"].includes(step.status)).length;
+  const totalOperationSteps = shouldShowOperationTimeline
+    ? (latestOperation?.summary?.total || timelineOperationSteps.length)
+    : selectedSteps.length;
   const requiredAssets = assets.filter((asset) => asset.agent_required);
   const onlineRequiredAssets = requiredAssets.filter((asset) => asset.agentStatus === "online");
   const detectionCounts = evidenceSteps.reduce((counts, step) => {
@@ -675,6 +682,10 @@ export default function App() {
     step.elk_check?.checked || step.elk_check?.alert_check?.checked
   ));
   const elkStatus = elkVerified ? "verified" : (elkConfigured ? "configured" : "missing");
+
+  useEffect(() => {
+    setExpandedEvidenceKey("");
+  }, [selectedOperationKey, selectedRun?.execution_id]);
 
   const filteredLibrary = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -1103,7 +1114,7 @@ export default function App() {
                 <span>추정 지연 {safetySummary.maxNetworkImpactPercent}%</span>
               </div>
               <div className="safety-counts">
-                <b className="danger">금지 {safetySummary.danger}</b>
+                <b className="danger">위험 {safetySummary.danger}</b>
                 <b className="warn">주의 {safetySummary.warn}</b>
                 <b className="safe">안전 {safetySummary.safe}</b>
               </div>
@@ -1421,7 +1432,7 @@ export default function App() {
 
             {assets.map((asset) => {
               const isActive = activeAssetId === asset.asset_id;
-              const isCompleted = operationSteps.some((step) => getStepAssetId(step) === asset.asset_id && ["completed", "success", "simulated"].includes(step.status));
+              const isCompleted = timelineOperationSteps.some((step) => getStepAssetId(step) === asset.asset_id && ["completed", "success", "simulated"].includes(step.status));
               const logStatus = getLogCollectionStatus(asset);
               return (
                 <button
@@ -1526,50 +1537,64 @@ export default function App() {
               )}
             </div>
             <div className="evidence-feed">
-              {evidenceSteps.map((step) => {
+              {evidenceSteps.map((step, index) => {
                 const detectionStatus = getDetectionStatus(step);
                 const executionStatus = step.execution_status || step.status;
                 const queries = getStepQueries(step);
                 const hasQuery = queries.source || queries.alert;
                 const coverageFields = getCoverageFields(step, detectionStatus);
+                const evidenceKey = step.job_id || step.execution_id || `${step.order}-${step.technique_id || index}`;
+                const isExpanded = expandedEvidenceKey === evidenceKey;
                 return (
-                  <div key={`${step.order}-${step.technique_id}`} className="evidence-row">
-                    <div className="result-pill-stack">
-                      <span className={`execution-pill ${executionStatus}`}>{getExecutionLabel(executionStatus)}</span>
-                      <span className={`detection-pill ${detectionStatus}`}>{getDetectionLabel(detectionStatus)}</span>
-                    </div>
-                    <div>
-                      <strong>{getTechniqueLabel(step)}</strong>
-                      <small>{getStepAssetId(step).toUpperCase()} · {getStepEvidenceText(step)}</small>
-                      <div className="coverage-stack">
-                        {coverageFields.map(([label, value]) => (
-                          <div key={`${step.order}-${label}`}>
-                            <span>{label}</span>
-                            <strong>{value || "-"}</strong>
-                          </div>
-                        ))}
+                  <div key={evidenceKey} className={`evidence-row ${isExpanded ? "expanded" : ""}`}>
+                    <button
+                      type="button"
+                      className="evidence-summary-button"
+                      onClick={() => setExpandedEvidenceKey((current) => (current === evidenceKey ? "" : evidenceKey))}
+                      aria-expanded={isExpanded}
+                    >
+                      <div className="result-pill-stack">
+                        <span className={`execution-pill ${executionStatus}`}>{getExecutionLabel(executionStatus)}</span>
+                        <span className={`detection-pill ${detectionStatus}`}>{getDetectionLabel(detectionStatus)}</span>
                       </div>
-                      <div className="query-stack">
-                        {queries.source && (
-                          <div>
-                            <span>Source Query</span>
-                            <code>{queries.source}</code>
-                          </div>
-                        )}
-                        {queries.alert && (
-                          <div>
-                            <span>Alert Query</span>
-                            <code>{queries.alert}</code>
-                          </div>
-                        )}
-                        {!hasQuery && (
-                          <div className="query-empty">
-                            <span>Query</span>
-                            <code>{executionStatus === "blocked" ? "Agent 실행 전 차단되어 ELK query가 수행되지 않았습니다." : "표시할 ELK query가 없습니다."}</code>
-                          </div>
-                        )}
+                      <div className="evidence-summary-content">
+                        <strong>{getTechniqueLabel(step)}</strong>
+                        <small>{getStepAssetId(step).toUpperCase()} · {getStepEvidenceText(step)}</small>
                       </div>
-                    </div>
+                      <span className="evidence-toggle">{isExpanded ? "접기" : "상세"}</span>
+                    </button>
+                    {isExpanded && (
+                      <div className="evidence-details">
+                        <div className="coverage-stack">
+                          {coverageFields.map(([label, value]) => (
+                            <div key={`${step.order}-${label}`}>
+                              <span>{label}</span>
+                              <strong>{value || "-"}</strong>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="query-stack">
+                          {queries.source && (
+                            <div>
+                              <span>Source Query</span>
+                              <code>{queries.source}</code>
+                            </div>
+                          )}
+                          {queries.alert && (
+                            <div>
+                              <span>Alert Query</span>
+                              <code>{queries.alert}</code>
+                            </div>
+                          )}
+                          {!hasQuery && (
+                            <div className="query-empty">
+                              <span>Query</span>
+                              <code>{executionStatus === "blocked" ? "Agent 실행 전 차단되어 ELK query가 수행되지 않았습니다." : "표시할 ELK query가 없습니다."}</code>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

@@ -1394,6 +1394,8 @@ button {
 
 .artifact-link.compact {
   min-height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
 }
 
 .execution-meter,
@@ -1438,15 +1440,15 @@ button {
 
 .result-overview {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
   margin-bottom: 10px;
 }
 
 .result-overview > div {
   display: grid;
-  gap: 6px;
-  padding: 12px;
+  gap: 5px;
+  padding: 10px;
   border: 1px solid #d8e2ec;
   border-radius: 8px;
   background: #f8fafc;
@@ -1540,21 +1542,73 @@ button {
 }
 
 .evidence-row {
-  grid-template-columns: 104px minmax(0, 1fr);
-  align-items: start;
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 0;
+}
+
+.evidence-row.expanded {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.evidence-summary-button {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+
+.evidence-summary-button:hover .evidence-summary-content strong {
+  color: #0f766e;
+}
+
+.evidence-summary-content {
+  min-width: 0;
+}
+
+.evidence-toggle {
+  min-width: 48px;
+  justify-self: end;
+  padding: 5px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.evidence-row.expanded .evidence-toggle {
+  border-color: #0f766e;
+  color: #0f766e;
+}
+
+.evidence-details {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
 }
 
 .query-stack {
   display: grid;
   gap: 7px;
-  margin-top: 10px;
 }
 
 .coverage-stack {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
-  margin-top: 10px;
 }
 
 .coverage-stack > div {
@@ -1828,7 +1882,8 @@ button {
 
   .summary-stack,
   .result-meter,
-  .evidence-row {
+  .evidence-summary-button,
+  .coverage-stack {
     grid-template-columns: 1fr;
   }
 }

@@ -227,33 +227,33 @@ log_queries:
   non_application_tcp_connection: >-
     winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:3 AND winlog.event_data.Initiated:"true" AND NOT winlog.event_data.DestinationIp:("10.0.10.77" OR "10.0.4.216" OR "10.0.13.205" OR "10.0.4.30" OR "127.0.0.1" OR "::1" OR "0:0:0:0:0:0:0:1" OR fe80*) AND NOT winlog.event_data.DestinationPort:(80 OR 443) AND NOT winlog.event_data.Image:("System" OR "C:\\Windows\\System32\\lsass.exe" OR "C:\\Windows\\ADWS\\Microsoft.ActiveDirectory.WebServices.exe" OR "C:\\Windows\\System32\\svchost.exe" OR "C:\\Windows\\System32\\spoolsv.exe" OR "C:\\Windows\\System32\\dns.exe" OR "C:\\Windows\\System32\\dfsrs.exe" OR "C:\\Program Files\\Windows Defender\\MsMpEng.exe" OR "C:\\Windows\\System32\\wbem\\WmiPrvSE.exe" OR *\\winlogbeat.exe OR *\\elastic-agent.exe OR *\\chrome.exe OR *\\msedge.exe OR *\\iexplore.exe OR *\\firefox.exe OR *\\teams.exe OR *\\slack.exe OR *\\zoom.exe)
   domain_account_discovery: >-
-    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:1 AND winlog.event_data.Image:(*net.exe OR *net1.exe OR *wmic.exe OR *nltest.exe OR *dsquery.exe OR *powershell.exe) AND winlog.event_data.CommandLine:(*domain* OR *group* OR *useraccount* OR *enterprise_admins*) AND NOT winlog.event_data.User:("NT AUTHORITY\\SYSTEM" OR "MYCOMPANY\\user_admin") AND NOT winlog.event_data.ParentImage:(*devenv.exe OR *code.exe)
+    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:1 AND winlog.event_data.Image:(*net.exe OR *net1.exe OR *wmic.exe OR *nltest.exe OR *dsquery.exe OR *powershell.exe) AND winlog.event_data.CommandLine:(*domain* OR *group* OR *useraccount* OR *enterprise_admins*) AND NOT winlog.event_data.ParentImage:(*devenv.exe OR *code.exe)
   remote_system_discovery: >-
-    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:1 AND winlog.event_data.Image:(*nltest.exe OR *nslookup.exe OR *net.exe OR *net1.exe OR *ping.exe OR *arp.exe) AND winlog.event_data.CommandLine:(*dsgetdc* OR *dclist* OR *domain_trusts* OR *view* OR *type=srv* OR *nslookup *) AND NOT winlog.event_data.User:("NT AUTHORITY\\SYSTEM" OR "MYCOMPANY\\admin_user") AND NOT winlog.event_data.ParentImage:(*devenv.exe OR *code.exe)
+    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:1 AND winlog.event_data.Image:(*nltest.exe OR *nslookup.exe OR *net.exe OR *net1.exe OR *ping.exe OR *arp.exe) AND winlog.event_data.CommandLine:(*dsgetdc* OR *dclist* OR *domain_trusts* OR *view* OR *type=srv* OR *nslookup *) AND NOT winlog.event_data.ParentImage:(*devenv.exe OR *code.exe)
   system_owner_user_discovery: >-
-    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:1 AND winlog.event_data.Image:(*whoami.exe OR *quser.exe OR *qwinsta.exe) AND winlog.event_data.CommandLine:(*whoami* OR *quser* OR *qwinsta*) AND NOT winlog.event_data.User:("NT AUTHORITY\\SYSTEM" OR "MYCOMPANY\\user_admin") AND NOT winlog.event_data.ParentImage:(*devenv.exe OR *code.exe)
+    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:1 AND winlog.event_data.Image:(*whoami.exe OR *quser.exe OR *qwinsta.exe) AND winlog.event_data.CommandLine:(*whoami* OR *quser* OR *qwinsta*) AND NOT winlog.event_data.ParentImage:(*devenv.exe OR *code.exe)
   network_share_discovery: >-
     host.name:"PC01.mycompany.local" AND event.code:"1" AND (winlog.event_data.CommandLine:*"net view"* OR winlog.event_data.CommandLine:*"\\\\FS01\\share"* OR winlog.event_data.CommandLine:*"\\\\FS01"*)
   permission_groups_discovery: >-
     host.name:"PC01.mycompany.local" AND event.code:"1" AND (winlog.event_data.Image:*net.exe OR winlog.event_data.Image:*net1.exe) AND (winlog.event_data.CommandLine:*localgroup* OR winlog.event_data.CommandLine:*"Domain Admins"* OR winlog.event_data.CommandLine:*Administrators*)
   kerberoasting_tgs_request: >-
-    host.name:"DC01.mycompany.local" AND event.code:"4769" AND (winlog.event_data.ServiceName:*svc_file* OR winlog.event_data.ServiceName:*FS01*)
+    host.name:"DC01.mycompany.local" AND event.code:"4769" AND (winlog.event_data.TargetUserName:*svc_file* OR winlog.event_data.ServiceName:*svc_file* OR winlog.event_data.ServiceName:*FS01*)
   winrm_remote_execution: >-
     winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND event.code:"1" AND host.name:"FS01.mycompany.local" AND winlog.event_data.Image:"C:\\Windows\\System32\\wsmprovhost.exe" AND winlog.event_data.User:"MYCOMPANY\\svc_file"
   powershell_over_winrm: >-
-    host.name:"FS01.mycompany.local" AND event.code:"1" AND winlog.event_data.Image:*powershell.exe AND winlog.event_data.ParentImage:*wsmprovhost.exe
+    host.name:"FS01.mycompany.local" AND event.code:"1" AND winlog.event_data.Image:*powershell.exe AND winlog.event_data.CommandLine:(*whoami* OR *Get-Date* OR *Invoke-Command* OR *PowerShell*)
   ingress_tool_transfer: >-
-    host.name:"FS01.mycompany.local" AND event.code:"4104" AND (message:*Invoke-WebRequest* OR message:*iwr* OR message:*DownloadFile* OR message:*Start-BitsTransfer* OR message:*curl* OR message:*wget*)
+    host.name:"FS01.mycompany.local" AND ((event.code:"4104" AND (message:*Invoke-WebRequest* OR message:*iwr* OR message:*DownloadFile* OR message:*Start-BitsTransfer* OR message:*curl* OR message:*wget*)) OR (event.code:"1" AND winlog.event_data.CommandLine:(*Invoke-WebRequest* OR *iwr* OR *DownloadFile* OR *Start-BitsTransfer* OR *curl* OR *wget*)))
   lsass_memory_dump: >-
-    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND event.code:"10" AND host.name:"FS01.mycompany.local" AND winlog.event_data.TargetImage:*lsass.exe AND winlog.event_data.SourceImage:*rundll32.exe AND winlog.event_data.CallTrace:*comsvcs.dll* AND (winlog.event_data.GrantedAccess:"0x1410" OR winlog.event_data.GrantedAccess:"0x1F0FFF")
+    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND event.code:"10" AND host.name:"FS01.mycompany.local" AND winlog.event_data.TargetImage:*lsass.exe AND winlog.event_data.SourceImage:*rundll32.exe AND winlog.event_data.CallTrace:*comsvcs.dll* AND (winlog.event_data.GrantedAccess:"0x1410" OR winlog.event_data.GrantedAccess:"0x1F0FFF" OR winlog.event_data.GrantedAccess:"0x1fffff")
   rundll32_comsvcs_proxy: >-
     host.name:"FS01.mycompany.local" AND event.code:"1" AND winlog.event_data.Image:*rundll32.exe AND winlog.event_data.CommandLine:*comsvcs.dll* AND winlog.event_data.CommandLine:*MiniDump*
   local_data_staging: >-
-    host.name:"FS01.mycompany.local" AND event.code:"11" AND winlog.event_data.TargetFilename:*\\share\\01_Public\\* AND winlog.event_data.User:"MYCOMPANY\\svc_file"
+    host.name:"FS01.mycompany.local" AND event.code:"11" AND winlog.event_data.TargetFilename:(*\\share\\01_Public\\* OR *\\01_Public\\* OR *data.zip OR *sys_evnt_log_20260508.log OR *tmp_bak_0508.dat)
   exfiltration_over_c2: >-
     event.code:("3" OR "5156") AND host.name:("FS01.mycompany.local" OR "PC01.mycompany.local") AND (winlog.event_data.Image:(*powershell.exe OR *cmd.exe OR "<unknown process>") OR winlog.event_data.Application:(*powershell.exe OR *cmd.exe)) AND NOT (winlog.event_data.DestinationIp:10.* OR winlog.event_data.DestAddress:10.* OR winlog.event_data.DestinationIp:127.0.0.1 OR winlog.event_data.DestAddress:127.0.0.1 OR winlog.event_data.DestinationIp:169.254.* OR winlog.event_data.DestAddress:169.254.*)
   masquerading_legitimate_name: >-
-    host.name:"FS01.mycompany.local" AND event.code:"11" AND (winlog.event_data.TargetFilename:*sys_evnt_log_20260508.log OR winlog.event_data.TargetFilename:*tmp_bak_0508.dat)
+    host.name:"FS01.mycompany.local" AND ((event.code:"11" AND winlog.event_data.TargetFilename:*01_Public*) OR (event.code:"1" AND winlog.event_data.Image:*powershell.exe AND winlog.event_data.CommandLine:*Out-File* AND winlog.event_data.CommandLine:*01_Public*))
   archive_collected_data: >-
     host.name:"FS01.mycompany.local" AND ((event.code:"4104" AND message:*Compress-Archive*) OR (event.code:"1" AND winlog.event_data.CommandLine:*Compress-Archive*))
   dcsync_replication: >-
@@ -268,26 +268,26 @@ log_queries:
     host.name:"DC01.mycompany.local" AND ((event.code:"4662" AND winlog.event_data.Properties:*1131f6ad-9c07-11d1-f79f-00c04fc2dcd2*) OR (event.code:"7045" AND winlog.event_data.ImagePath:(*\\Windows\\*.exe OR *systemroot%\\*.exe)))
 
 alert_queries:
-  user_execution_malicious_file: 'kibana.alert.rule.rule_id:"sb-ad-t1204-002-user-execution-malicious-file"'
-  windows_command_shell: 'kibana.alert.rule.rule_id:"e3a5acc7-5890-4cd7-9a5b-3437d9960a6d"'
-  non_application_tcp_connection: 'kibana.alert.rule.rule_id:"81a2cf6c-eb55-4027-8f3f-f7fcb86248fa"'
-  domain_account_discovery: 'kibana.alert.rule.rule_id:"4d9f20c5-7c72-4ffa-a8d2-48f17fa5c28c"'
-  remote_system_discovery: 'kibana.alert.rule.rule_id:"c12b84b0-8576-4a11-861e-03dd7eb37357"'
-  system_owner_user_discovery: 'kibana.alert.rule.rule_id:"f635d952-9b29-4b7a-9670-ac7999593a25"'
-  network_share_discovery: 'kibana.alert.rule.rule_id:"sb-ad-t1135-network-share-discovery"'
-  permission_groups_discovery: 'kibana.alert.rule.rule_id:"sb-ad-t1069-permission-groups-discovery"'
-  kerberoasting_tgs_request: 'kibana.alert.rule.rule_id:"sb-ad-t1558-003-kerberoasting-tgs-request"'
-  winrm_remote_execution: 'kibana.alert.rule.rule_id:"359665d4-2915-44c8-b780-6131add0dbd2"'
-  powershell_over_winrm: 'kibana.alert.rule.rule_id:"0c3dc646-795b-47c8-bf0e-cba36b486f9d"'
-  ingress_tool_transfer: 'kibana.alert.rule.rule_id:"15fd2fe4-9377-4542-90e8-5f10ffe56f2a"'
-  lsass_memory_dump: 'kibana.alert.rule.rule_id:"d2e83ba8-4531-4032-9075-094808dd7bb5"'
-  rundll32_comsvcs_proxy: 'kibana.alert.rule.rule_id:"sb-ad-t1218-011-rundll32-comsvcs-proxy"'
-  local_data_staging: 'kibana.alert.rule.rule_id:"sb-ad-t1074-001-local-data-staging"'
-  exfiltration_over_c2: 'kibana.alert.rule.rule_id:"sb-ad-t1041-exfiltration-over-c2"'
-  masquerading_legitimate_name: 'kibana.alert.rule.rule_id:"sb-ad-t1036-005-masquerading-legitimate-name"'
-  archive_collected_data: 'kibana.alert.rule.rule_id:"sb-ad-t1560-001-archive-collected-data"'
-  dcsync_replication: 'kibana.alert.rule.rule_id:"sb-ad-t1003-006-dcsync-replication"'
-  golden_ticket_service_ticket: 'kibana.alert.rule.rule_id:"sb-ad-t1558-001-golden-ticket-service-ticket"'
-  valid_domain_account_remote_logon: 'kibana.alert.rule.rule_id:"sb-ad-t1078-002-valid-domain-account-remote-logon"'
-  service_execution: 'kibana.alert.rule.rule_id:"sb-ad-t1569-002-service-execution"'
-  ntds_dump: 'kibana.alert.rule.rule_id:"sb-ad-t1003-003-ntds-dump"'
+  user_execution_malicious_file: 'kibana.alert.rule.name:"01.T1204.002" OR kibana.alert.rule.tags:"T1204.002"'
+  windows_command_shell: 'kibana.alert.rule.name:"02.T1059.003" OR kibana.alert.rule.tags:"T1059.003"'
+  non_application_tcp_connection: 'kibana.alert.rule.name:"03.T1095" OR kibana.alert.rule.tags:"T1095"'
+  domain_account_discovery: 'kibana.alert.rule.name:"04.T1087.002" OR kibana.alert.rule.tags:"T1087.002"'
+  remote_system_discovery: 'kibana.alert.rule.name:"05.T1018" OR kibana.alert.rule.tags:"T1018"'
+  system_owner_user_discovery: 'kibana.alert.rule.name:"06.T1033" OR kibana.alert.rule.tags:"T1033"'
+  network_share_discovery: 'kibana.alert.rule.name:"07.T1135" OR kibana.alert.rule.tags:"T1135"'
+  permission_groups_discovery: 'kibana.alert.rule.name:"08.T1069" OR kibana.alert.rule.tags:"T1069"'
+  kerberoasting_tgs_request: 'kibana.alert.rule.name:"09.T1558.003" OR kibana.alert.rule.tags:"T1558.003"'
+  winrm_remote_execution: 'kibana.alert.rule.name:"10.T1021.006" OR kibana.alert.rule.tags:"T1021.006"'
+  powershell_over_winrm: 'kibana.alert.rule.name:"11.T1059.001" OR kibana.alert.rule.tags:"T1059.001"'
+  ingress_tool_transfer: 'kibana.alert.rule.name:"12.T1105" OR kibana.alert.rule.tags:"T1105"'
+  lsass_memory_dump: 'kibana.alert.rule.name:"13.T1003.001" OR kibana.alert.rule.tags:"T1003.001"'
+  rundll32_comsvcs_proxy: 'kibana.alert.rule.name:"14.T1218.011" OR kibana.alert.rule.tags:"T1218.011"'
+  local_data_staging: 'kibana.alert.rule.name:"15.T1074.001" OR kibana.alert.rule.tags:"T1074.001"'
+  exfiltration_over_c2: 'kibana.alert.rule.name:"16.T1041" OR kibana.alert.rule.tags:"T1041"'
+  masquerading_legitimate_name: 'kibana.alert.rule.name:"17.T1036.005" OR kibana.alert.rule.tags:"T1036.005"'
+  archive_collected_data: 'kibana.alert.rule.name:"18.T1560.001" OR kibana.alert.rule.tags:"T1560.001"'
+  dcsync_replication: 'kibana.alert.rule.name:"19.T1003.006" OR kibana.alert.rule.tags:"T1003.006"'
+  golden_ticket_service_ticket: 'kibana.alert.rule.name:"20.T1558.001" OR kibana.alert.rule.tags:"T1558.001"'
+  valid_domain_account_remote_logon: 'kibana.alert.rule.name:"21.T1078.002" OR kibana.alert.rule.tags:"T1078.002"'
+  service_execution: 'kibana.alert.rule.name:"22.T1569.002" OR kibana.alert.rule.tags:"T1569.002"'
+  ntds_dump: 'kibana.alert.rule.name:"23.T1003.003" OR kibana.alert.rule.tags:"T1003.003"'

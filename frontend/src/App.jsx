@@ -5,6 +5,7 @@ import "./styles.css";
 const API_BASE = "http://127.0.0.1:8000";
 const POLL_INTERVAL_MS = 900;
 const POLL_LIMIT = 70;
+const DASHBOARD_CACHE_KEY = "bas-dashboard-cache-v1";
 
 const PANELS = [
   { id: "overview", label: "Summary", hint: "자산과 상태" },
@@ -31,6 +32,27 @@ const ASSET_FALLBACKS = [
 
 function normalizeList(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function readDashboardCache() {
+  try {
+    return JSON.parse(window.localStorage.getItem(DASHBOARD_CACHE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function writeDashboardCache(partial) {
+  try {
+    const current = readDashboardCache();
+    window.localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify({
+      ...current,
+      ...partial,
+      cached_at: new Date().toISOString(),
+    }));
+  } catch {
+    // Cache is a convenience for offline viewing; ignore storage failures.
+  }
 }
 
 function getStepRole(step) {
@@ -315,6 +337,23 @@ function summarizeSafetyProfiles(steps) {
   };
 }
 
+function summarizeStepStatuses(steps) {
+  return normalizeList(steps).reduce((summary, step) => {
+    const status = step?.status || step?.execution_status || "unknown";
+    return {
+      ...summary,
+      total: summary.total + 1,
+      [status]: (summary[status] || 0) + 1,
+    };
+  }, { total: 0 });
+}
+
+function hasSuccessfulStep(item) {
+  return normalizeList(item?.steps || item?.final_steps).some((step) => (
+    ["success", "completed"].includes(step?.status || step?.execution_status)
+  ));
+}
+
 export default function App() {
   const [health, setHealth] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
@@ -359,16 +398,34 @@ export default function App() {
   }
 
   async function refreshRuntime() {
-    const [agentData, operationData, runData, reportData] = await Promise.all([
+    const cached = readDashboardCache();
+    const [agentResult, operationResult, runResult, reportResult] = await Promise.allSettled([
       fetchJson("/agents"),
       fetchJson("/operations"),
       fetchJson("/runs"),
       fetchJson("/reports"),
     ]);
+    const agentData = agentResult.status === "fulfilled" ? agentResult.value : { agents: cached.agents || [] };
+    const operationData = operationResult.status === "fulfilled" ? operationResult.value : { operations: cached.operations || [] };
+    const runData = runResult.status === "fulfilled" ? runResult.value : { runs: cached.runs || [] };
+    const reportData = reportResult.status === "fulfilled" ? reportResult.value : { reports: cached.reports || [] };
+
     setAgents(agentData.agents || []);
     setOperations(operationData.operations || []);
     setRuns(runData.runs || []);
     setReports(reportData.reports || []);
+    writeDashboardCache({
+      agents: agentData.agents || [],
+      operations: operationData.operations || [],
+      runs: runData.runs || [],
+      reports: reportData.reports || [],
+    });
+
+    const failed = [agentResult, operationResult, runResult, reportResult].some((result) => result.status === "rejected");
+    if (failed) {
+      setNotice("API 연결이 불안정해서 마지막으로 불러온 기록을 표시합니다.");
+    }
+
     return {
       agents: agentData.agents || [],
       operations: operationData.operations || [],
@@ -381,10 +438,31 @@ export default function App() {
     setError("");
     setNotice("");
 
-    const [campaignData, targetData] = await Promise.all([
+    const cached = readDashboardCache();
+    const cachedCampaigns = cached.campaignsById || {};
+    const cachedTargets = cached.targetsById || {};
+    const [campaignResult, targetResult] = await Promise.allSettled([
       fetchJson(`/campaigns/${nextCampaignId}`),
       fetchJson(`/targets/${nextCampaignId}`),
     ]);
+
+    if (campaignResult.status === "rejected" && targetResult.status === "rejected") {
+      const cachedCampaign = cachedCampaigns[nextCampaignId];
+      const cachedTarget = cachedTargets[nextCampaignId];
+      if (!cachedCampaign && !cachedTarget) throw campaignResult.reason;
+
+      setCampaign(cachedCampaign || null);
+      setTarget(cachedTarget || null);
+      setCampaignId(nextCampaignId);
+      setSourceFilter(nextCampaignId);
+      setSelectedRun(null);
+      setSelectedOperation(null);
+      setNotice("API 연결이 불안정해서 마지막으로 불러온 캠페인 정보를 표시합니다.");
+      return;
+    }
+
+    const campaignData = campaignResult.status === "fulfilled" ? campaignResult.value : cachedCampaigns[nextCampaignId];
+    const targetData = targetResult.status === "fulfilled" ? targetResult.value : cachedTargets[nextCampaignId];
 
     try {
       const discoveryData = await fetchJson(`/targets/${nextCampaignId}/asset-discovery`);
@@ -404,15 +482,42 @@ export default function App() {
     setSourceFilter(nextCampaignId);
     setSelectedRun(null);
     setSelectedOperation(null);
+    writeDashboardCache({
+      campaignsById: {
+        ...cachedCampaigns,
+        [nextCampaignId]: campaignData,
+      },
+      targetsById: {
+        ...cachedTargets,
+        [nextCampaignId]: targetData,
+      },
+    });
   }
 
   useEffect(() => {
     let ignore = false;
 
     async function boot() {
+      const cached = readDashboardCache();
+      const bootCampaignId = cached.campaignId || campaignId;
+
+      if (cached.health) setHealth(cached.health);
+      if (cached.campaigns) setCampaigns(cached.campaigns);
+      if (cached.library) setLibrary(cached.library);
+      if (cached.agents) setAgents(cached.agents);
+      if (cached.operations) setOperations(cached.operations);
+      if (cached.runs) setRuns(cached.runs);
+      if (cached.reports) setReports(cached.reports);
+      if (cached.campaignsById?.[bootCampaignId]) setCampaign(cached.campaignsById[bootCampaignId]);
+      if (cached.targetsById?.[bootCampaignId]) setTarget(cached.targetsById[bootCampaignId]);
+      if (cached.campaignId) {
+        setCampaignId(cached.campaignId);
+        setSourceFilter(cached.campaignId);
+      }
+
       try {
         setError("");
-        const [healthData, campaignListData, techniqueData] = await Promise.all([
+        const [healthResult, campaignListResult, techniqueResult] = await Promise.allSettled([
           fetchJson("/health"),
           fetchJson("/campaigns"),
           fetchJson("/techniques"),
@@ -420,11 +525,24 @@ export default function App() {
 
         if (ignore) return;
 
+        const healthData = healthResult.status === "fulfilled" ? healthResult.value : cached.health;
+        const campaignListData = campaignListResult.status === "fulfilled" ? campaignListResult.value : { campaigns: cached.campaigns || [] };
+        const techniqueData = techniqueResult.status === "fulfilled" ? techniqueResult.value : { techniques: cached.library || [] };
+
         setHealth(healthData);
         setCampaigns(campaignListData.campaigns || []);
         setLibrary(techniqueData.techniques || []);
-        await loadCampaign(campaignId);
+        writeDashboardCache({
+          health: healthData,
+          campaigns: campaignListData.campaigns || [],
+          library: techniqueData.techniques || [],
+          campaignId: bootCampaignId,
+        });
+        await loadCampaign(bootCampaignId);
         await refreshRuntime();
+        if ([healthResult, campaignListResult, techniqueResult].some((result) => result.status === "rejected")) {
+          setNotice("API 연결이 불안정해서 마지막으로 불러온 데이터를 함께 표시합니다.");
+        }
       } catch (err) {
         if (!ignore) {
           setError(err.message);
@@ -491,7 +609,7 @@ export default function App() {
     return selectedIds.map((id) => byId.get(id)).filter(Boolean);
   }, [library, campaign, campaignId, selectedIds]);
 
-  const latestOperation = selectedOperation || operations[0] || null;
+  const latestOperation = selectedRun ? null : (selectedOperation || operations[0] || null);
   const canCancelLatestOperation = Boolean(
     latestOperation?.operation_id && ["pending", "queued", "running"].includes(latestOperation.status),
   );
@@ -511,7 +629,8 @@ export default function App() {
     const status = getDetectionStatus(step);
     return { ...counts, [status]: (counts[status] || 0) + 1 };
   }, {});
-  const operationSummary = latestOperation?.summary || {};
+  const stepStatusSummary = summarizeStepStatuses(evidenceSteps);
+  const operationSummary = latestOperation?.summary || stepStatusSummary;
   const latestReport = latestOperation?.report || reports.find((report) => report.campaign_id === campaignId) || reports[0] || null;
   const reportSummary = latestReport?.summary || {};
   const selectedOperationKey = latestOperation?.operation_id || "";
@@ -558,6 +677,10 @@ export default function App() {
     filteredSelectionIds.filter((id) => selectedIds.includes(id)).length
   ), [filteredSelectionIds, selectedIds]);
   const safetySummary = useMemo(() => summarizeSafetyProfiles(selectedSteps), [selectedSteps]);
+  const successfulRuns = useMemo(() => runs.filter(hasSuccessfulStep), [runs]);
+  const successfulOperations = useMemo(() => operations.filter((operation) => (
+    hasSuccessfulStep(operation) || (operation.summary?.success || operation.summary?.completed || 0) > 0
+  )), [operations]);
 
   function toggleStep(step) {
     const selectionId = getStepSelectionId(step, campaignId);
@@ -760,6 +883,14 @@ export default function App() {
       setSelectedRun(null);
       setActivePanel("evidence");
     } catch (err) {
+      const cachedOperation = operations.find((operation) => operation.operation_id === operationId);
+      if (cachedOperation) {
+        setSelectedOperation(cachedOperation);
+        setSelectedRun(null);
+        setActivePanel("evidence");
+        setNotice("API 연결이 불안정해서 저장된 Operation 기록을 표시합니다.");
+        return;
+      }
       setError(err.message);
     }
   }
@@ -777,8 +908,17 @@ export default function App() {
     try {
       const data = await fetchJson(`/runs/${executionId}`);
       setSelectedRun(data);
+      setSelectedOperation(null);
       setActivePanel("evidence");
     } catch (err) {
+      const cachedRun = runs.find((run) => run.execution_id === executionId);
+      if (cachedRun) {
+        setSelectedRun(cachedRun);
+        setSelectedOperation(null);
+        setActivePanel("evidence");
+        setNotice("API 연결이 불안정해서 저장된 실행 기록을 표시합니다.");
+        return;
+      }
       setError(err.message);
     }
   }
@@ -1031,7 +1171,7 @@ export default function App() {
       <div className="side-section evidence-side-section">
         <div className="panel-heading">
           <span>Evidence</span>
-          <strong>{latestOperation?.operation_id || latestRun?.execution_id || "선택된 결과 없음"}</strong>
+          <strong>{latestOperation?.operation_id || selectedRun?.execution_id || latestRun?.execution_id || "선택된 결과 없음"}</strong>
         </div>
         <label className="result-select-field">
           <span>결과 선택</span>
@@ -1046,7 +1186,7 @@ export default function App() {
         </label>
         <div className="evidence-callout">
           <span>현재 결과</span>
-          <strong>{latestOperation?.status ? getStatusLabel(latestOperation.status) : "런 선택 전"}</strong>
+          <strong>{latestOperation?.status ? getStatusLabel(latestOperation.status) : selectedRun ? "Run 기록" : "런 선택 전"}</strong>
           <small>
             {(latestOperation?.execution_mode || executionMode) === "simulation"
               ? "Simulation은 공격과 ELK 조회를 실행하지 않아 탐지 결과가 미확인으로 표시됩니다."
@@ -1084,8 +1224,43 @@ export default function App() {
           </div>
         )}
         <div className="run-list operation-list">
+          {successfulOperations.length > 0 && (
+            <>
+              <div className="record-section-title">
+                <span>성공 Operation</span>
+                <strong>{successfulOperations.length}</strong>
+              </div>
+              {successfulOperations.slice(0, 4).map((operation) => (
+                <button key={`success-${operation.operation_id}`} type="button" onClick={() => { setSelectedOperation(operation); setSelectedRun(null); }}>
+                  <strong>{operation.operation_id}</strong>
+                  <span>{operation.campaign_id} · {getStatusLabel(operation.status)} · 성공 {(operation.summary?.success || 0) + (operation.summary?.completed || 0)}</span>
+                </button>
+              ))}
+            </>
+          )}
+          {successfulRuns.length > 0 && (
+            <>
+              <div className="record-section-title">
+                <span>성공 Run</span>
+                <strong>{successfulRuns.length}</strong>
+              </div>
+              {successfulRuns.slice(0, 6).map((run) => {
+                const runSummary = summarizeStepStatuses(run.steps);
+                return (
+                  <button key={`success-${run.execution_id}`} type="button" onClick={() => loadRun(run.execution_id)}>
+                    <strong>{run.execution_id}</strong>
+                    <span>{run.campaign_id} · 성공 {(runSummary.success || 0) + (runSummary.completed || 0)} · {run.started_at || "-"}</span>
+                  </button>
+                );
+              })}
+            </>
+          )}
+          <div className="record-section-title muted">
+            <span>최근 Operation</span>
+            <strong>{operations.length}</strong>
+          </div>
           {operations.slice(0, 6).map((operation) => (
-            <button key={operation.operation_id} type="button" onClick={() => setSelectedOperation(operation)}>
+            <button key={operation.operation_id} type="button" onClick={() => { setSelectedOperation(operation); setSelectedRun(null); }}>
               <strong>{operation.operation_id}</strong>
               <span>{operation.campaign_id} · {getStatusLabel(operation.status)} · {operation.created_at || "-"}</span>
             </button>
@@ -1093,6 +1268,10 @@ export default function App() {
           {operations.length === 0 && <p className="empty">아직 Operation 기록이 없습니다.</p>}
         </div>
         <div className="run-list legacy-run-list">
+          <div className="record-section-title muted">
+            <span>최근 Run</span>
+            <strong>{runs.length}</strong>
+          </div>
           {runs.slice(0, 8).map((run) => (
             <button key={run.execution_id} type="button" onClick={() => loadRun(run.execution_id)}>
               <strong>{run.execution_id}</strong>

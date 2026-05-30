@@ -20,6 +20,13 @@ KST = timezone(timedelta(hours=9))
 FINAL_STATUSES = {"completed", "success"}
 FAILED_STATUSES = {"failed", "error", "manual_required", "not_supported"}
 BLOCKED_STATUSES = {"blocked", "blocked_by_safety_gate"}
+GAP_ANALYSIS_STATUSES = {
+    "missed",
+    "logged_only",
+    "alert_without_source_sample",
+    "not_checked",
+    "execution_failed",
+}
 REPORT_VERSION = "0.1"
 GENERATOR_VERSION = "sb-ad-report-builder-0.1"
 
@@ -517,6 +524,33 @@ def estimated_impact(step):
     }
 
 
+def detection_gap_reason(step):
+    detection_status = step.get("detection_status")
+    gap_type = step.get("gap_type")
+    source_status = step.get("source_status")
+    alert_status = step.get("alert_status")
+
+    if detection_status == "missed":
+        if gap_type == "no_telemetry" or (source_status == "not_matched" and alert_status == "not_matched"):
+            return "원본 로그와 탐지 알림이 모두 확인되지 않았습니다. 로그 수집 경로, 인덱스 매핑, 센서 설치 상태를 먼저 확인해야 합니다."
+        return "탐지 증거가 확인되지 않았습니다. ELK 쿼리 범위와 로그 수집 상태를 재검증해야 합니다."
+    if detection_status == "logged_only":
+        return "원본 로그는 남았지만 매칭되는 탐지 알림이 발생하지 않았습니다. 룰 조건이 없거나 너무 좁거나 비활성 상태일 가능성이 있습니다."
+    if detection_status == "alert_without_source_sample":
+        return "탐지 알림은 있으나 원본 로그 샘플과 연결되지 않았습니다. 알림 룰 쿼리와 원본 로그 쿼리의 시간 범위, 필드명, 인덱스 조건을 맞춰야 합니다."
+    if detection_status == "not_checked":
+        return "검증 쿼리 또는 실시간 증거 확인이 완료되지 않았습니다. ELK 연결, Agent 상태, 실행 모드, 시간 범위를 다시 확인해야 합니다."
+    if detection_status == "execution_failed":
+        return "BAS 단계가 정상 종료되지 않아 탐지 여부를 판단할 수 없습니다. Agent 실행 권한과 대상 호스트 조건을 먼저 복구해야 합니다."
+    if detection_status == "blocked":
+        return "안전 게이트 또는 차단 정책 때문에 실행 전 단계에서 멈췄습니다. 실제 탐지 검증 전 승인 조건과 차단 정책을 확인해야 합니다."
+    return "추가 분석이 필요한 항목입니다. 원본 로그, 알림 룰, 실행 증거를 함께 확인해야 합니다."
+
+
+def should_show_gap_analysis(step):
+    return bool(step.get("technique_id")) and step.get("detection_status") in GAP_ANALYSIS_STATUSES
+
+
 def recommended_sensor(step):
     requires = set(normalize_list(step.get("requires")))
     sensors = []
@@ -572,6 +606,19 @@ def improvement_plan(step, recommendation):
     return f"{action_label}: {reason}" if reason else action_label
 
 
+def report_detection_result(step):
+    return detection_result_label(step.get("detection_status")) if step.get("detection_status") else step.get("detection_result") or "-"
+
+
+def report_improvement_plan(step):
+    recommendation = step.get("recommendation") or {}
+    action = recommendation.get("action")
+    existing = step.get("improvement_plan")
+    if action and (not existing or str(existing).startswith(f"{action}:")):
+        return improvement_plan(step, recommendation)
+    return existing or "-"
+
+
 def build_dashboard_fields(step, classification, recommendation, target):
     behavior = step_behavior(step)
     source_query = (step.get("elk_check") or {}).get("query")
@@ -599,6 +646,10 @@ def build_dashboard_fields(step, classification, recommendation, target):
         "impact_estimate_basis": impact_estimate["basis"],
         "risk_level": RISK_LABELS.get(risk_level(step), risk_level(step)),
         "recommended_sensor": recommended_sensor(step),
+        "missed_reason": detection_gap_reason({
+            **step,
+            **classification,
+        }),
         "improvement_plan": improvement_plan(step, recommendation),
         "resolved_queries": {
             "source": source_query,
@@ -635,6 +686,7 @@ def classify_step(step, target=None):
         "impact_estimate_basis": dashboard_fields["impact_estimate_basis"],
         "risk_level": dashboard_fields["risk_level"],
         "recommended_sensor": dashboard_fields["recommended_sensor"],
+        "missed_reason": dashboard_fields["missed_reason"],
         "improvement_plan": dashboard_fields["improvement_plan"],
         "risk": step.get("risk") or "medium",
         "agent_role": step.get("agent_role") or step.get("operation_agent_role"),
@@ -1273,6 +1325,25 @@ def render_summary_html(report):
     if not meaning_items:
         meaning_items.append("이번 실행에서 큰 탐지 공백은 생성되지 않았습니다.")
     meaning_html = "\n".join(f"<li>{text(item)}</li>" for item in meaning_items)
+
+    gap_analysis_steps = [
+        step for step in report.get("steps", [])
+        if should_show_gap_analysis(step)
+    ]
+    gap_analysis_rows = "\n".join(
+        "<tr>"
+        f"<td><strong>{text(step.get('technique_id'))}</strong><small>{text(step.get('attack_name') or step.get('name'))}</small></td>"
+        f"<td>{badge(report_detection_result(step), status_class(step))}</td>"
+        f"<td>{text(GAP_LABELS.get(step.get('gap_type'), step.get('gap_type') or '검토 필요'))}</td>"
+        f"<td>{text(step.get('missed_reason') or detection_gap_reason(step))}</td>"
+        f"<td>{text(step.get('recommended_sensor') or recommended_sensor(step) or '-')}</td>"
+        f"<td>{text(report_improvement_plan(step))}</td>"
+        "</tr>"
+        for step in gap_analysis_steps
+    )
+    if not gap_analysis_rows:
+        gap_analysis_rows = "<tr><td colspan=\"6\" class=\"empty\">미탐 또는 부분탐지 항목이 없습니다.</td></tr>"
+
     coverage_rows = "\n".join(
         f"<tr class=\"row-{status_class(step)}\">"
         f"<td><strong>{text(step.get('technique_id'))}</strong></td>"
@@ -1281,14 +1352,14 @@ def render_summary_html(report):
         f"<td>{text(step.get('required_condition'))}</td>"
         f"<td>{text(step.get('expected_log'))}</td>"
         f"<td>{text(step.get('detection_rule'))}</td>"
-        f"<td>{badge(step.get('detection_result'), status_class(step))}</td>"
+        f"<td>{badge(report_detection_result(step), status_class(step))}</td>"
         f"<td>{badge(step.get('coverage_status'), status_class(step))}</td>"
         f"<td>{text(step.get('system_impact'))}</td>"
         f"<td>{text(str(impact_value(step, 'service_impact_percent')) + '%')}</td>"
         f"<td>{text(str(impact_value(step, 'network_impact_percent')) + '%')}</td>"
         f"<td>{badge(step.get('risk_level'), risk_class(step))}</td>"
         f"<td>{text(step.get('recommended_sensor'))}</td>"
-        f"<td>{text(step.get('improvement_plan'))}</td>"
+        f"<td>{text(report_improvement_plan(step))}</td>"
         "</tr>"
         for step in report.get("steps", [])
         if step.get("technique_id")
@@ -1428,6 +1499,8 @@ def render_summary_html(report):
     .table-wrap {{ overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 10px; }}
     .coverage-table {{ min-width: 1900px; }}
     .asset-control-table td:first-child small {{ display: block; margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 800; }}
+    .gap-analysis-table {{ min-width: 1180px; }}
+    .gap-analysis-table td:first-child small {{ display: block; margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 800; }}
     .badge {{
       display: inline-flex;
       align-items: center;
@@ -1521,6 +1594,25 @@ def render_summary_html(report):
       <ul>{meaning_html}</ul>
     </section>
     <section class="panel">
+      <h2>미탐 원인 및 필요 센서</h2>
+      <p class="section-desc">미탐, 부분탐지, 검증 미완료 항목을 따로 모아 왜 잡히지 않았는지와 어떤 로그/센서가 필요한지 정리했습니다. 기업 보안팀이 룰 개선 또는 센서 보강 우선순위를 잡는 데 쓰는 표입니다.</p>
+      <div class="table-wrap">
+        <table class="gap-analysis-table">
+          <thead>
+            <tr>
+              {th("테크닉", "Technique")}
+              {th("탐지 결과", "Detection Result")}
+              {th("공백 유형", "Gap Type")}
+              {th("왜 안 잡혔는지", "Why It Was Missed")}
+              {th("필요 센서", "Required Sensor")}
+              {th("개선 계획", "Improvement Plan")}
+            </tr>
+          </thead>
+          <tbody>{gap_analysis_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="panel">
       <h2>BAS 상세 결과표</h2>
       <p class="section-desc">멘토링 피드백 기준의 필수 항목을 Technique 단위로 정리했습니다. 룰 이름, 센서명, 쿼리 식별자는 원문을 유지합니다.</p>
       <div class="table-wrap">
@@ -1585,13 +1677,36 @@ def render_technical_markdown(report):
             f"| {cell(step.get('technique_id') or '-')} | {cell(step.get('attack_name') or step.get('name') or '-')} | "
             f"{cell(step.get('target_asset') or '-')} | {cell(step.get('required_condition') or '-')} | "
             f"{cell(step.get('expected_log') or '-')} | {cell(step.get('detection_rule') or '-')} | "
-            f"{cell(step.get('detection_result') or step.get('detection_status') or '-')} | "
+            f"{cell(report_detection_result(step))} | "
             f"{cell(step.get('coverage_status') or '-')} | {cell(step.get('system_impact') or '-')} | "
             f"{cell(str(step.get('service_impact_percent', 0)) + '%')} | "
             f"{cell(str(step.get('network_impact_percent', 0)) + '%')} | "
             f"{cell(step.get('risk_level') or step.get('risk') or '-')} | {cell(step.get('recommended_sensor') or '-')} | "
-            f"{cell(step.get('improvement_plan') or step.get('recommendation', {}).get('action') or '-')} |"
+            f"{cell(report_improvement_plan(step))} |"
         )
+
+    gap_steps = [step for step in report.get("steps", []) if should_show_gap_analysis(step)]
+    lines.extend([
+        "",
+        "## 미탐 원인 및 필요 센서",
+        "",
+        "| Technique | 탐지 결과 | 공백 유형 | 왜 안 잡혔는지 | 필요 센서 | 개선 계획 |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ])
+
+    if gap_steps:
+        for step in gap_steps:
+            gap = step.get("gap_type") or "-"
+            lines.append(
+                f"| {cell(step.get('technique_id') or '-')} | "
+                f"{cell(report_detection_result(step))} | "
+                f"{cell(GAP_LABELS.get(gap, gap))} | "
+                f"{cell(step.get('missed_reason') or detection_gap_reason(step))} | "
+                f"{cell(step.get('recommended_sensor') or recommended_sensor(step) or '-')} | "
+                f"{cell(report_improvement_plan(step))} |"
+            )
+    else:
+        lines.append("| - | - | - | 미탐 또는 부분탐지 항목이 없습니다. | - | - |")
 
     lines.extend([
         "",
@@ -1670,6 +1785,7 @@ def write_coverage_csv(path, steps):
         "network_impact_percent",
         "risk_level",
         "recommended_sensor",
+        "missed_reason",
         "improvement_plan",
     ]
 
@@ -1679,7 +1795,11 @@ def write_coverage_csv(path, steps):
         for step in steps:
             if not step.get("technique_id"):
                 continue
-            writer.writerow({field: step.get(field, "") for field in fields})
+            row = {field: step.get(field, "") for field in fields}
+            row["detection_result"] = report_detection_result(step)
+            row["missed_reason"] = step.get("missed_reason") or detection_gap_reason(step)
+            row["improvement_plan"] = report_improvement_plan(step)
+            writer.writerow(row)
 
 
 def build_navigator_layer(report):

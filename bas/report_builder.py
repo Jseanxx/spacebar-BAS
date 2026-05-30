@@ -471,6 +471,52 @@ def system_impact(step):
     return "낮음 - 안전 검증"
 
 
+def clamp_percent(value):
+    return max(0, min(95, round(value)))
+
+
+def estimated_impact(step):
+    risk = risk_level(step)
+    params = get_step_params(step)
+    behavior = str(step_behavior(step) or "").lower()
+    requires = " ".join(normalize_list(step.get("requires"))).lower()
+    name = str(step.get("name") or "").lower()
+    safety_gates = " ".join(normalize_list(params.get("safety_gates"))).lower()
+    combined = f"{behavior} {requires} {name} {safety_gates}"
+
+    domain_compromise = any(keyword in combined for keyword in ("dcsync", "golden", "ntds", "domain_compromise", "krbtgt", "secretsdump"))
+    credential_dump = any(keyword in combined for keyword in ("lsass", "credential", "dump", "comsvcs", "sam", "ntds"))
+    service_execution = any(keyword in combined for keyword in ("service_execution", "psexec", "service"))
+    network_heavy = any(keyword in combined for keyword in ("dos", "scan", "sweep", "flood", "spoof"))
+    network_touch = any(keyword in combined for keyword in ("network", "tcp", "c2", "exfiltration", "tool_transfer", "winrm", "remote"))
+    gate_count = len(normalize_list(params.get("safety_gates")))
+
+    base_risk_percent = {
+        "low": 5,
+        "medium": 15,
+        "high": 32,
+        "critical": 58,
+    }.get(risk, 15)
+    service_percent = clamp_percent(
+        base_risk_percent
+        + (18 if domain_compromise else 0)
+        + (12 if credential_dump else 0)
+        + (16 if service_execution else 0)
+        + (20 if network_heavy else 0)
+        + (6 if gate_count > 1 else 0)
+    )
+    network_percent = clamp_percent(
+        (62 if network_heavy else 22 if network_touch else 3)
+        + (8 if risk == "critical" else 5 if risk == "high" else 0)
+    )
+
+    return {
+        "service_impact_percent": service_percent,
+        "network_impact_percent": network_percent,
+        "basis": "risk/behavior/requires/safety_gates 기반 추정",
+    }
+
+
 def recommended_sensor(step):
     requires = set(normalize_list(step.get("requires")))
     sensors = []
@@ -530,6 +576,7 @@ def build_dashboard_fields(step, classification, recommendation, target):
     behavior = step_behavior(step)
     source_query = (step.get("elk_check") or {}).get("query")
     alert_query = get_alert_check(step.get("elk_check") or {}).get("query")
+    impact_estimate = estimated_impact(step)
 
     if target and behavior:
         source_query = source_query or resolve_query(target, behavior)[0]
@@ -547,6 +594,9 @@ def build_dashboard_fields(step, classification, recommendation, target):
         "detection_result": detection_result_label(classification["detection_status"]),
         "coverage_status": coverage_status(classification["detection_status"]),
         "system_impact": system_impact(step),
+        "service_impact_percent": impact_estimate["service_impact_percent"],
+        "network_impact_percent": impact_estimate["network_impact_percent"],
+        "impact_estimate_basis": impact_estimate["basis"],
         "risk_level": RISK_LABELS.get(risk_level(step), risk_level(step)),
         "recommended_sensor": recommended_sensor(step),
         "improvement_plan": improvement_plan(step, recommendation),
@@ -580,6 +630,9 @@ def classify_step(step, target=None):
         "detection_result": dashboard_fields["detection_result"],
         "coverage_status": dashboard_fields["coverage_status"],
         "system_impact": dashboard_fields["system_impact"],
+        "service_impact_percent": dashboard_fields["service_impact_percent"],
+        "network_impact_percent": dashboard_fields["network_impact_percent"],
+        "impact_estimate_basis": dashboard_fields["impact_estimate_basis"],
         "risk_level": dashboard_fields["risk_level"],
         "recommended_sensor": dashboard_fields["recommended_sensor"],
         "improvement_plan": dashboard_fields["improvement_plan"],
@@ -1115,6 +1168,21 @@ def render_summary_html(report):
             "</div>"
         )
 
+    def impact_bar(value):
+        percent = max(0, min(100, int(value or 0)))
+        return (
+            "<div class=\"impact-bar\">"
+            f"<i><b style=\"width: {percent}%\"></b></i>"
+            f"<strong>{percent}%</strong>"
+            "</div>"
+        )
+
+    def impact_value(step, field):
+        value = step.get(field)
+        if value is not None:
+            return value
+        return estimated_impact(step).get(field, 0)
+
     metrics = [
         ("준비도 점수", f"{score}/100"),
         ("실행 대상 Technique", summary.get("attack_steps", 0)),
@@ -1162,6 +1230,25 @@ def render_summary_html(report):
     if not tactic_chart_html:
         tactic_chart_html = "<p class=\"empty\">전술별 커버리지 데이터를 만들 수 없습니다.</p>"
 
+    impact_steps = sorted(
+        [step for step in report.get("steps", []) if step.get("technique_id")],
+        key=lambda step: (impact_value(step, "service_impact_percent"), impact_value(step, "network_impact_percent")),
+        reverse=True,
+    )
+    impact_rows = "\n".join(
+        "<tr>"
+        f"<td><strong>{text(step.get('technique_id'))}</strong><small>{text(step.get('attack_name') or step.get('name'))}</small></td>"
+        f"<td>{badge(step.get('risk_level'), risk_class(step))}</td>"
+        f"<td>{text(step.get('system_impact'))}</td>"
+        f"<td>{impact_bar(impact_value(step, 'service_impact_percent'))}</td>"
+        f"<td>{impact_bar(impact_value(step, 'network_impact_percent'))}</td>"
+        f"<td>{text(step.get('impact_estimate_basis') or '추정')}</td>"
+        "</tr>"
+        for step in impact_steps[:8]
+    )
+    if not impact_rows:
+        impact_rows = "<tr><td colspan=\"6\" class=\"empty\">실행 영향도 추정 정보가 없습니다.</td></tr>"
+
     if backlog:
         backlog_rows = "\n".join(
             "<tr>"
@@ -1197,6 +1284,8 @@ def render_summary_html(report):
         f"<td>{badge(step.get('detection_result'), status_class(step))}</td>"
         f"<td>{badge(step.get('coverage_status'), status_class(step))}</td>"
         f"<td>{text(step.get('system_impact'))}</td>"
+        f"<td>{text(str(impact_value(step, 'service_impact_percent')) + '%')}</td>"
+        f"<td>{text(str(impact_value(step, 'network_impact_percent')) + '%')}</td>"
         f"<td>{badge(step.get('risk_level'), risk_class(step))}</td>"
         f"<td>{text(step.get('recommended_sensor'))}</td>"
         f"<td>{text(step.get('improvement_plan'))}</td>"
@@ -1205,7 +1294,7 @@ def render_summary_html(report):
         if step.get("technique_id")
     )
     if not coverage_rows:
-        coverage_rows = "<tr><td colspan=\"12\" class=\"empty\">생성된 BAS 커버리지 결과가 없습니다.</td></tr>"
+        coverage_rows = "<tr><td colspan=\"14\" class=\"empty\">생성된 BAS 커버리지 결과가 없습니다.</td></tr>"
 
     asset_mapping = report.get("asset_control_mapping") or build_asset_control_mapping(report.get("target"), report.get("steps", []))
     asset_mapping_rows = "\n".join(
@@ -1266,6 +1355,11 @@ def render_summary_html(report):
     .metric span {{ display: block; color: #64748b; font-size: 12px; font-weight: 800; }}
     .metric strong {{ display: block; margin-top: 8px; font-size: 24px; }}
     section.panel {{ margin-top: 18px; padding: 24px; }}
+    .impact-table td:first-child small {{ display: block; margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 800; }}
+    .impact-bar {{ display: grid; grid-template-columns: minmax(92px, 1fr) 42px; gap: 9px; align-items: center; min-width: 160px; }}
+    .impact-bar i {{ height: 9px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }}
+    .impact-bar i b {{ display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #22c55e, #f59e0b 54%, #ef4444); }}
+    .impact-bar strong {{ color: #0f172a; font-size: 12px; font-weight: 900; text-align: right; }}
     .tactic-grid {{ display: grid; gap: 16px; }}
     .tactic-chart {{
       border: 1px solid #dbe3ec;
@@ -1332,7 +1426,7 @@ def render_summary_html(report):
     tbody tr.row-critical td:first-child {{ border-left: 4px solid #dc2626; }}
     tbody tr.row-blocked td:first-child {{ border-left: 4px solid #64748b; }}
     .table-wrap {{ overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 10px; }}
-    .coverage-table {{ min-width: 1680px; }}
+    .coverage-table {{ min-width: 1900px; }}
     .asset-control-table td:first-child small {{ display: block; margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 800; }}
     .badge {{
       display: inline-flex;
@@ -1382,6 +1476,25 @@ def render_summary_html(report):
       <div class="grid">{metrics_html}</div>
     </section>
     <section class="panel">
+      <h2>실행 영향도 추정</h2>
+      <p class="section-desc">공격 실행 전에 기업이 운영 서비스에 줄 수 있는 장애/다운 가능성과 네트워크 지연 가능성을 확인할 수 있도록 risk, behavior, requires, safety gate 기준으로 산정한 추정값입니다. 실제 계측값이 아니라 실행 승인 판단을 돕는 보수적 지표입니다.</p>
+      <div class="table-wrap">
+        <table class="impact-table">
+          <thead>
+            <tr>
+              {th("테크닉", "Technique")}
+              {th("위험도", "Risk")}
+              {th("시스템 영향도", "System Impact")}
+              {th("장애/다운 추정", "Service Impact")}
+              {th("네트워크 지연 추정", "Network Impact")}
+              {th("산정 기준", "Basis")}
+            </tr>
+          </thead>
+          <tbody>{impact_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="panel">
       <h2>전술별 로그/알림 커버리지</h2>
       <p class="section-desc">NetSPI BAS 샘플 레포트처럼 tactic 단위로 로그 수집과 알림 발생 여부를 먼저 볼 수 있게 배치했습니다.</p>
       <div class="tactic-grid">{tactic_chart_html}</div>
@@ -1423,6 +1536,8 @@ def render_summary_html(report):
               {th("탐지 결과", "Detection Result")}
               {th("커버리지 상태", "Coverage Status")}
               {th("시스템 영향도", "System Impact")}
+              {th("장애/다운 추정", "Service Impact")}
+              {th("네트워크 지연 추정", "Network Impact")}
               {th("위험도", "Risk Level")}
               {th("권장 센서", "Recommended Sensor")}
               {th("개선 계획", "Improvement Plan")}
@@ -1461,8 +1576,8 @@ def render_technical_markdown(report):
         "",
         "## BAS 상세 결과표",
         "",
-        "| 테크닉 ID | 공격명 | 대상 자산 | 필수 조건 | 기대 로그 | 탐지 룰 | 탐지 결과 | 커버리지 상태 | 시스템 영향도 | 위험도 | 권장 센서 | 개선 계획 |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| 테크닉 ID | 공격명 | 대상 자산 | 필수 조건 | 기대 로그 | 탐지 룰 | 탐지 결과 | 커버리지 상태 | 시스템 영향도 | 장애/다운 추정 | 네트워크 지연 추정 | 위험도 | 권장 센서 | 개선 계획 |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for step in report.get("steps", []):
@@ -1472,6 +1587,8 @@ def render_technical_markdown(report):
             f"{cell(step.get('expected_log') or '-')} | {cell(step.get('detection_rule') or '-')} | "
             f"{cell(step.get('detection_result') or step.get('detection_status') or '-')} | "
             f"{cell(step.get('coverage_status') or '-')} | {cell(step.get('system_impact') or '-')} | "
+            f"{cell(str(step.get('service_impact_percent', 0)) + '%')} | "
+            f"{cell(str(step.get('network_impact_percent', 0)) + '%')} | "
             f"{cell(step.get('risk_level') or step.get('risk') or '-')} | {cell(step.get('recommended_sensor') or '-')} | "
             f"{cell(step.get('improvement_plan') or step.get('recommendation', {}).get('action') or '-')} |"
         )
@@ -1549,6 +1666,8 @@ def write_coverage_csv(path, steps):
         "detection_result",
         "coverage_status",
         "system_impact",
+        "service_impact_percent",
+        "network_impact_percent",
         "risk_level",
         "recommended_sensor",
         "improvement_plan",

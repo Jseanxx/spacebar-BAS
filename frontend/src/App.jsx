@@ -265,6 +265,10 @@ function getSafetyGates(step) {
   return normalizeList(step?.params?.safety_gates || step?.safety_gates);
 }
 
+function clampPercent(value) {
+  return Math.max(0, Math.min(95, Math.round(value)));
+}
+
 function getSafetyProfile(step) {
   const risk = getStepRiskLevel(step);
   const gates = getSafetyGates(step);
@@ -285,6 +289,24 @@ function getSafetyProfile(step) {
   const failurePossibility = highImpact ? "있음" : mediumImpact ? "낮음" : "없음";
   const networkLoad = networkHeavy ? "높음" : networkTouch ? "낮음" : "없음";
   const serviceDownPossibility = networkHeavy || serviceExecution || domainCompromise ? "있음" : "N/A";
+  const baseRiskPercent = {
+    low: 5,
+    medium: 15,
+    high: 32,
+    critical: 58,
+  }[risk] || 15;
+  const serviceImpactPercent = clampPercent(
+    baseRiskPercent
+    + (domainCompromise ? 18 : 0)
+    + (credentialDump ? 12 : 0)
+    + (serviceExecution ? 16 : 0)
+    + (networkHeavy ? 20 : 0)
+    + (gates.length > 1 ? 6 : 0),
+  );
+  const networkImpactPercent = clampPercent(
+    (networkHeavy ? 62 : networkTouch ? 22 : 3)
+    + (risk === "critical" ? 8 : risk === "high" ? 5 : 0),
+  );
   const warningRequired = impact === "High" || risk === "high" || risk === "critical" || gates.length > 1 ? "필요" : "불필요";
   const executionRecommendation = highImpact || networkHeavy
     ? "운영환경 금지"
@@ -303,6 +325,8 @@ function getSafetyProfile(step) {
     failurePossibility,
     networkLoad,
     serviceDownPossibility,
+    serviceImpactPercent,
+    networkImpactPercent,
     warningRequired,
     executionRecommendation,
     className,
@@ -328,9 +352,13 @@ function summarizeSafetyProfiles(steps) {
   const highest = profiles.reduce((current, profile) => (
     !current || severity[profile.className] > severity[current.className] ? profile : current
   ), null);
+  const maxServiceImpactPercent = Math.max(0, ...profiles.map((profile) => profile.serviceImpactPercent || 0));
+  const maxNetworkImpactPercent = Math.max(0, ...profiles.map((profile) => profile.networkImpactPercent || 0));
 
   return {
     highest,
+    maxServiceImpactPercent,
+    maxNetworkImpactPercent,
     safe: profiles.filter((profile) => profile.className === "safe").length,
     warn: profiles.filter((profile) => profile.className === "warn").length,
     danger: profiles.filter((profile) => profile.className === "danger").length,
@@ -1070,6 +1098,10 @@ export default function App() {
                 <span>실행 전 안전성</span>
                 <strong>{safetySummary.highest?.executionRecommendation || "안전"}</strong>
               </div>
+              <div className="safety-percent-summary">
+                <span>추정 장애 {safetySummary.maxServiceImpactPercent}%</span>
+                <span>추정 지연 {safetySummary.maxNetworkImpactPercent}%</span>
+              </div>
               <div className="safety-counts">
                 <b className="danger">금지 {safetySummary.danger}</b>
                 <b className="warn">주의 {safetySummary.warn}</b>
@@ -1094,9 +1126,21 @@ export default function App() {
                   </div>
                   <div className={`safety-strip ${safety.className}`}>
                     <span><small>영향</small><strong>{getImpactLabel(safety.impact)}</strong></span>
-                    <span><small>장애</small><strong>{safety.failurePossibility}</strong></span>
-                    <span><small>부하</small><strong>{safety.networkLoad}</strong></span>
+                    <span><small>장애</small><strong>{safety.serviceImpactPercent}%</strong></span>
+                    <span><small>지연</small><strong>{safety.networkImpactPercent}%</strong></span>
                     <b>{getRecommendationShort(safety.executionRecommendation)}</b>
+                  </div>
+                  <div className="safety-risk-bars" aria-label="추정 영향도">
+                    <span>
+                      <small>서비스 장애/다운 추정</small>
+                      <i><b style={{ width: `${safety.serviceImpactPercent}%` }} /></i>
+                      <strong>{safety.serviceImpactPercent}%</strong>
+                    </span>
+                    <span>
+                      <small>네트워크 지연 추정</small>
+                      <i><b style={{ width: `${safety.networkImpactPercent}%` }} /></i>
+                      <strong>{safety.networkImpactPercent}%</strong>
+                    </span>
                   </div>
                   <details className="safety-details">
                     <summary>세부 안전성</summary>
@@ -1105,6 +1149,8 @@ export default function App() {
                       <div><span>장애 가능성</span><strong>{safety.failurePossibility}</strong></div>
                       <div><span>네트워크 부하</span><strong>{safety.networkLoad}</strong></div>
                       <div><span>서비스 다운</span><strong>{safety.serviceDownPossibility}</strong></div>
+                      <div><span>장애/다운 추정</span><strong>{safety.serviceImpactPercent}%</strong></div>
+                      <div><span>네트워크 지연 추정</span><strong>{safety.networkImpactPercent}%</strong></div>
                       <div><span>사전 경고</span><strong>{safety.warningRequired}</strong></div>
                       <div><span>실행 권장</span><strong>{safety.executionRecommendation}</strong></div>
                     </div>

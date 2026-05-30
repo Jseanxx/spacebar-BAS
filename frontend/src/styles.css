@@ -692,6 +692,21 @@ button {
   border-left-color: #dc2626;
 }
 
+.safety-percent-summary {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.safety-percent-summary span {
+  min-width: 0;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 6px 7px;
+  color: #334155;
+  text-align: center;
+}
+
 .safety-counts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -829,6 +844,49 @@ button {
   color: #991b1b;
   background: #fee2e2;
   border-color: #fecaca;
+}
+
+.safety-risk-bars {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.safety-risk-bars span {
+  display: grid;
+  grid-template-columns: minmax(92px, 1fr) minmax(72px, 1.2fr) 38px;
+  gap: 8px;
+  align-items: center;
+}
+
+.safety-risk-bars small {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 950;
+}
+
+.safety-risk-bars i {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.safety-risk-bars i b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #22c55e, #f59e0b 54%, #ef4444);
+}
+
+.safety-risk-bars strong {
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 950;
+  text-align: right;
 }
 
 .safety-details {

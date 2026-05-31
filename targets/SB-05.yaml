@@ -52,7 +52,7 @@ assets:
     log_collection_detail: Linux auditd, Elastic Agent
     description: 노출된 kubeconfig를 이용해 Kubernetes API를 호출하고 staging/archive/aws CLI를 실행하는 시작점
     position:
-      left: 13
+      left: 13.5
       top: 50
   - asset_id: sb05-kubernetes
     name: Kubernetes Node / k3s Cluster
@@ -72,8 +72,8 @@ assets:
     log_collection_detail: k3s audit log
     description: API Server, 업무 namespace, Pod/Service/Ingress/Secret/RBAC 구성
     position:
-      left: 36
-      top: 42
+      left: 37.5
+      top: 34
   - asset_id: prod-platform
     name: Business Namespace
     hostname: prod-platform
@@ -89,8 +89,8 @@ assets:
     log_collection_detail: Kubernetes audit log
     description: 업무 서비스가 배포된 namespace이며 Discovery, Secret 조회, Pod exec 대상
     position:
-      left: 49
-      top: 66
+      left: 37.5
+      top: 74
   - asset_id: sb05-k8s-drain
     name: S3 Exfiltration Bucket
     hostname: sb05-k8s-drain
@@ -106,7 +106,7 @@ assets:
     log_collection_detail: CloudTrail PutObject
     description: 수집 archive 업로드 대상 및 T1567.002 검증 대상
     position:
-      left: 65
+      left: 61.5
       top: 50
   - asset_id: sb05-elk
     name: ELK / Monitoring
@@ -126,8 +126,8 @@ assets:
     log_collection_detail: Kubernetes audit log, Linux auditd, AWS CloudTrail
     description: 각 Technique 증적 수집 및 Kibana Discover 분석
     position:
-      left: 86
-      top: 34
+      left: 85.5
+      top: 32
   - asset_id: cloudtrail-sqs-pipeline
     name: CloudTrail-SQS Pipeline
     hostname: CloudTrail-SQS Pipeline
@@ -142,8 +142,8 @@ assets:
     log_collection_detail: S3 PutObject Data Event -> ELK
     description: S3 PutObject Data Event를 ELK로 전달하는 로그 파이프라인
     position:
-      left: 86
-      top: 68
+      left: 85.5
+      top: 74
 attack_paths:
   - source_asset_id: sb05-attacker
     target_asset_id: sb05-kubernetes
@@ -160,18 +160,22 @@ attack_paths:
   - source_asset_id: sb05-k8s-drain
     target_asset_id: cloudtrail-sqs-pipeline
     label: CloudTrail PutObject event delivery
+    map_visible: false
     techniques: [T1567.002]
   - source_asset_id: cloudtrail-sqs-pipeline
     target_asset_id: sb05-elk
     label: AWS integration forwards evidence to ELK
+    map_visible: false
     techniques: [T1567.002]
   - source_asset_id: sb05-kubernetes
     target_asset_id: sb05-elk
     label: Kubernetes audit evidence
+    map_visible: false
     techniques: [T1613, T1552.007, T1609, T1610, T1098.006]
   - source_asset_id: sb05-attacker
     target_asset_id: sb05-elk
     label: Linux auditd staging and archive evidence
+    map_visible: false
     techniques: [T1074.001, T1560.001]
 capabilities:
   - ssh

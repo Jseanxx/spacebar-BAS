@@ -53,6 +53,61 @@ if [[ -n "${DASHBOARD_USER:-}" && -n "${DASHBOARD_PASSWORD:-}" ]]; then
   chmod 0640 "${ENV_DIR}/htpasswd"
 fi
 
+if command -v nginx >/dev/null 2>&1; then
+  NGINX_SITE="${NGINX_SITE:-/etc/nginx/sites-available/spacebar-bas}"
+  cat > "${NGINX_SITE}" <<'NGINX'
+server {
+    listen 443 default_server;
+    server_name _;
+    root /var/www/spacebar-bas;
+    index index.html;
+    client_max_body_size 20m;
+
+    location = /api/agents {
+        auth_basic "Spacebar BAS";
+        auth_basic_user_file /etc/spacebar-bas/htpasswd;
+        proxy_pass http://127.0.0.1:8000/agents;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 180s;
+    }
+
+    location /api/agents {
+        proxy_pass http://127.0.0.1:8000/agents;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 180s;
+    }
+
+    location /api/ {
+        auth_basic "Spacebar BAS";
+        auth_basic_user_file /etc/spacebar-bas/htpasswd;
+        proxy_pass http://127.0.0.1:8000/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 180s;
+    }
+
+    location / {
+        auth_basic "Spacebar BAS";
+        auth_basic_user_file /etc/spacebar-bas/htpasswd;
+        try_files $uri $uri/ /index.html;
+    }
+}
+NGINX
+  ln -sf "${NGINX_SITE}" /etc/nginx/sites-enabled/spacebar-bas
+  nginx -t
+fi
+
 systemctl daemon-reload
 systemctl restart spacebar-bas-api.service
 systemctl reload nginx

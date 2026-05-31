@@ -3,7 +3,8 @@ param(
     [string]$Role = "win01",
     [ValidateSet("simulation", "real")]
     [string]$Mode = "real",
-    [string]$ControllerUrl = "http://10.60.0.10:8000",
+    [string]$ControllerUrl = "http://54.116.166.183:443/api",
+    [string]$ControllerToken = "",
     [string]$LogstashUrl = "http://10.60.40.10:8088",
     [int]$IntervalSeconds = 2,
     [switch]$AllowDcRemoteAccess,
@@ -18,6 +19,7 @@ if ($env:BAS_AV_ALLOW_DC_REMOTE_ACCESS -eq "1") { $AllowDcRemoteAccess = $true }
 if ($env:BAS_AV_ALLOW_LOADER_ARTIFACTS -eq "1") { $AllowLoaderArtifacts = $true }
 if ($env:BAS_AV_ALLOW_LSASS_TEST -eq "1") { $AllowLsassTest = $true }
 if ($env:BAS_AV_ALLOW_AUTH_MATERIAL_TEST -eq "1") { $AllowAuthMaterialTest = $true }
+if (-not $ControllerToken -and $env:BAS_AGENT_TOKEN) { $ControllerToken = $env:BAS_AGENT_TOKEN }
 
 function Get-NowIso {
     return (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -280,12 +282,17 @@ function Invoke-Controller {
     )
 
     $uri = "$ControllerUrl$Path"
+    $headers = @{}
+    if ($ControllerToken) {
+        $headers["X-BAS-Agent-Token"] = $ControllerToken
+    }
+
     if ($null -eq $Body) {
-        return Invoke-RestMethod -Method $Method -Uri $uri -TimeoutSec 90
+        return Invoke-RestMethod -Method $Method -Uri $uri -Headers $headers -TimeoutSec 90
     }
 
     $json = $Body | ConvertTo-Json -Depth 40
-    return Invoke-RestMethod -Method $Method -Uri $uri -Body $json -ContentType "application/json" -TimeoutSec 90
+    return Invoke-RestMethod -Method $Method -Uri $uri -Headers $headers -Body $json -ContentType "application/json" -TimeoutSec 90
 }
 
 function Get-StepMeta {

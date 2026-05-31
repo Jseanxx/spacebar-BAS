@@ -7,8 +7,8 @@ display_name: SB-AD Attacker BasAgent
 hostname: Attacker-Ubuntu
 platform: linux
 collector_type: manual
-controller_url: http://127.0.0.1:8000
-controller_urls: http://127.0.0.1:8000,http://10.0.1.194:8000,http://192.168.10.59:8000
+controller_url: http://54.116.166.183:443/api
+controller_urls: http://54.116.166.183:443/api,http://127.0.0.1:8000,http://10.0.1.194:8000,http://192.168.10.59:8000
 interval_seconds: 2
 execution_mode: real
 safety_mode: approval_required

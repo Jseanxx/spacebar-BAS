@@ -67,7 +67,7 @@ assets:
     public_ip: 43.201.29.242
     platform: Linux
     os: Linux
-    role: 내부망 진입 및 BAS Controller
+    role: 내부망 진입 배스천
     log_collection_status: Active
     log_collection_detail: Bastion SSH/auth log와 Hanguel source event 기준 확인
     segment_id: bastion-zone

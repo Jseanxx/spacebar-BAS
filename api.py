@@ -9,7 +9,7 @@ import os
 import time
 import uuid
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -35,6 +35,28 @@ def now_kst():
 
 
 app = FastAPI(title="Mini BAS API", version="0.3.0")
+
+
+def verify_agent_token(http_request: Request):
+    """
+    Optional shared-secret check for public Controller deployments.
+
+    Local/dev deployments can omit BAS_AGENT_TOKEN. When it is set, BasAgent
+    register/heartbeat/job polling endpoints must include either
+    X-BAS-Agent-Token: <token> or Authorization: Bearer <token>.
+    """
+
+    expected = os.environ.get("BAS_AGENT_TOKEN")
+    if not expected:
+        return
+
+    provided = http_request.headers.get("x-bas-agent-token")
+    authorization = http_request.headers.get("authorization") or ""
+    if not provided and authorization.lower().startswith("bearer "):
+        provided = authorization[7:].strip()
+
+    if provided != expected:
+        raise HTTPException(status_code=401, detail="Invalid BasAgent token")
 
 
 app.add_middleware(
@@ -1457,13 +1479,15 @@ def get_agent_status_legacy():
     return get_bas_agent_status_payload()
 
 @app.post("/agents/register")
-def register_agent(request: AgentRegisterRequest):
+def register_agent(request: AgentRegisterRequest, http_request: Request):
     """
     BasAgent 등록 API입니다.
 
     지금은 DB 없이 outputs/agents/{agent_id}.json 파일로 저장합니다.
     나중에 SQLite나 DB로 바꿔도 API 형태는 유지할 수 있습니다.
     """
+
+    verify_agent_token(http_request)
 
     agent = {
         "agent_id": request.agent_id,
@@ -1493,12 +1517,14 @@ def register_agent(request: AgentRegisterRequest):
 
 
 @app.post("/agents/{agent_id}/heartbeat")
-def heartbeat_agent(agent_id: str, request: AgentHeartbeatRequest):
+def heartbeat_agent(agent_id: str, request: AgentHeartbeatRequest, http_request: Request):
     """
     BasAgent 생존 확인 API입니다.
 
     BasAgent는 주기적으로 이 API를 호출해서 Controller에 살아 있음을 알립니다.
     """
+
+    verify_agent_token(http_request)
 
     path = get_agent_path(agent_id)
     agent = read_json_file(path, {
@@ -1979,7 +2005,7 @@ def get_job(job_id: str):
 
 
 @app.get("/agents/{agent_id}/jobs/next")
-def get_next_job(agent_id: str):
+def get_next_job(agent_id: str, http_request: Request):
     """
     BasAgent가 자신에게 할당된 다음 queued Job을 가져가는 API입니다.
 
@@ -1987,6 +2013,8 @@ def get_next_job(agent_id: str):
     - status가 queued인 Job만 가져갑니다.
     - 가져가는 순간 running으로 바꿔 중복 실행을 줄입니다.
     """
+
+    verify_agent_token(http_request)
 
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -2014,10 +2042,12 @@ def get_next_job(agent_id: str):
 
 
 @app.post("/agents/{agent_id}/jobs/{job_id}/result")
-def submit_job_result(agent_id: str, job_id: str, request: JobResultRequest):
+def submit_job_result(agent_id: str, job_id: str, request: JobResultRequest, http_request: Request):
     """
     BasAgent가 캠페인 실행 결과를 Controller에 업로드하는 API입니다.
     """
+
+    verify_agent_token(http_request)
 
     job = load_job(job_id)
 

@@ -58,6 +58,7 @@ def load_config(config_path=CONFIG_PATH):
         "safety_mode": "",
         "controller_url": "http://127.0.0.1:8000",
         "controller_urls": "",
+        "controller_token": "",
         "interval_seconds": "5",
         "execution_mode": "simulation",
     }
@@ -88,7 +89,7 @@ def parse_controller_urls(config):
     return urls or ["http://127.0.0.1:8000"]
 
 
-def request_json(method, url, payload=None):
+def request_json(method, url, payload=None, token=None):
     """
     BasAgent가 Controller API와 통신하기 위한 공통 함수입니다.
 
@@ -100,6 +101,8 @@ def request_json(method, url, payload=None):
     headers = {
         "Content-Type": "application/json",
     }
+    if token:
+        headers["X-BAS-Agent-Token"] = token
 
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
@@ -138,6 +141,7 @@ class BasAgent:
         self.agent_id = config["agent_id"]
         self.controller_urls = parse_controller_urls(config)
         self.controller_url = self.controller_urls[0]
+        self.controller_token = config.get("controller_token") or os.environ.get("BAS_AGENT_TOKEN", "")
         self.interval_seconds = config["interval_seconds"]
         self.execution_mode = config["execution_mode"]
 
@@ -169,7 +173,7 @@ class BasAgent:
 
         for controller_url in ordered_urls:
             try:
-                response = request_json(method, f"{controller_url}{path}", payload)
+                response = request_json(method, f"{controller_url}{path}", payload, token=self.controller_token)
                 self.controller_url = controller_url
                 return response
             except urllib.error.URLError as exc:

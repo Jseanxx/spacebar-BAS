@@ -177,6 +177,18 @@ function renderAssetOsMark(nodeKind) {
   );
 }
 
+function shouldShowMapPath(path) {
+  if (path?.map_visible === true) return true;
+  if (path?.map_visible === false) return false;
+
+  const sourceId = String(path?.source_asset_id || "").toLowerCase();
+  const targetId = String(path?.target_asset_id || "").toLowerCase();
+  if (!sourceId || !targetId || sourceId === targetId) return false;
+
+  const label = String(path?.label || "").toLowerCase();
+  return !/(discovery|credential|staging|exfiltration|domain compromise|dump|collection)/.test(label);
+}
+
 function getTargetCapabilities(target) {
   return new Set(normalizeList(target?.capabilities).map((item) => String(item).toLowerCase()));
 }
@@ -813,7 +825,7 @@ export default function App() {
   }, [assets]);
 
   const mapLinks = useMemo(() => {
-    const configuredPaths = normalizeList(target?.attack_paths).filter((path) => path.map_visible !== false);
+    const configuredPaths = normalizeList(target?.attack_paths).filter(shouldShowMapPath);
     const displayPaths = configuredPaths.length > 0
       ? configuredPaths
       : assets.slice(0, -1).map((asset, index) => ({
@@ -844,32 +856,24 @@ export default function App() {
       }
 
       const deltaX = destination.left - source.left;
-      const deltaY = destination.top - source.top;
-      const length = Math.sqrt(deltaX * deltaX + deltaY * deltaY) || 1;
-      const unitX = deltaX / length;
-      const unitY = deltaY / length;
+      const directionX = deltaX >= 0 ? 1 : -1;
+      const edgeOffset = Math.min(8, Math.max(4, Math.abs(deltaX) * 0.28));
       const start = {
-        left: source.left + unitX * 7.2,
-        top: source.top + unitY * 7.2,
+        left: source.left + directionX * edgeOffset,
+        top: source.top - 3.5,
       };
       const end = {
-        left: destination.left - unitX * 7.2,
-        top: destination.top - unitY * 7.2,
+        left: destination.left - directionX * edgeOffset,
+        top: destination.top - 3.5,
       };
-      const midX = (start.left + end.left) / 2;
-      const midY = (start.top + end.top) / 2;
-      const longHorizontalPath = Math.abs(deltaX) > 34 && Math.abs(deltaY) < 12;
-      const curve = longHorizontalPath ? 14 : Math.min(7, Math.max(3, length * 0.08));
-      const direction = longHorizontalPath ? -1 : (index % 2 === 0 ? 1 : -1);
-      const normalX = -unitY * curve * direction;
-      const normalY = unitX * curve * direction;
+      const laneTop = Math.max(9, Math.min(start.top, end.top) - 10 - (index % 2) * 4);
       return {
         id: `${sourceId}-${targetId}-${index}`,
         sourceId,
         targetId,
         label: path.label,
         tone: ["red", "blue", "amber"][index % 3],
-        d: `M ${start.left} ${start.top} Q ${midX + normalX} ${midY + normalY}, ${end.left} ${end.top}`,
+        d: `M ${start.left} ${start.top} C ${start.left} ${laneTop}, ${end.left} ${laneTop}, ${end.left} ${end.top}`,
       };
     }).filter(Boolean);
   }, [target, assets, assetPositionById]);
@@ -1829,7 +1833,7 @@ export default function App() {
                   <div className="asset-state-row">
                     <em className="agent-pill" title={`BAS Agent ${getStatusLabel(asset.agentStatus)}`}>
                       <span className="agent-status-dot" aria-hidden="true" />
-                      BAS Agent
+                      Agent {getStatusLabel(asset.agentStatus)}
                     </em>
                     <em className={`log-pill log-${getLogCollectionClass(logStatus)}`}>Log {logStatus}</em>
                   </div>

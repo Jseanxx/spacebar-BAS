@@ -1464,26 +1464,28 @@ button {
 }
 
 .map-links path {
-  stroke-width: 1.45;
-  stroke-dasharray: none;
-  opacity: 0.82;
+  stroke-width: 1.05;
+  stroke-dasharray: 5 7;
+  opacity: 0.48;
 }
 
 .map-links .tone-red {
-  stroke: #c75d62;
+  stroke: #b45309;
 }
 
 .map-links .tone-blue {
-  stroke: #3488c8;
+  stroke: #2563eb;
 }
 
 .map-links .tone-amber {
-  stroke: #d9a72f;
+  stroke: #ca8a04;
 }
 
 .map-links .active-link {
-  stroke-width: 2.2;
+  stroke: #c2410c;
+  stroke-width: 1.9;
   stroke-dasharray: 6 5;
+  opacity: 0.95;
   animation: dash-flow 0.9s linear infinite;
 }
 
@@ -1491,13 +1493,13 @@ button {
 .asset-node.risk-critical,
 .asset-node.risk-high,
 .asset-node.risk-medium {
-  width: 190px;
-  min-height: 168px;
+  width: 212px;
+  min-height: 254px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
+  justify-content: flex-start;
+  gap: 5px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1634,7 +1636,7 @@ button {
 .asset-node strong {
   position: relative;
   z-index: 3;
-  width: 190px;
+  width: 206px;
   box-sizing: border-box;
   padding: 1px 5px;
   border-radius: 4px;
@@ -1654,7 +1656,7 @@ button {
   position: relative;
   z-index: 3;
   display: block;
-  width: 190px;
+  width: 206px;
   box-sizing: border-box;
   padding: 1px 5px;
   border-radius: 4px;
@@ -1670,11 +1672,65 @@ button {
   min-height: 0;
 }
 
-.asset-facts,
 .asset-tags,
-.asset-state-row,
-.log-detail {
+.asset-node .log-detail {
   display: none;
+}
+
+.asset-facts {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  width: 206px;
+  box-sizing: border-box;
+  gap: 3px;
+  padding: 7px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.asset-facts span {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+  color: #334155;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.asset-facts b {
+  color: #64748b;
+  font-size: 9px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.asset-state-row {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  width: 206px;
+}
+
+.asset-state-row em {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  max-width: 100%;
+  padding: 5px 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .node-ring {

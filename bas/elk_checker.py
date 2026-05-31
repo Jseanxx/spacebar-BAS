@@ -290,8 +290,16 @@ def run_live_check(elk_config, index, query, query_source, execution_context=Non
         }
 
     elk_url = elk_config.get("url") or os.environ.get("BAS_ELK_URL", DEFAULT_ELK_URL)
-    username = os.environ.get("BAS_ELK_USERNAME")
-    password = os.environ.get("BAS_ELK_PASSWORD")
+    username = (
+        elk_config.get("username")
+        or os.environ.get(elk_config.get("username_env", ""))
+        or os.environ.get("BAS_ELK_USERNAME")
+    )
+    password = (
+        elk_config.get("password")
+        or os.environ.get(elk_config.get("password_env", ""))
+        or os.environ.get("BAS_ELK_PASSWORD")
+    )
 
     try:
         result = search_elasticsearch(elk_url, index, query, username, password, time_window=time_window)

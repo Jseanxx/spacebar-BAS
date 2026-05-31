@@ -131,6 +131,7 @@ class CampaignRunner:
             step_copy["source_target_id"] = step.get("target")
             step_copy["target"] = self.campaign_id
             step_copy["selected_inputs"] = self._selection_value(selection, "inputs", {}) or {}
+            step_copy["runtime_context"] = self._selection_value(selection, "runtime_context", {}) or {}
             resolved.append(step_copy)
 
         if invalid_steps:
@@ -264,6 +265,7 @@ class CampaignRunner:
             module_params = dict(step.get("params", {}))
             input_values = self._resolve_input_values(step, target)
             module_params.update(input_values)
+            module_params.update(step.get("runtime_context") or {})
             module_params["_execution_mode"] = self.execution_mode
 
             module_result = module.run(
@@ -296,7 +298,20 @@ class CampaignRunner:
         # simulation은 실제 공격 행위가 없으므로 과거 로그와 섞이지 않게 ELK 검증을 생략합니다.
         elk_result = None
         if evidence_key and not defer_elk_checks and status not in ("simulated", "blocked", "failed"):
-            elk_result = check_elk(target, evidence_key)
+            elk_result = check_elk(
+                target,
+                evidence_key,
+                execution_context={
+                    "operation_id": module_params.get("_operation_id"),
+                    "job_id": module_params.get("_job_id"),
+                    "execution_marker": module_params.get("_execution_marker"),
+                    "step_order": step.get("order"),
+                    "time_window": {
+                        "started_at": step_started_at,
+                        "finished_at": now_kst(),
+                    },
+                },
+            )
 
         return {
             "order": step.get("order"),
@@ -310,6 +325,7 @@ class CampaignRunner:
             "source_campaign_name": step.get("source_campaign_name"),
             "selection_id": step.get("selection_id"),
             "inputs_used": input_values,
+            "runtime_context": step.get("runtime_context") or {},
             "started_at": step_started_at,
             "finished_at": now_kst(),
             "status": status,

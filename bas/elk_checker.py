@@ -1,4 +1,5 @@
 import base64
+from datetime import datetime, timedelta
 import json
 import os
 import urllib.error
@@ -127,7 +128,38 @@ def build_auth_header(username, password):
     return f"Basic {base64.b64encode(token).decode('ascii')}"
 
 
-def build_time_filter():
+def parse_iso_datetime(value):
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def build_time_filter(time_window=None):
+    if time_window:
+        started_at = parse_iso_datetime(time_window.get("started_at"))
+        finished_at = parse_iso_datetime(time_window.get("finished_at"))
+        before_seconds = int(os.environ.get("BAS_ELK_WINDOW_BEFORE_SECONDS", "30") or "30")
+        after_seconds = int(os.environ.get("BAS_ELK_WINDOW_AFTER_SECONDS", "300") or "300")
+
+        if started_at:
+            bounds = {
+                "gte": (started_at - timedelta(seconds=max(0, before_seconds))).isoformat(),
+            }
+            if finished_at:
+                bounds["lte"] = (finished_at + timedelta(seconds=max(0, after_seconds))).isoformat()
+            else:
+                bounds["lte"] = "now"
+
+            return {
+                "range": {
+                    "@timestamp": bounds,
+                }
+            }
+
     raw_minutes = os.environ.get("BAS_ELK_LOOKBACK_MINUTES", str(DEFAULT_LOOKBACK_MINUTES))
 
     try:
@@ -148,7 +180,7 @@ def build_time_filter():
     }
 
 
-def search_elasticsearch(elk_url, index, query, username=None, password=None):
+def search_elasticsearch(elk_url, index, query, username=None, password=None, time_window=None):
     filters = [
         {
             "query_string": {
@@ -158,7 +190,7 @@ def search_elasticsearch(elk_url, index, query, username=None, password=None):
         }
     ]
 
-    time_filter = build_time_filter()
+    time_filter = build_time_filter(time_window=time_window)
     if time_filter:
         filters.append(time_filter)
 
@@ -219,7 +251,7 @@ def format_sample_events(hits):
     return samples
 
 
-def run_live_check(elk_config, index, query, query_source):
+def run_live_check(elk_config, index, query, query_source, execution_context=None, time_window=None):
     if not query:
         return {
             "checked": False,
@@ -237,7 +269,7 @@ def run_live_check(elk_config, index, query, query_source):
     password = os.environ.get("BAS_ELK_PASSWORD")
 
     try:
-        result = search_elasticsearch(elk_url, index, query, username, password)
+        result = search_elasticsearch(elk_url, index, query, username, password, time_window=time_window)
         hits = result.get("hits", {})
         total = hits.get("total", {})
         event_count = total.get("value", 0) if isinstance(total, dict) else total
@@ -249,6 +281,8 @@ def run_live_check(elk_config, index, query, query_source):
             "index": index,
             "query": query,
             "query_source": query_source,
+            "execution_context": execution_context or {},
+            "time_window": time_window or {},
             "sample_events": format_sample_events(hits.get("hits", [])),
             "message": f"Elasticsearch live check completed against {elk_url}.",
         }
@@ -260,13 +294,17 @@ def run_live_check(elk_config, index, query, query_source):
             "index": index,
             "query": query,
             "query_source": query_source,
+            "execution_context": execution_context or {},
+            "time_window": time_window or {},
             "sample_events": [],
             "message": f"Elasticsearch live check failed: {exc}",
         }
 
 
-def check_elk(target, evidence_key):
+def check_elk(target, evidence_key, execution_context=None):
     elk_config = target.get("elk", {})
+    execution_context = execution_context or {}
+    time_window = execution_context.get("time_window") or {}
 
     query, query_source = resolve_query(target, evidence_key)
     index = elk_config.get("index", "logs-*")
@@ -317,7 +355,27 @@ def check_elk(target, evidence_key):
             "message": f"No ELK query configured for evidence key: {evidence_key}",
         }
 
-    source_check = run_live_check(elk_config, index, query, query_source)
+    source_check = run_live_check(
+        elk_config,
+        index,
+        query,
+        query_source,
+        execution_context=execution_context,
+        time_window=time_window,
+    )
+
+    execution_marker = execution_context.get("execution_marker")
+    if execution_marker:
+        escaped_marker = str(execution_marker).replace('"', '\\"')
+        marker_query = f'"SPACEBAR_BAS_MARKER={escaped_marker}" OR "{escaped_marker}"'
+        source_check["marker_check"] = run_live_check(
+            elk_config,
+            index,
+            marker_query,
+            "execution_marker",
+            execution_context=execution_context,
+            time_window=time_window,
+        )
 
     if alert_query:
         source_check["alert_check"] = run_live_check(
@@ -325,6 +383,8 @@ def check_elk(target, evidence_key):
             alert_index,
             alert_query,
             alert_query_source,
+            execution_context=execution_context,
+            time_window=time_window,
         )
     else:
         source_check["alert_check"] = {

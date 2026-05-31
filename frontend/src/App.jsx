@@ -4,7 +4,7 @@ import "./styles.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 const POLL_INTERVAL_MS = 900;
-const POLL_LIMIT = 70;
+const POLL_LIMIT = 240;
 const DASHBOARD_CACHE_KEY = "bas-dashboard-cache-v1";
 
 const PANELS = [
@@ -123,6 +123,37 @@ function getStatusLabel(status) {
     success: "성공",
   };
   return labels[status] || status || "대기";
+}
+
+function isOperationSettled(operation) {
+  if (!operation) return false;
+  const finalStatus = ["completed", "simulated", "cancelled", "blocked", "failed"].includes(operation.status);
+  if (!finalStatus) return false;
+
+  const validationStatus = operation.elk_validation_status;
+  const validationPending = ["waiting", "running"].includes(validationStatus);
+  if (validationPending) return false;
+
+  if (operation.status === "completed" && !operation.report && !operation.report_error) return false;
+  return true;
+}
+
+function getToastTone(error, notice) {
+  if (error) return "error";
+  if (!notice) return "neutral";
+
+  const progressMatch = String(notice).match(/(\d+)\/(\d+)/);
+  if (progressMatch) {
+    const current = Number(progressMatch[1]);
+    const total = Number(progressMatch[2]);
+    if (total > 0 && current >= total) return "success";
+    return "progress";
+  }
+
+  if (/(완료|반영|제외했습니다|담았습니다|올렸습니다)/.test(notice)) return "success";
+  if (/(진행 중|검증 중|생성 중|시작했습니다)/.test(notice)) return "progress";
+  if (/(불안정|취소|초기화)/.test(notice)) return "warning";
+  return "neutral";
 }
 
 function getLogCollectionStatus(asset) {
@@ -807,26 +838,35 @@ export default function App() {
       const operation = await fetchJson(`/operations/${operationId}`);
       setSelectedOperation(operation);
 
-      if (["completed", "simulated"].includes(operation.status)) {
+      if (isOperationSettled(operation) && ["completed", "simulated"].includes(operation.status)) {
         setNotice(operation.status === "simulated" ? "시뮬레이션으로 완료되었습니다." : "검증 런이 완료되었습니다.");
         await refreshRuntime();
+        const latest = await fetchJson(`/operations/${operationId}`);
+        setSelectedOperation(latest);
         return;
       }
 
-      if (operation.status === "cancelled") {
+      if (isOperationSettled(operation) && operation.status === "cancelled") {
         setNotice("런 취소 요청이 반영되었습니다.");
         await refreshRuntime();
         return;
       }
 
-      if (["blocked", "failed"].includes(operation.status)) {
+      if (isOperationSettled(operation) && ["blocked", "failed"].includes(operation.status)) {
         await refreshRuntime();
         throw new Error(`Operation ${operation.status}`);
       }
 
       const success = operation.summary?.success || 0;
       const total = operation.summary?.total || 0;
-      setNotice(`런 진행 중: ${success}/${total} 완료`);
+      const validationStatus = operation.elk_validation_status;
+      if (["waiting", "running"].includes(validationStatus)) {
+        setNotice(`ELK 검증 중: ${success}/${total} 실행 완료`);
+      } else if (operation.status === "completed" && !operation.report && !operation.report_error) {
+        setNotice(`리포트 생성 중: ${success}/${total} 실행 완료`);
+      } else {
+        setNotice(`런 진행 중: ${success}/${total} 완료`);
+      }
       await new Promise((resolve) => window.setTimeout(resolve, POLL_INTERVAL_MS));
     }
   }
@@ -1380,7 +1420,7 @@ export default function App() {
 
       <section className="map-stage">
         {(error || notice) && (
-          <div className={`toast ${error ? "error" : ""}`}>
+          <div className={`toast ${getToastTone(error, notice)}`}>
             {error || notice}
           </div>
         )}

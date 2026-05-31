@@ -834,10 +834,25 @@ def get_operation_step_evidence(step):
     module_result = step.get("module_result") or {}
     result_step = step.get("result_step") or {}
     result_module = result_step.get("module_result") or {}
+    runtime_context = (
+        step.get("runtime_context")
+        or result_step.get("runtime_context")
+        or module_result.get("runtime_context")
+        or result_module.get("runtime_context")
+        or {}
+    )
 
     return {
         "evidence_key": module_result.get("evidence_key") or result_module.get("evidence_key"),
         "target_id": step.get("target_id") or result_step.get("target_id"),
+        "operation_id": step.get("operation_id") or runtime_context.get("_operation_id"),
+        "job_id": step.get("job_id") or runtime_context.get("_job_id"),
+        "execution_marker": step.get("execution_marker") or runtime_context.get("_execution_marker"),
+        "step_order": step.get("order") or runtime_context.get("_step_order"),
+        "time_window": {
+            "started_at": result_step.get("started_at") or step.get("started_at"),
+            "finished_at": result_step.get("finished_at") or step.get("finished_at"),
+        },
     }
 
 
@@ -852,7 +867,17 @@ def should_defer_check_step(step):
 def run_step_elk_check(step):
     evidence = get_operation_step_evidence(step)
     target = load_target(evidence["target_id"])
-    return check_elk(target, evidence["evidence_key"])
+    return check_elk(
+        target,
+        evidence["evidence_key"],
+        execution_context={
+            "operation_id": evidence.get("operation_id"),
+            "job_id": evidence.get("job_id"),
+            "execution_marker": evidence.get("execution_marker"),
+            "step_order": evidence.get("step_order"),
+            "time_window": evidence.get("time_window") or {},
+        },
+    )
 
 
 def attach_deferred_elk_checks(operation):
@@ -964,6 +989,13 @@ def create_operation_job(operation, step_entry):
         return None
 
     job_id = f"job-{datetime.now(KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    execution_marker = step_entry.get("execution_marker") or f"{operation['operation_id']}-step-{step_entry.get('order')}"
+    runtime_context = {
+        "_operation_id": operation["operation_id"],
+        "_job_id": job_id,
+        "_execution_marker": execution_marker,
+        "_step_order": step_entry.get("order"),
+    }
     job = {
         "job_id": job_id,
         "operation_id": operation["operation_id"],
@@ -976,6 +1008,7 @@ def create_operation_job(operation, step_entry):
                 "campaign_id": step_entry["campaign_id"],
                 "order": step_entry["order"],
                 "inputs": step_entry.get("inputs", {}),
+                "runtime_context": runtime_context,
             }
         ],
         "include_normal": False,
@@ -993,6 +1026,9 @@ def create_operation_job(operation, step_entry):
     step_entry["status"] = "queued"
     step_entry["agent_id"] = agent.get("agent_id")
     step_entry["job_id"] = job_id
+    step_entry["operation_id"] = operation["operation_id"]
+    step_entry["execution_marker"] = execution_marker
+    step_entry["runtime_context"] = runtime_context
     operation["status"] = "running"
     operation["summary"] = build_operation_summary(operation["final_steps"])
 
@@ -1322,6 +1358,13 @@ def create_operation(request: OperationRequest):
             "status": "pending",
             "agent_id": None,
             "job_id": None,
+            "operation_id": operation_id,
+            "execution_marker": f"{operation_id}-step-{step.get('order')}",
+            "runtime_context": {
+                "_operation_id": operation_id,
+                "_execution_marker": f"{operation_id}-step-{step.get('order')}",
+                "_step_order": step.get("order"),
+            },
         }
 
         if not select_online_agent(request.campaign_id, role):

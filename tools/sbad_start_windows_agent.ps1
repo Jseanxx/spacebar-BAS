@@ -7,6 +7,7 @@ param(
     [string]$ElkUrl = "http://10.0.4.30:9200",
     [string]$ElkUsername = "elastic",
     [string]$ElkPassword,
+    [string]$EmployeePassword,
     [string]$SvcFilePassword,
     [int]$AlertWaitSeconds = 45,
     [switch]$AllowRealExecution,
@@ -40,6 +41,10 @@ if ($SvcFilePassword) {
     $env:BAS_SVC_FILE_PASSWORD = $SvcFilePassword
 }
 
+if ($EmployeePassword) {
+    $env:BAS_EMPLOYEE_PASSWORD = $EmployeePassword
+}
+
 if ($AllowRealExecution -or $Mode -eq "real") {
     $env:BAS_ALLOW_REAL_EXECUTION = "1"
 }
@@ -56,6 +61,6 @@ if (-not (Test-Path -LiteralPath $config)) {
 Write-Host "[+] Starting SB-AD $Role BasAgent mode=$Mode"
 Write-Host "[+] Config: $config"
 Write-Host "[+] ELK: $ElkUrl"
-Write-Host "[!] Secrets such as BAS_SVC_FILE_PASSWORD and BAS_ELK_PASSWORD must be set before real validation."
+Write-Host "[!] Secrets such as BAS_EMPLOYEE_PASSWORD, BAS_SVC_FILE_PASSWORD and BAS_ELK_PASSWORD must be set before real validation."
 
 .\.venv\Scripts\python.exe agent_runtime\bas_agent.py --config $config --execution-mode $Mode

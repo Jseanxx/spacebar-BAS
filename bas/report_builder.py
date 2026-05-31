@@ -997,7 +997,6 @@ def write_report_artifacts(report):
 def render_summary_markdown(report):
     summary = report["summary"]
     backlog = report.get("backlog", [])
-    top_gaps = backlog[:5]
     lines = [
         f"# {report.get('campaign_name') or report.get('campaign_id')} BAS 결과 요약",
         "",
@@ -1018,8 +1017,8 @@ def render_summary_markdown(report):
         "",
     ]
 
-    if top_gaps:
-        for item in top_gaps:
+    if backlog:
+        for item in backlog:
             action = ACTION_LABELS.get(item.get("recommended_action"), item.get("recommended_action") or "-")
             gap = GAP_LABELS.get(item.get("gap_type"), item.get("gap_type") or "-")
             lines.append(
@@ -1310,7 +1309,7 @@ def render_summary_html(report):
             f"<td>{text(ACTION_LABELS.get(item.get('recommended_action'), item.get('recommended_action') or '-'))}</td>"
             f"<td>{text(item.get('verification_method'))}</td>"
             "</tr>"
-            for item in backlog[:8]
+            for item in backlog
         )
     else:
         backlog_rows = "<tr><td colspan=\"5\" class=\"empty\">추가 개선 항목이 생성되지 않았습니다.</td></tr>"

@@ -169,7 +169,7 @@ ad:
   netbios_domain: MYCOMPANY
 
 accounts:
-  employee_user: employee2
+  employee_user: employee1
   service_user: svc_file
   admin_user: Administrator
 
@@ -251,7 +251,7 @@ log_queries:
   local_data_staging: >-
     host.name:"FS01.mycompany.local" AND event.code:"11" AND winlog.event_data.TargetFilename:(*\\share\\01_Public\\* OR *\\01_Public\\* OR *data.zip OR *sys_evnt_log_20260508.log OR *tmp_bak_0508.dat)
   exfiltration_over_c2: >-
-    event.code:("3" OR "5156") AND host.name:("FS01.mycompany.local" OR "PC01.mycompany.local") AND (winlog.event_data.Image:(*powershell.exe OR *cmd.exe OR "<unknown process>") OR winlog.event_data.Application:(*powershell.exe OR *cmd.exe)) AND NOT (winlog.event_data.DestinationIp:10.* OR winlog.event_data.DestAddress:10.* OR winlog.event_data.DestinationIp:127.0.0.1 OR winlog.event_data.DestAddress:127.0.0.1 OR winlog.event_data.DestinationIp:169.254.* OR winlog.event_data.DestAddress:169.254.*)
+    host.name:("FS01.mycompany.local" OR "PC01.mycompany.local") AND (((event.code:("3" OR "5156") AND (winlog.event_data.Image:(*powershell.exe OR *cmd.exe OR "<unknown process>") OR winlog.event_data.Application:(*powershell.exe OR *cmd.exe)) AND NOT (winlog.event_data.DestinationIp:10.* OR winlog.event_data.DestAddress:10.* OR winlog.event_data.DestinationIp:127.0.0.1 OR winlog.event_data.DestAddress:127.0.0.1 OR winlog.event_data.DestinationIp:169.254.* OR winlog.event_data.DestAddress:169.254.*)) OR (event.code:"1" AND winlog.event_data.Image:*powershell.exe AND winlog.event_data.CommandLine:(*Invoke-WebRequest* OR *iwr*) AND winlog.event_data.CommandLine:*upload*) OR (event.code:"4104" AND message:(*Invoke-WebRequest* OR *iwr*) AND message:*upload*)))
   masquerading_legitimate_name: >-
     host.name:"FS01.mycompany.local" AND ((event.code:"11" AND winlog.event_data.TargetFilename:*01_Public*) OR (event.code:"1" AND winlog.event_data.Image:*powershell.exe AND winlog.event_data.CommandLine:*Out-File* AND winlog.event_data.CommandLine:*01_Public*))
   archive_collected_data: >-

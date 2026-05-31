@@ -50,6 +50,26 @@ jobs:
           printf '%s\n' "${{ secrets.BAS_AWS_SSH_KEY }}" > ~/.ssh/spacebar-bas.pem
           chmod 600 ~/.ssh/spacebar-bas.pem
 
+      - name: Allow runner SSH access
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.BAS_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BAS_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.BAS_AWS_REGION }}
+          BAS_AWS_SECURITY_GROUP_ID: ${{ secrets.BAS_AWS_SECURITY_GROUP_ID }}
+          BAS_AWS_SSH_PORT: ${{ secrets.BAS_AWS_SSH_PORT }}
+        run: |
+          RUNNER_IP="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')"
+          if [ -z "${RUNNER_IP}" ]; then
+            echo "Failed to resolve GitHub runner public IP." >&2
+            exit 1
+          fi
+          printf '%s' "${RUNNER_IP}" > /tmp/github-actions-runner-ip
+          aws --version
+          aws ec2 authorize-security-group-ingress \
+            --group-id "${BAS_AWS_SECURITY_GROUP_ID}" \
+            --ip-permissions "IpProtocol=tcp,FromPort=${BAS_AWS_SSH_PORT:-2222},ToPort=${BAS_AWS_SSH_PORT:-2222},IpRanges=[{CidrIp=${RUNNER_IP}/32,Description=GitHub Actions BAS deploy}]" \
+            || true
+
       - name: Upload archive and deploy script
         env:
           BAS_AWS_HOST: ${{ secrets.BAS_AWS_HOST }}
@@ -88,3 +108,24 @@ jobs:
           DASHBOARD_PASSWORD: ${{ secrets.BAS_DASHBOARD_PASSWORD }}
         run: |
           curl --fail -u "${DASHBOARD_USER:-spacebar}:${DASHBOARD_PASSWORD}" "http://${BAS_AWS_HOST}:443/api/health"
+
+      - name: Revoke runner SSH access
+        if: always()
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.BAS_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BAS_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.BAS_AWS_REGION }}
+          BAS_AWS_SECURITY_GROUP_ID: ${{ secrets.BAS_AWS_SECURITY_GROUP_ID }}
+          BAS_AWS_SSH_PORT: ${{ secrets.BAS_AWS_SSH_PORT }}
+        run: |
+          if [ ! -s /tmp/github-actions-runner-ip ]; then
+            echo "No runner IP file found; nothing to revoke."
+            exit 0
+          fi
+          RUNNER_IP="$(cat /tmp/github-actions-runner-ip)"
+          aws ec2 revoke-security-group-ingress \
+            --group-id "${BAS_AWS_SECURITY_GROUP_ID}" \
+            --protocol tcp \
+            --port "${BAS_AWS_SSH_PORT:-2222}" \
+            --cidr "${RUNNER_IP}/32" \
+            || true

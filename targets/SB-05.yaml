@@ -12,6 +12,13 @@ operation_defaults:
   staging_dir: /tmp/sb05_stage
   archive_name: sb05_archive.zip
   destination: private_s3_bucket
+ssh:
+  host: 44.196.147.30
+  ssh_user: ubuntu
+  ssh_key_path: 'C:\Users\KISIA\Downloads\Attacker-key.pem'
+  ssh_port: 22
+  local_hostnames:
+    - sb05-attacker
 segments:
   - segment_id: compromised-zone
     name: ATTACKER / COMPROMISED ZONE
@@ -30,7 +37,8 @@ assets:
     name: Compromised Deploy Host
     hostname: sb05-attacker
     private_ip: N/A
-    public_ip: N/A
+    public_ip: 44.196.147.30
+    elastic_ip: 44.196.147.30
     role: 침해된 배포/운영 지점
     segment_id: compromised-zone
     platform: Ubuntu
@@ -50,6 +58,8 @@ assets:
     name: Kubernetes Node / k3s Cluster
     hostname: sb05-kubernetes
     private_ip: N/A
+    public_ip: 54.209.58.38
+    elastic_ip: 54.209.58.38
     role: k3s Kubernetes Node
     segment_id: kubernetes-zone
     platform: Kubernetes
@@ -102,7 +112,8 @@ assets:
     name: ELK / Monitoring
     hostname: sb05-elk
     private_ip: N/A
-    public_ip: N/A
+    public_ip: 35.168.42.122
+    elastic_ip: 35.168.42.122
     role: 로그 분석 서버
     segment_id: monitoring-zone
     platform: Ubuntu
@@ -163,6 +174,8 @@ attack_paths:
     label: Linux auditd staging and archive evidence
     techniques: [T1074.001, T1560.001]
 capabilities:
+  - ssh
+  - deploy_key
   - kubernetes
   - kubectl
   - kube_audit
@@ -182,6 +195,7 @@ elk:
     aws_cloudtrail: sb05.aws_cloudtrail
 
 log_queries:
+  sb05_ssh_access_check: 'data_stream.dataset:"sb05.attacker_auditd" and (process.name:"sshd" or event.action:"ssh_login" or message:"Accepted publickey")'
   kube_get_pods: 'data_stream.dataset:"sb05.kubernetes_audit" and objectRef.resource:"pods"'
   kube_get_services: 'data_stream.dataset:"sb05.kubernetes_audit" and objectRef.resource:"services"'
   kube_get_deployments: 'data_stream.dataset:"sb05.kubernetes_audit" and objectRef.resource:"deployments"'

@@ -574,6 +574,7 @@ def resolve_step_asset_id(step):
     behavior = params.get("behavior") or step.get("behavior")
     if target_id == "SB-05":
         sb05_behavior_asset_map = {
+            "sb05_ssh_access_check": "sb05-attacker",
             "kube_get_pods": "sb05-kubernetes",
             "kube_get_services": "prod-platform",
             "kube_get_deployments": "prod-platform",
@@ -1050,6 +1051,9 @@ def build_operation_summary(final_steps):
 
 
 def create_operation_job(operation, step_entry):
+    if step_entry.get("execution_location") == "controller":
+        return create_controller_operation_job(operation, step_entry)
+
     agent = select_online_agent(operation["campaign_id"], step_entry["agent_role"])
 
     if not agent:
@@ -1111,6 +1115,85 @@ def create_operation_job(operation, step_entry):
 
     write_json_file(get_job_path(job_id), job)
     write_operation(operation)
+
+    return job
+
+
+def create_controller_operation_job(operation, step_entry):
+    job_id = f"job-{datetime.now(KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    runtime_context = step_entry.get("runtime_context") or {
+        "_operation_id": operation["operation_id"],
+        "_execution_marker": step_entry.get("execution_marker"),
+        "_step_order": step_entry.get("order"),
+    }
+    job = {
+        "job_id": job_id,
+        "operation_id": operation["operation_id"],
+        "agent_id": "controller",
+        "agent_role": "controller",
+        "campaign_id": operation["campaign_id"],
+        "selected_orders": None,
+        "selected_steps": [
+            {
+                "campaign_id": step_entry["campaign_id"],
+                "order": step_entry["order"],
+                "inputs": step_entry.get("inputs", {}),
+                "runtime_context": runtime_context,
+            }
+        ],
+        "include_normal": False,
+        "execution_mode": operation.get("execution_mode"),
+        "defer_elk_checks": True,
+        "status": "running",
+        "created_at": now_kst(),
+        "started_at": now_kst(),
+        "finished_at": None,
+        "execution_id": None,
+        "result": None,
+        "error": None,
+    }
+
+    step_entry["status"] = "running"
+    step_entry["agent_id"] = "controller"
+    step_entry["agent_role"] = "controller"
+    step_entry["job_id"] = job_id
+    step_entry["operation_id"] = operation["operation_id"]
+    step_entry["runtime_context"] = runtime_context
+    operation["status"] = "running"
+    operation["summary"] = build_operation_summary(operation["final_steps"])
+    write_json_file(get_job_path(job_id), job)
+    write_operation(operation)
+
+    previous_defer_elk = os.environ.get("BAS_DEFER_ELK_CHECKS")
+    if job.get("defer_elk_checks", False):
+        os.environ["BAS_DEFER_ELK_CHECKS"] = "1"
+
+    try:
+        result, _ = run_campaign(
+            campaign_id=operation["campaign_id"],
+            selected_orders=None,
+            selected_steps=job["selected_steps"],
+            include_normal=False,
+            execution_mode=operation.get("execution_mode"),
+        )
+        job["status"] = "completed"
+        job["execution_id"] = result.get("execution_id")
+        job["result"] = result
+        job["error"] = None
+    except Exception as exc:
+        job["status"] = "failed"
+        job["execution_id"] = None
+        job["result"] = None
+        job["error"] = str(exc)
+    finally:
+        if previous_defer_elk is None:
+            os.environ.pop("BAS_DEFER_ELK_CHECKS", None)
+        else:
+            os.environ["BAS_DEFER_ELK_CHECKS"] = previous_defer_elk
+
+    job["finished_at"] = now_kst()
+    write_json_file(get_job_path(job_id), job)
+    update_operation_from_job_result(job)
 
     return job
 
@@ -1495,6 +1578,7 @@ def create_operation(request: OperationRequest):
             "agent_role": role,
             "asset_id": resolve_step_asset_id(step),
             "execution_host": (step.get("params") or {}).get("execution_host"),
+            "execution_location": (step.get("params") or {}).get("execution_location"),
             "inputs": step.get("selected_inputs", {}),
             "status": "pending",
             "agent_id": None,
@@ -1508,7 +1592,7 @@ def create_operation(request: OperationRequest):
             },
         }
 
-        if not select_online_agent(request.campaign_id, role):
+        if step_entry.get("execution_location") != "controller" and not select_online_agent(request.campaign_id, role):
             missing_roles.append(role)
 
         final_steps.append(step_entry)

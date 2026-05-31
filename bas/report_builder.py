@@ -174,6 +174,7 @@ TECHNIQUE_TACTICS = {
     "T1003.002": "credential_access",
     "T1003.003": "credential_access",
     "T1003.006": "credential_access",
+    "T1021.004": "lateral_movement",
     "T1021.006": "lateral_movement",
     "T1074.001": "collection",
     "T1560.001": "collection",
@@ -507,6 +508,8 @@ def expected_log(step):
     requires = set(normalize_list(step.get("requires")))
     behavior = step_behavior(step) or ""
 
+    if behavior in ("sb05_ssh_access_check", "jenkins_to_app_ssh"):
+        return "Linux auth.log/auditd SSH accepted publickey event"
     if behavior in ("kerberoasting_tgs_request",):
         return "Windows Security 4769 Kerberos TGS 요청"
     if behavior in ("dcsync_replication",):
@@ -533,10 +536,15 @@ def expected_log(step):
 
 
 def risk_level(step):
+    if step.get("phase") == "normal":
+        return "low"
     return str(step.get("risk") or "medium").lower()
 
 
 def system_impact(step):
+    if step.get("phase") == "normal":
+        return "낮음 - 정상 기준 로그"
+
     risk = risk_level(step)
     behavior = step_behavior(step) or ""
     safety_gates = set(normalize_list(get_step_params(step).get("safety_gates")))
@@ -556,6 +564,13 @@ def clamp_percent(value):
 
 
 def estimated_impact(step):
+    if step.get("phase") == "normal":
+        return {
+            "service_impact_percent": 2,
+            "network_impact_percent": 1,
+            "basis": "normal baseline step",
+        }
+
     risk = risk_level(step)
     params = get_step_params(step)
     behavior = str(step_behavior(step) or "").lower()

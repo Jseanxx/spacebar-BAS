@@ -129,6 +129,46 @@ function getStepSourceId(step, fallbackCampaignId) {
   return step.source_campaign_id || step.campaign_id || fallbackCampaignId;
 }
 
+function getTargetCapabilities(target) {
+  return new Set(normalizeList(target?.capabilities).map((item) => String(item).toLowerCase()));
+}
+
+function getStepCompatibility(step, target, currentCampaignId) {
+  const sourceId = getStepSourceId(step, currentCampaignId);
+  if (sourceId === currentCampaignId) {
+    return {
+      compatible: true,
+      reason: "현재 환경 기본 Technique",
+      missing: [],
+    };
+  }
+
+  const required = normalizeList(step?.requires).map((item) => String(item).toLowerCase());
+  if (required.length === 0) {
+    return {
+      compatible: false,
+      reason: "현재 환경에서 필요한 실행 조건을 확인할 수 없음",
+      missing: [],
+    };
+  }
+
+  const capabilities = getTargetCapabilities(target);
+  const missing = required.filter((item) => !capabilities.has(item));
+  if (missing.length > 0) {
+    return {
+      compatible: false,
+      reason: `현재 환경에 없는 조건: ${missing.join(", ")}`,
+      missing,
+    };
+  }
+
+  return {
+    compatible: true,
+    reason: "현재 환경 capability와 실행 조건이 일치",
+    missing: [],
+  };
+}
+
 function getTechniqueLabel(step) {
   return step.technique_id ? `${step.technique_id} · ${step.name}` : step.name;
 }
@@ -319,6 +359,7 @@ function getCoverageFields(step, detectionStatus) {
 }
 
 function getStepRiskLevel(step) {
+  if (step?.phase === "normal") return "low";
   return String(step?.risk || step?.params?.risk || "medium").toLowerCase();
 }
 
@@ -331,6 +372,22 @@ function clampPercent(value) {
 }
 
 function getSafetyProfile(step) {
+  if (step?.phase === "normal") {
+    return {
+      risk: "low",
+      impact: "Low",
+      failurePossibility: "없음",
+      networkLoad: "없음",
+      serviceDownPossibility: "N/A",
+      serviceImpactPercent: 2,
+      networkImpactPercent: 1,
+      warningRequired: "불필요",
+      executionRecommendation: "안전",
+      className: "safe",
+      gates: [],
+    };
+  }
+
   const risk = getStepRiskLevel(step);
   const gates = getSafetyGates(step);
   const behavior = String(step?.params?.behavior || step?.behavior || "").toLowerCase();
@@ -460,7 +517,7 @@ export default function App() {
   const [activePanel, setActivePanel] = useState("overview");
   const [query, setQuery] = useState("");
   const [phaseFilter, setPhaseFilter] = useState("all");
-  const [sourceFilter, setSourceFilter] = useState(getInitialCampaignId);
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [executionMode, setExecutionMode] = useState("real");
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedOperation, setSelectedOperation] = useState(null);
@@ -544,7 +601,7 @@ export default function App() {
       setCampaign(cachedCampaign || null);
       setTarget(cachedTarget || null);
       setCampaignId(nextCampaignId);
-      setSourceFilter(nextCampaignId);
+      setSourceFilter("all");
       syncCampaignUrl(nextCampaignId);
       setSelectedRun(null);
       setSelectedOperation(null);
@@ -570,7 +627,7 @@ export default function App() {
 
     setCampaign(campaignData);
     setCampaignId(nextCampaignId);
-    setSourceFilter(nextCampaignId);
+    setSourceFilter("all");
     syncCampaignUrl(nextCampaignId);
     setSelectedRun(null);
     setSelectedOperation(null);
@@ -605,7 +662,7 @@ export default function App() {
       if (cached.campaignsById?.[bootCampaignId]) setCampaign(cached.campaignsById[bootCampaignId]);
       if (cached.targetsById?.[bootCampaignId]) setTarget(cached.targetsById[bootCampaignId]);
       setCampaignId(bootCampaignId);
-      setSourceFilter(bootCampaignId);
+      setSourceFilter("all");
       syncCampaignUrl(bootCampaignId);
 
       try {
@@ -818,6 +875,19 @@ export default function App() {
     setExpandedEvidenceKey("");
   }, [selectedOperationKey, selectedRun?.execution_id]);
 
+  useEffect(() => {
+    if (!target || library.length === 0) return;
+
+    const byId = new Map();
+    library.forEach((step) => byId.set(getStepSelectionId(step, campaignId), step));
+    normalizeList(campaign?.flow).forEach((step) => byId.set(getStepSelectionId(step, campaignId), step));
+
+    setSelectedIds((currentIds) => currentIds.filter((id) => {
+      const step = byId.get(id);
+      return step && getStepCompatibility(step, target, campaignId).compatible;
+    }));
+  }, [target, library, campaign, campaignId]);
+
   const filteredLibrary = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return library.filter((step) => {
@@ -827,8 +897,21 @@ export default function App() {
       const matchesPhase = phaseFilter === "all" || (step.phase || "attack") === phaseFilter;
       const matchesQuery = !normalizedQuery || haystack.includes(normalizedQuery);
       return matchesSource && matchesPhase && matchesQuery;
+    }).sort((left, right) => {
+      const leftCompatibility = getStepCompatibility(left, target, campaignId);
+      const rightCompatibility = getStepCompatibility(right, target, campaignId);
+      if (leftCompatibility.compatible !== rightCompatibility.compatible) {
+        return leftCompatibility.compatible ? -1 : 1;
+      }
+
+      const leftSource = getStepSourceId(left, campaignId);
+      const rightSource = getStepSourceId(right, campaignId);
+      if (leftSource === campaignId && rightSource !== campaignId) return -1;
+      if (leftSource !== campaignId && rightSource === campaignId) return 1;
+      if (leftSource !== rightSource) return leftSource.localeCompare(rightSource);
+      return (left.order || 0) - (right.order || 0);
     });
-  }, [library, campaignId, query, phaseFilter, sourceFilter]);
+  }, [library, target, campaignId, query, phaseFilter, sourceFilter]);
   const libraryEmptyMessage = error
     ? `Technique 데이터를 불러오지 못했습니다: ${error}`
     : library.length === 0
@@ -839,13 +922,16 @@ export default function App() {
     Array.from(new Set(library.map((step) => getStepSourceId(step, campaignId)))).sort()
   ), [library, campaignId]);
 
-  const filteredSelectionIds = useMemo(() => (
-    filteredLibrary.map((step) => getStepSelectionId(step, campaignId))
-  ), [filteredLibrary, campaignId]);
+  const selectableFilteredSelectionIds = useMemo(() => (
+    filteredLibrary
+      .filter((step) => getStepCompatibility(step, target, campaignId).compatible)
+      .map((step) => getStepSelectionId(step, campaignId))
+  ), [filteredLibrary, target, campaignId]);
+  const filteredSelectionIds = selectableFilteredSelectionIds;
 
   const selectedFilteredCount = useMemo(() => (
-    filteredSelectionIds.filter((id) => selectedIds.includes(id)).length
-  ), [filteredSelectionIds, selectedIds]);
+    selectableFilteredSelectionIds.filter((id) => selectedIds.includes(id)).length
+  ), [selectableFilteredSelectionIds, selectedIds]);
   const safetySummary = useMemo(() => summarizeSafetyProfiles(selectedSteps), [selectedSteps]);
   const successfulRuns = useMemo(() => runs.filter(hasSuccessfulStep), [runs]);
   const successfulOperations = useMemo(() => operations.filter((operation) => (
@@ -853,6 +939,12 @@ export default function App() {
   )), [operations]);
 
   function toggleStep(step) {
+    const compatibility = getStepCompatibility(step, target, campaignId);
+    if (!compatibility.compatible) {
+      setNotice(compatibility.reason);
+      return;
+    }
+
     const selectionId = getStepSelectionId(step, campaignId);
     setSelectedIds((currentIds) => {
       if (currentIds.includes(selectionId)) {
@@ -871,7 +963,7 @@ export default function App() {
   function selectFilteredTechniques() {
     setSelectedIds((currentIds) => {
       const nextIds = [...currentIds];
-      filteredSelectionIds.forEach((id) => {
+      selectableFilteredSelectionIds.forEach((id) => {
         if (!nextIds.includes(id)) nextIds.push(id);
       });
       return nextIds;
@@ -1179,14 +1271,14 @@ export default function App() {
           <div className="library-run-strip">
             <div>
               <span>선택됨</span>
-              <strong>{selectedFilteredCount}/{filteredLibrary.length}</strong>
+              <strong>{selectedFilteredCount}/{selectableFilteredSelectionIds.length}</strong>
             </div>
             <button type="button" className="secondary-button" onClick={runQueue} disabled={isRunning || selectedSteps.length === 0}>
               {isRunning ? "실행 중" : "선택 실행"}
             </button>
           </div>
           <div className="library-bulk-actions">
-            <button type="button" className="ghost-button" onClick={selectFilteredTechniques} disabled={filteredLibrary.length === 0 || selectedFilteredCount === filteredLibrary.length}>
+            <button type="button" className="ghost-button" onClick={selectFilteredTechniques} disabled={selectableFilteredSelectionIds.length === 0 || selectedFilteredCount === selectableFilteredSelectionIds.length}>
               전체 선택
             </button>
             <button type="button" className="ghost-button" onClick={clearFilteredTechniques} disabled={selectedFilteredCount === 0}>
@@ -1202,16 +1294,20 @@ export default function App() {
               const selected = selectedIds.includes(selectionId);
               const phase = step.phase || "attack";
               const safety = getSafetyProfile(step);
+              const compatibility = getStepCompatibility(step, target, campaignId);
               return (
                 <button
                   key={selectionId}
                   type="button"
-                  className={`technique-card ${phase} ${selected ? "selected" : ""}`}
+                  className={`technique-card ${phase} ${selected ? "selected" : ""} ${compatibility.compatible ? "" : "unavailable"}`}
                   onClick={() => toggleStep(step)}
+                  disabled={!compatibility.compatible}
+                  title={compatibility.compatible ? "" : compatibility.reason}
                 >
                   <span className="phase-line">
                     <em>{phase === "normal" ? "Normal" : "Attack"}</em>
                     <b>{step.technique_id || "STEP"}</b>
+                    {!compatibility.compatible && <i className="unavailable-badge">적용 불가</i>}
                     {isSubTechnique(step) && <i className="subtechnique-badge">서브테크닉</i>}
                   </span>
                   <strong>{step.name}</strong>
@@ -1219,6 +1315,7 @@ export default function App() {
                   <span className={`safety-mini ${safety.className}`}>
                     영향도 {safety.impact} · {safety.executionRecommendation}
                   </span>
+                  {!compatibility.compatible && <span className="compatibility-reason">{compatibility.reason}</span>}
                 </button>
               );
             })}

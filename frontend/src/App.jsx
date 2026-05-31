@@ -5,7 +5,7 @@ import "./styles.css";
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 const POLL_INTERVAL_MS = 900;
 const POLL_LIMIT = 240;
-const DASHBOARD_CACHE_KEY = "bas-dashboard-cache-v1";
+const DASHBOARD_CACHE_KEY = "bas-dashboard-cache-v2";
 
 const PANELS = [
   { id: "overview", label: "Summary", hint: "자산과 상태" },
@@ -55,6 +55,32 @@ function writeDashboardCache(partial) {
   }
 }
 
+function getUrlCampaignId() {
+  try {
+    return new URLSearchParams(window.location.search).get("campaign") || "";
+  } catch {
+    return "";
+  }
+}
+
+function getInitialCampaignId() {
+  const urlCampaignId = getUrlCampaignId();
+  if (urlCampaignId) return urlCampaignId;
+
+  const cachedCampaignId = readDashboardCache().campaignId;
+  return cachedCampaignId || "SB-AD";
+}
+
+function syncCampaignUrl(nextCampaignId) {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("campaign", nextCampaignId);
+    window.history.replaceState({}, "", url);
+  } catch {
+    // URL persistence is a convenience for refresh/deep-link behavior.
+  }
+}
+
 function getStepRole(step) {
   const commands = normalizeList(step?.params?.commands);
   return commands[0]?.agent_role || step?.params?.agent_role || step?.agent_role || "campaign_agent";
@@ -92,7 +118,7 @@ function inferAgentAssetKey(agent) {
     agent.agent_role,
   ].filter(Boolean).join(" ").toLowerCase();
 
-  return ["attacker", "pc01", "fs01", "dc01", "elk"].find((assetId) => searchable.includes(assetId)) || "";
+  return ["attacker", "bastion", "pms", "win01", "pc01", "fs01", "dc01", "soc01", "elk"].find((assetId) => searchable.includes(assetId)) || "";
 }
 
 function getStepSelectionId(step, fallbackCampaignId) {
@@ -416,7 +442,7 @@ function hasSuccessfulStep(item) {
 export default function App() {
   const [health, setHealth] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
-  const [campaignId, setCampaignId] = useState("SB-AD");
+  const [campaignId, setCampaignId] = useState(getInitialCampaignId);
   const [campaign, setCampaign] = useState(null);
   const [target, setTarget] = useState(null);
   const [agents, setAgents] = useState([]);
@@ -430,7 +456,7 @@ export default function App() {
   const [activePanel, setActivePanel] = useState("overview");
   const [query, setQuery] = useState("");
   const [phaseFilter, setPhaseFilter] = useState("all");
-  const [sourceFilter, setSourceFilter] = useState("SB-AD");
+  const [sourceFilter, setSourceFilter] = useState(getInitialCampaignId);
   const [executionMode, setExecutionMode] = useState("real");
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedOperation, setSelectedOperation] = useState(null);
@@ -515,6 +541,7 @@ export default function App() {
       setTarget(cachedTarget || null);
       setCampaignId(nextCampaignId);
       setSourceFilter(nextCampaignId);
+      syncCampaignUrl(nextCampaignId);
       setSelectedRun(null);
       setSelectedOperation(null);
       setNotice("API 연결이 불안정해서 마지막으로 불러온 캠페인 정보를 표시합니다.");
@@ -540,9 +567,11 @@ export default function App() {
     setCampaign(campaignData);
     setCampaignId(nextCampaignId);
     setSourceFilter(nextCampaignId);
+    syncCampaignUrl(nextCampaignId);
     setSelectedRun(null);
     setSelectedOperation(null);
     writeDashboardCache({
+      campaignId: nextCampaignId,
       campaignsById: {
         ...cachedCampaigns,
         [nextCampaignId]: campaignData,
@@ -559,7 +588,8 @@ export default function App() {
 
     async function boot() {
       const cached = readDashboardCache();
-      const bootCampaignId = cached.campaignId || campaignId;
+      const urlCampaignId = getUrlCampaignId();
+      const bootCampaignId = urlCampaignId || cached.campaignId || campaignId;
 
       if (cached.health) setHealth(cached.health);
       if (cached.campaigns) setCampaigns(cached.campaigns);
@@ -570,10 +600,9 @@ export default function App() {
       if (cached.reports) setReports(cached.reports);
       if (cached.campaignsById?.[bootCampaignId]) setCampaign(cached.campaignsById[bootCampaignId]);
       if (cached.targetsById?.[bootCampaignId]) setTarget(cached.targetsById[bootCampaignId]);
-      if (cached.campaignId) {
-        setCampaignId(cached.campaignId);
-        setSourceFilter(cached.campaignId);
-      }
+      setCampaignId(bootCampaignId);
+      setSourceFilter(bootCampaignId);
+      syncCampaignUrl(bootCampaignId);
 
       try {
         setError("");
@@ -598,8 +627,8 @@ export default function App() {
           library: techniqueData.techniques || [],
           campaignId: bootCampaignId,
         });
-        await loadCampaign(bootCampaignId);
         await refreshRuntime();
+        await loadCampaign(bootCampaignId);
         if ([healthResult, campaignListResult, techniqueResult].some((result) => result.status === "rejected")) {
           setNotice("API 연결이 불안정해서 마지막으로 불러온 데이터를 함께 표시합니다.");
         }
@@ -654,13 +683,74 @@ export default function App() {
         asset_id: id,
         agent,
         agentStatus: asset.agent_required ? (agent?.status || "offline") : "observe",
-        position: ASSET_POSITIONS[id] || {
+        position: asset.position || ASSET_POSITIONS[id] || {
           left: 12 + (index % 4) * 22,
           top: 24 + Math.floor(index / 4) * 28,
         },
       };
     });
   }, [target, agentByAsset]);
+
+  const assetPositionById = useMemo(() => {
+    const map = new Map();
+    assets.forEach((asset) => map.set(asset.asset_id, asset.position));
+    return map;
+  }, [assets]);
+
+  const mapLinks = useMemo(() => {
+    return normalizeList(target?.attack_paths).filter((path) => path.map_visible !== false).map((path, index) => {
+      const sourceId = String(path.source_asset_id || "").toLowerCase();
+      const targetId = String(path.target_asset_id || "").toLowerCase();
+      const source = assetPositionById.get(sourceId);
+      const destination = assetPositionById.get(targetId);
+
+      if (!source || !destination) return null;
+
+      if (sourceId === targetId) {
+        const x = source.left;
+        const y = source.top;
+        return {
+          id: `${sourceId}-${targetId}-${index}`,
+          sourceId,
+          targetId,
+          label: path.label,
+          d: `M ${x} ${y} C ${x + 6} ${y - 12}, ${x + 18} ${y - 10}, ${x + 14} ${y + 2}`,
+        };
+      }
+
+      const isAligned = Math.abs(source.top - destination.top) <= 4;
+      const midX = (source.left + destination.left) / 2;
+      return {
+        id: `${sourceId}-${targetId}-${index}`,
+        sourceId,
+        targetId,
+        label: path.label,
+        d: isAligned
+          ? `M ${source.left} ${source.top} L ${destination.left} ${destination.top}`
+          : `M ${source.left} ${source.top} L ${midX} ${source.top} L ${midX} ${destination.top} L ${destination.left} ${destination.top}`,
+      };
+    }).filter(Boolean);
+  }, [target, assetPositionById]);
+
+  const mapZones = useMemo(() => {
+    const segments = normalizeList(target?.segments);
+    if (segments.length === 0) {
+      return [
+        { segment_id: "attacker-zone", name: "Attacker", left: 2, width: 20 },
+        { segment_id: "user-zone", name: "User", left: 24, width: 22 },
+        { segment_id: "server-zone", name: "Server", left: 49, width: 22 },
+        { segment_id: "domain-zone", name: "Domain", left: 74, width: 22 },
+      ];
+    }
+
+    const width = 96 / segments.length;
+    return segments.map((segment, index) => ({
+      segment_id: segment.segment_id || `segment-${index}`,
+      name: segment.name || segment.segment_id || `Segment ${index + 1}`,
+      left: 2 + index * width,
+      width: Math.max(12, width - 1),
+    }));
+  }, [target]);
 
   const selectedSteps = useMemo(() => {
     const byId = new Map();
@@ -669,11 +759,17 @@ export default function App() {
     return selectedIds.map((id) => byId.get(id)).filter(Boolean);
   }, [library, campaign, campaignId, selectedIds]);
 
-  const latestOperation = selectedRun ? null : (selectedOperation || operations[0] || null);
+  const campaignOperations = useMemo(() => (
+    operations.filter((operation) => !operation.campaign_id || operation.campaign_id === campaignId)
+  ), [operations, campaignId]);
+  const campaignRuns = useMemo(() => (
+    runs.filter((run) => !run.campaign_id || run.campaign_id === campaignId)
+  ), [runs, campaignId]);
+  const latestOperation = selectedRun ? null : (selectedOperation || campaignOperations[0] || null);
   const canCancelLatestOperation = Boolean(
     latestOperation?.operation_id && ["pending", "queued", "running"].includes(latestOperation.status),
   );
-  const latestRun = selectedRun || runs[0] || null;
+  const latestRun = selectedRun || campaignRuns[0] || null;
   const operationSteps = normalizeList(latestOperation?.final_steps || latestOperation?.steps);
   const shouldShowOperationTimeline = Boolean(
     selectedOperation || (latestOperation?.operation_id && ["pending", "queued", "running"].includes(latestOperation.status)),
@@ -958,12 +1054,18 @@ export default function App() {
 
     try {
       const operation = await fetchJson(`/operations/${operationId}`);
+      if (operation.campaign_id && operation.campaign_id !== campaignId) {
+        await loadCampaign(operation.campaign_id);
+      }
       setSelectedOperation(operation);
       setSelectedRun(null);
       setActivePanel("evidence");
     } catch (err) {
       const cachedOperation = operations.find((operation) => operation.operation_id === operationId);
       if (cachedOperation) {
+        if (cachedOperation.campaign_id && cachedOperation.campaign_id !== campaignId) {
+          await loadCampaign(cachedOperation.campaign_id);
+        }
         setSelectedOperation(cachedOperation);
         setSelectedRun(null);
         setActivePanel("evidence");
@@ -1022,7 +1124,7 @@ export default function App() {
           </label>
           <div className="summary-stack">
             <div><span>Assets</span><strong>{assets.length}</strong></div>
-            <div><span>Agents</span><strong>{onlineRequiredAssets.length}/{requiredAssets.length}</strong></div>
+            <div><span>BAS Agents</span><strong>{onlineRequiredAssets.length}/{requiredAssets.length}</strong></div>
             <div><span>Queue</span><strong>{selectedSteps.length}</strong></div>
             <div><span>Runs</span><strong>{runs.length}</strong></div>
           </div>
@@ -1458,17 +1560,47 @@ export default function App() {
 
           <div className={`asset-map ${isRunning ? "running" : ""}`}>
             <svg className="map-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-              <path d="M12 51 C22 42, 24 41, 35 45" />
-              <path d="M39 45 C47 47, 50 52, 59 55" />
-              <path d="M61 53 C70 48, 73 36, 82 31" />
-              <path d="M60 58 C69 65, 74 68, 82 70" />
-              <path className={activeAssetId ? "active-link" : ""} d="M12 51 C33 24, 64 18, 82 31" />
+              <defs>
+                <marker
+                  id="map-arrow"
+                  viewBox="0 0 6 6"
+                  refX="5.2"
+                  refY="3"
+                  markerWidth="5"
+                  markerHeight="5"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <path d="M 0 0 L 6 3 L 0 6 z" />
+                </marker>
+              </defs>
+              {mapLinks.length > 0 ? mapLinks.map((link) => {
+                const isActiveLink = activeAssetId && [link.sourceId, link.targetId].includes(activeAssetId);
+                return (
+                  <path
+                    key={link.id}
+                    className={isActiveLink ? "active-link" : ""}
+                    d={link.d}
+                    markerEnd="url(#map-arrow)"
+                  />
+                );
+              }) : (
+                <>
+                  <path d="M12 50 L34 50" markerEnd="url(#map-arrow)" />
+                  <path d="M34 50 L56 50" markerEnd="url(#map-arrow)" />
+                </>
+              )}
             </svg>
 
-            <div className="map-zone attacker-zone">Attacker</div>
-            <div className="map-zone user-zone">User</div>
-            <div className="map-zone server-zone">Server</div>
-            <div className="map-zone domain-zone">Domain</div>
+            {mapZones.map((zone) => (
+              <div
+                key={zone.segment_id}
+                className="map-zone"
+                style={{ left: `${zone.left}%`, width: `${zone.width}%` }}
+              >
+                {zone.name}
+              </div>
+            ))}
 
             {assets.map((asset) => {
               const isActive = activeAssetId === asset.asset_id;
@@ -1496,7 +1628,10 @@ export default function App() {
                     <span><b>Type</b>{asset.role || asset.segment_id || "N/A"}</span>
                   </div>
                   <div className="asset-state-row">
-                    <em>Agent {getStatusLabel(asset.agentStatus)}</em>
+                    <em className="agent-pill" title={`BAS Agent ${getStatusLabel(asset.agentStatus)}`}>
+                      <span className="agent-status-dot" aria-hidden="true" />
+                      BAS Agent
+                    </em>
                     <em className={`log-pill log-${getLogCollectionClass(logStatus)}`}>Log {logStatus}</em>
                   </div>
                   {asset.log_collection_detail && <small className="log-detail">{asset.log_collection_detail}</small>}

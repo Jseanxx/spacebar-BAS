@@ -1166,15 +1166,24 @@ button {
 
 .map-links path {
   fill: none;
-  stroke: #94a3b8;
-  stroke-width: 0.38;
-  stroke-dasharray: 1.4 1.2;
+  stroke: #64748b;
+  stroke-width: 1.15;
+  stroke-dasharray: 4.8 3.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.86;
   vector-effect: non-scaling-stroke;
+}
+
+.map-links marker path {
+  fill: context-stroke;
+  opacity: 1;
 }
 
 .map-links .active-link {
   stroke: #c2410c;
-  stroke-width: 0.65;
+  stroke-width: 1.8;
+  opacity: 1;
   animation: dash-flow 1s linear infinite;
 }
 
@@ -1277,18 +1286,32 @@ button {
   gap: 6px;
 }
 
-.asset-node.agent-online .asset-state-row em:first-child,
-.asset-node.agent-running .asset-state-row em:first-child {
+.agent-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.agent-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.78);
+}
+
+.asset-node.agent-online .agent-pill,
+.asset-node.agent-running .agent-pill {
   background: #dcfce7;
   color: #166534;
 }
 
-.asset-node.agent-offline .asset-state-row em:first-child {
+.asset-node.agent-offline .agent-pill {
   background: #fee2e2;
   color: #991b1b;
 }
 
-.asset-node.agent-observe .asset-state-row em:first-child {
+.asset-node.agent-observe .agent-pill {
   background: #e0f2fe;
   color: #075985;
 }
@@ -1769,7 +1792,7 @@ button {
 
 @keyframes dash-flow {
   to {
-    stroke-dashoffset: -8;
+    stroke-dashoffset: -16;
   }
 }
 

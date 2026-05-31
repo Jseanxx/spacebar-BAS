@@ -267,6 +267,12 @@ class CampaignRunner:
             module_params.update(input_values)
             module_params.update(step.get("runtime_context") or {})
             module_params["_execution_mode"] = self.execution_mode
+            module_params.setdefault("_operation_id", self.execution_id)
+            module_params.setdefault("_step_order", step.get("order"))
+            module_params.setdefault(
+                "_execution_marker",
+                f"{module_params.get('_operation_id')}-step-{step.get('order')}",
+            )
 
             module_result = module.run(
                 target=target,

@@ -103,7 +103,12 @@ def resolve_alert_query(target, evidence_key):
 
     rule_prefix = target.get("elk", {}).get("alert_rule_prefix")
     if rule_prefix and evidence_key:
-        return f'kibana.alert.rule.name:"{rule_prefix}*" AND kibana.alert.rule.tags:"{evidence_key}"', "generated"
+        return (
+            f'campaign.id:"SB-07" AND '
+            f'(rule.id:"{rule_prefix}*" OR hanguel.rule_id:"{rule_prefix}*" OR '
+            f'alert.rule_id:"{rule_prefix}*" OR detection.rule_id:"{rule_prefix}*" OR '
+            f'kibana.alert.rule.name:"{rule_prefix}*")'
+        ), "generated"
 
     return None, "missing"
 
@@ -231,18 +236,38 @@ def format_sample_events(hits):
 
     for hit in hits:
         source = hit.get("_source", {})
-        winlog = source.get("winlog", {}).get("event_data", {})
+        event = source.get("event") if isinstance(source.get("event"), dict) else {}
+        agent = source.get("agent") if isinstance(source.get("agent"), dict) else {}
+        host = source.get("host") if isinstance(source.get("host"), dict) else {}
+        rule = source.get("rule") if isinstance(source.get("rule"), dict) else {}
+        hanguel = source.get("hanguel") if isinstance(source.get("hanguel"), dict) else {}
+        alert = source.get("alert") if isinstance(source.get("alert"), dict) else {}
+        detection = source.get("detection") if isinstance(source.get("detection"), dict) else {}
+        kibana = source.get("kibana") if isinstance(source.get("kibana"), dict) else {}
+        winlog_root = source.get("winlog") if isinstance(source.get("winlog"), dict) else {}
+        winlog = winlog_root.get("event_data") if isinstance(winlog_root.get("event_data"), dict) else {}
+        object_ref = source.get("objectRef") if isinstance(source.get("objectRef"), dict) else {}
+        user = source.get("user") if isinstance(source.get("user"), dict) else {}
+        kibana_alert = kibana.get("alert") if isinstance(kibana.get("alert"), dict) else {}
+        kibana_rule = kibana_alert.get("rule") if isinstance(kibana_alert.get("rule"), dict) else {}
         samples.append({
             "@timestamp": source.get("@timestamp"),
-            "host": source.get("host", {}).get("name"),
-            "agent": source.get("agent", {}).get("name"),
-            "event": source.get("event", {}).get("action") or source.get("verb"),
-            "event_code": source.get("event", {}).get("code"),
-            "rule": source.get("kibana", {}).get("alert", {}).get("rule", {}).get("name"),
-            "resource": source.get("objectRef", {}).get("resource"),
-            "namespace": source.get("objectRef", {}).get("namespace"),
+            "host": host.get("name"),
+            "agent": agent.get("name"),
+            "event": event.get("action") or source.get("verb"),
+            "event_code": event.get("code"),
+            "rule": (
+                rule.get("id")
+                or rule.get("name")
+                or hanguel.get("rule_id")
+                or alert.get("rule_id")
+                or detection.get("rule_id")
+                or kibana_rule.get("name")
+            ),
+            "resource": object_ref.get("resource"),
+            "namespace": object_ref.get("namespace"),
             "requestURI": source.get("requestURI"),
-            "user": source.get("user", {}).get("username"),
+            "user": user.get("username"),
             "image": winlog.get("Image") or winlog.get("NewProcessName") or winlog.get("SourceImage"),
             "command_line": winlog.get("CommandLine") or winlog.get("ProcessCommandLine"),
             "target": winlog.get("TargetImage") or winlog.get("TargetFilename"),
@@ -264,7 +289,7 @@ def run_live_check(elk_config, index, query, query_source, execution_context=Non
             "message": "No query configured.",
         }
 
-    elk_url = os.environ.get("BAS_ELK_URL", DEFAULT_ELK_URL)
+    elk_url = elk_config.get("url") or os.environ.get("BAS_ELK_URL", DEFAULT_ELK_URL)
     username = os.environ.get("BAS_ELK_USERNAME")
     password = os.environ.get("BAS_ELK_PASSWORD")
 
@@ -367,7 +392,13 @@ def check_elk(target, evidence_key, execution_context=None):
     execution_marker = execution_context.get("execution_marker")
     if execution_marker:
         escaped_marker = str(execution_marker).replace('"', '\\"')
-        marker_query = f'"SPACEBAR_BAS_MARKER={escaped_marker}" OR "{escaped_marker}"'
+        marker_query = (
+            f'spacebar.bas.marker:"{escaped_marker}" OR '
+            f'bas.marker:"{escaped_marker}" OR '
+            f'labels.spacebar_marker:"{escaped_marker}" OR '
+            f'"SPACEBAR_BAS_MARKER={escaped_marker}" OR '
+            f'"{escaped_marker}"'
+        )
         source_check["marker_check"] = run_live_check(
             elk_config,
             index,

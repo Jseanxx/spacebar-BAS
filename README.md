@@ -6,6 +6,7 @@
 
 ## Documentation
 
+- `docs/SB-AV-BAS-operator-runbook.md`: active SB-AV Hanguel AD/PMS/AV campaign operation guide, Agent layout, safety gates, and 19-step execution notes.
 - `docs/SB-AD-BAS-campaign.md`: active SB-AD BAS campaign scope and rule mapping.
 - `docs/SB-AD-BAS-agent-spec.md`: PC01, FS01, Attacker multi-agent installation and routing specification.
 - `docs/SB-AD-BAS-agent-mvp-spec.md`: mentor feedback based multi-agent MVP implementation specification.

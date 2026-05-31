@@ -46,6 +46,9 @@ assets:
     agent_role: attacker
     agent_required: true
     criticality: medium
+    position:
+      left: 12
+      top: 50
     controls: [aws_security_group, manual_response]
   - asset_id: pc01
     name: PC01
@@ -61,6 +64,9 @@ assets:
     agent_role: pc01
     agent_required: true
     criticality: high
+    position:
+      left: 32
+      top: 50
     controls: [sysmon, windows_security_log, powershell_logging, winlogbeat, kibana_rules]
   - asset_id: fs01
     name: FS01
@@ -76,6 +82,9 @@ assets:
     agent_role: fs01
     agent_required: true
     criticality: critical
+    position:
+      left: 54
+      top: 50
     controls: [sysmon, windows_security_log, winlogbeat, kibana_rules]
   - asset_id: dc01
     name: DC01
@@ -91,6 +100,9 @@ assets:
     agent_role: log_source
     agent_required: false
     criticality: critical
+    position:
+      left: 76
+      top: 50
     controls: [windows_security_log, winlogbeat, kibana_rules]
   - asset_id: elk
     name: ELK
@@ -106,6 +118,9 @@ assets:
     agent_role: detection_backend
     agent_required: false
     criticality: high
+    position:
+      left: 76
+      top: 76
     controls: [kibana_rules]
 
 security_controls:
@@ -146,6 +161,7 @@ attack_paths:
   - source_asset_id: pc01
     target_asset_id: dc01
     label: AD discovery / Kerberos ticket request
+    map_visible: false
     techniques: [T1087.002, T1018, T1033, T1135, T1069, T1558.003]
   - source_asset_id: pc01
     target_asset_id: fs01
@@ -154,14 +170,17 @@ attack_paths:
   - source_asset_id: fs01
     target_asset_id: fs01
     label: Credential access and local staging
+    map_visible: false
     techniques: [T1003.001, T1218.011, T1074.001, T1036.005, T1560.001]
   - source_asset_id: fs01
     target_asset_id: attacker
     label: Data staging and exfiltration
+    map_visible: false
     techniques: [T1074.001, T1041]
   - source_asset_id: attacker
     target_asset_id: dc01
     label: Domain compromise
+    map_visible: false
     techniques: [T1003.006, T1558.001, T1078.002, T1569.002, T1003.003]
 
 ad:

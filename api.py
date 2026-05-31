@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
+from typing import Optional, Union
 import json
 import os
 import time
@@ -39,6 +42,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
         "http://[::1]:5173",
         "http://[::1]:5174",
     ],
@@ -51,7 +56,7 @@ app.add_middleware(
 class StepSelection(BaseModel):
     campaign_id: str
     order: int
-    inputs: dict[str, object] | None = None
+    inputs: Optional[dict[str, object]] = None
 
 
 class RunRequest(BaseModel):
@@ -63,8 +68,8 @@ class RunRequest(BaseModel):
     """
 
     campaign_id: str = "SB-05"
-    selected_orders: list[int] | None = None
-    selected_steps: list[StepSelection] | None = None
+    selected_orders: Optional[list[int]] = None
+    selected_steps: Optional[list[StepSelection]] = None
     include_normal: bool = True
 
 
@@ -74,8 +79,8 @@ class PreviewRequest(BaseModel):
     """
 
     campaign_id: str = "SB-05"
-    selected_orders: list[int] | None = None
-    selected_steps: list[StepSelection] | None = None
+    selected_orders: Optional[list[int]] = None
+    selected_steps: Optional[list[StepSelection]] = None
     include_normal: bool = True
 
 class AgentRegisterRequest(BaseModel):
@@ -88,17 +93,17 @@ class AgentRegisterRequest(BaseModel):
 
     agent_id: str
     campaign_agent_id: str = "SB-05"
-    display_name: str | None = None
-    collector_type: str | None = "elastic_agent"
-    agent_role: str | None = None
-    asset_id: str | None = None
-    segment_id: str | None = None
-    hostname: str | None = None
-    platform: str | None = None
-    execution_mode: str | None = "real"
-    safety_mode: str | None = None
-    capabilities: list[str] | str | None = None
-    controls: list[str] | str | None = None
+    display_name: Optional[str] = None
+    collector_type: Optional[str] = "elastic_agent"
+    agent_role: Optional[str] = None
+    asset_id: Optional[str] = None
+    segment_id: Optional[str] = None
+    hostname: Optional[str] = None
+    platform: Optional[str] = None
+    execution_mode: Optional[str] = "real"
+    safety_mode: Optional[str] = None
+    capabilities: Optional[Union[list[str], str]] = None
+    controls: Optional[Union[list[str], str]] = None
 
 
 class AgentHeartbeatRequest(BaseModel):
@@ -116,10 +121,10 @@ class JobRequest(BaseModel):
 
     agent_id: str
     campaign_id: str = "SB-05"
-    selected_orders: list[int] | None = None
-    selected_steps: list[StepSelection] | None = None
+    selected_orders: Optional[list[int]] = None
+    selected_steps: Optional[list[StepSelection]] = None
     include_normal: bool = True
-    execution_mode: str | None = None
+    execution_mode: Optional[str] = None
 
 
 class BlockedJobRequest(BaseModel):
@@ -128,9 +133,9 @@ class BlockedJobRequest(BaseModel):
     """
 
     campaign_id: str = "SB-AD"
-    selected_steps: list[StepSelection] | None = None
+    selected_steps: Optional[list[StepSelection]] = None
     reason: str = "agent_offline"
-    missing_agent_roles: list[str] | None = None
+    missing_agent_roles: Optional[list[str]] = None
 
 
 class OperationRequest(BaseModel):
@@ -139,8 +144,8 @@ class OperationRequest(BaseModel):
     """
 
     campaign_id: str = "SB-AD"
-    selected_orders: list[int] | None = None
-    selected_steps: list[StepSelection] | None = None
+    selected_orders: Optional[list[int]] = None
+    selected_steps: Optional[list[StepSelection]] = None
     include_normal: bool = False
     operation_mode: str = "multi_agent"
     execution_mode: str = "real"
@@ -152,9 +157,9 @@ class JobResultRequest(BaseModel):
     """
 
     status: str
-    execution_id: str | None = None
-    result: dict | None = None
-    error: str | None = None
+    execution_id: Optional[str] = None
+    result: Optional[dict] = None
+    error: Optional[str] = None
 
 
 def get_bas_agent_status_payload():
@@ -601,15 +606,33 @@ def resolve_step_asset_id(step):
 
 
 def select_online_agent(campaign_id, agent_role):
+    campaign_prefix = str(campaign_id or "").lower().replace("-", "")
+
+    def campaign_matches(agent):
+        explicit_campaign = agent.get("campaign_agent_id")
+        if explicit_campaign == campaign_id:
+            return True
+        if explicit_campaign:
+            return False
+        agent_id = str(agent.get("agent_id") or "").lower().replace("-", "")
+        return bool(campaign_prefix and agent_id.startswith(campaign_prefix))
+
+    def role_matches(agent):
+        if agent_role == "campaign_agent":
+            return True
+        explicit_role = agent.get("agent_role")
+        if explicit_role == agent_role:
+            return True
+        if explicit_role:
+            return False
+        return infer_agent_asset_id(agent) == agent_role
+
     candidates = [
         agent
         for agent in load_registered_agents()
-        if agent.get("campaign_agent_id") == campaign_id
+        if campaign_matches(agent)
         and is_agent_fresh(agent)
-        and (
-            agent_role == "campaign_agent"
-            or agent.get("agent_role") == agent_role
-        )
+        and role_matches(agent)
     ]
 
     if agent_role == "campaign_agent":
@@ -635,7 +658,7 @@ def infer_agent_asset_id(agent):
         for field in ("agent_id", "display_name", "hostname", "agent_role")
     ).lower()
 
-    for asset_id in ("attacker", "pc01", "fs01", "dc01", "elk"):
+    for asset_id in ("attacker", "bastion", "pms", "win01", "pc01", "fs01", "dc01", "soc01", "elk"):
         if asset_id in searchable:
             return asset_id
 
@@ -813,6 +836,11 @@ def apply_report_classification_to_operation(operation, report):
 
 def attach_operation_report(operation):
     try:
+        if (
+            operation.get("status") in ("completed", "simulated", "blocked", "failed")
+            and operation.get("execution_mode") != "simulation"
+        ):
+            operation = attach_deferred_elk_checks(operation)
         report = build_report_from_operation(operation)
         apply_report_classification_to_operation(operation, report)
         operation["report"] = {
@@ -895,9 +923,16 @@ def attach_deferred_elk_checks(operation):
     if all((step.get("elk_check") or {}).get("checked") for step in steps_to_check):
         return operation
 
+    target_wait_seconds = 0
+    try:
+        target_config = load_target(operation.get("campaign_id"))
+        target_wait_seconds = int((target_config.get("elk") or {}).get("alert_wait_seconds") or 0)
+    except Exception:
+        target_wait_seconds = 0
+
     wait_seconds = int(os.environ.get(
         "BAS_OPERATION_ELK_WAIT_SECONDS",
-        os.environ.get("BAS_STEP_ALERT_WAIT_SECONDS", "0"),
+        os.environ.get("BAS_STEP_ALERT_WAIT_SECONDS", str(target_wait_seconds)),
     ) or "0")
 
     operation["elk_validation_status"] = "waiting" if wait_seconds > 0 else "running"
@@ -1125,6 +1160,69 @@ def sync_operation_result_fields(step_entry, job):
         step_entry["blocked_reason"] = result_step.get("status") or result_step.get("module_result", {}).get("message") or "real_execution_blocked"
 
 
+def emit_sbav_controller_normalized_events(step_entry):
+    """
+    SB-AV Windows mini Agent가 구버전 schema로 source event를 보냈더라도,
+    Controller가 동일 step 결과를 Hanguel handoff schema로 한 번 더 적재합니다.
+
+    Windows VM의 실행 중인 PowerShell Agent를 재시작하지 않아도
+    `hanguel.ad_agent` / `hanguel.classification` / `hanguel.risk_score`
+    기반 correlation 검증을 이어가기 위한 보정 경로입니다.
+    """
+
+    if step_entry.get("campaign_id") != "SB-AV":
+        return None
+    if step_entry.get("agent_role") not in ("win01", "dc01"):
+        return None
+    if step_entry.get("status") != "success":
+        return None
+
+    module_result = step_entry.get("module_result") or {}
+    if module_result.get("controller_hanguel_event_emission"):
+        return module_result.get("controller_hanguel_event_emission")
+
+    try:
+        from modules.attack import sb_av_hanguel_chain
+
+        target = load_target("SB-AV")
+        campaign = load_campaign("SB-AV")
+        campaign_step = next(
+            (
+                item
+                for item in campaign.get("flow", [])
+                if item.get("order") == step_entry.get("order")
+            ),
+            {},
+        )
+        params = dict((campaign_step.get("params") or {}))
+        runtime_context = step_entry.get("runtime_context") or {}
+        params.update(runtime_context)
+        params["_operation_id"] = params.get("_operation_id") or step_entry.get("operation_id")
+        params["_execution_marker"] = params.get("_execution_marker") or step_entry.get("execution_marker")
+        params["_step_order"] = params.get("_step_order") or step_entry.get("order")
+
+        if not params.get("behavior"):
+            params["behavior"] = module_result.get("behavior")
+        if not params.get("technique_id"):
+            params["technique_id"] = step_entry.get("technique_id")
+
+        base_result = {
+            "status": module_result.get("status") or step_entry.get("status"),
+            "command_results": module_result.get("command_results") or [],
+        }
+        emission = sb_av_hanguel_chain.emit_hanguel_events(target, params, base_result)
+        module_result["controller_hanguel_event_emission"] = emission
+        step_entry["module_result"] = module_result
+        return emission
+    except Exception as exc:
+        module_result["controller_hanguel_event_emission"] = {
+            "configured": False,
+            "message": f"Controller-side SB-AV Hanguel event emission failed: {exc}",
+        }
+        step_entry["module_result"] = module_result
+        return module_result["controller_hanguel_event_emission"]
+
+
 def finalize_operation_if_done(operation):
     summary = build_operation_summary(operation["final_steps"])
     operation["summary"] = summary
@@ -1181,6 +1279,7 @@ def update_operation_from_job_result(job):
     step_entry["error"] = job.get("error") if resolved_status == "failed" else None
     step_entry["result"] = job.get("result")
     sync_operation_result_fields(step_entry, job)
+    emit_sbav_controller_normalized_events(step_entry)
     operation["sub_jobs"] = merge_unique_lists(operation.get("sub_jobs"), [job.get("job_id")])
     operation = finalize_operation_if_done(operation)
 

@@ -47,6 +47,34 @@ DETECTION_RESULT_LABELS = {
     "execution_failed": "실행 실패",
 }
 
+DETECTION_STATUS_ALIASES = {
+    "detected": "detected",
+    "탐지": "detected",
+    "탐지됨": "detected",
+    "covered": "detected",
+    "커버됨": "detected",
+    "logged_only": "logged_only",
+    "logged only": "logged_only",
+    "로그만": "logged_only",
+    "로그만 확인": "logged_only",
+    "부분 커버": "logged_only",
+    "alert_without_source_sample": "alert_without_source_sample",
+    "알림만 확인": "alert_without_source_sample",
+    "missed": "missed",
+    "미탐": "missed",
+    "공백": "missed",
+    "not_checked": "not_checked",
+    "not checked": "not_checked",
+    "미확인": "not_checked",
+    "확인 안 됨": "not_checked",
+    "확인 필요": "not_checked",
+    "blocked": "blocked",
+    "차단": "blocked",
+    "차단됨": "blocked",
+    "execution_failed": "execution_failed",
+    "실행 실패": "execution_failed",
+}
+
 COVERAGE_STATUS_LABELS = {
     "detected": "커버됨",
     "logged_only": "부분 커버",
@@ -253,6 +281,23 @@ def event_count(check):
     return value if isinstance(value, int) else 0
 
 
+def normalize_detection_status(value):
+    if not value:
+        return None
+
+    normalized = str(value).strip().lower()
+    return DETECTION_STATUS_ALIASES.get(normalized)
+
+
+def fallback_detection_status(step):
+    for field in ("detection_status", "detection_result", "coverage_status"):
+        status = normalize_detection_status(step.get(field))
+        if status:
+            return status
+
+    return None
+
+
 def get_alert_check(elk_check):
     return (elk_check or {}).get("alert_check") or (elk_check or {}).get("alert") or {}
 
@@ -311,6 +356,7 @@ def classify_detection_status(step):
     alert_checked = is_checked(alert_check)
     alert_matched = is_matched(alert_check)
     simulated = execution_status == "simulated"
+    fallback_status = fallback_detection_status(step)
 
     if execution_status == "blocked":
         detection_status = "blocked"
@@ -319,7 +365,7 @@ def classify_detection_status(step):
     elif simulated:
         detection_status = "not_checked"
     elif not source_checked and not alert_checked:
-        detection_status = "not_checked"
+        detection_status = fallback_status or "not_checked"
     elif source_matched and alert_matched:
         detection_status = "detected"
     elif source_matched and not alert_matched:
@@ -327,7 +373,29 @@ def classify_detection_status(step):
     elif not source_matched and alert_matched:
         detection_status = "alert_without_source_sample"
     else:
-        detection_status = "missed"
+        detection_status = fallback_status or "missed"
+
+    if fallback_status and not source_checked and not alert_checked:
+        if detection_status == "detected":
+            source_checked = True
+            source_matched = True
+            alert_checked = True
+            alert_matched = True
+        elif detection_status == "logged_only":
+            source_checked = True
+            source_matched = True
+            alert_checked = True
+            alert_matched = False
+        elif detection_status == "alert_without_source_sample":
+            source_checked = True
+            source_matched = False
+            alert_checked = True
+            alert_matched = True
+        elif detection_status == "missed":
+            source_checked = True
+            source_matched = False
+            alert_checked = True
+            alert_matched = False
 
     return {
         "execution_status": execution_status,

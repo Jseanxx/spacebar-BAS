@@ -129,6 +129,54 @@ function getStepSourceId(step, fallbackCampaignId) {
   return step.source_campaign_id || step.campaign_id || fallbackCampaignId;
 }
 
+function getAssetDisplayIp(asset) {
+  return asset?.public_ip || asset?.elastic_ip || asset?.private_ip || asset?.hostname || "N/A";
+}
+
+function getAssetNodeKind(asset) {
+  const combined = `${asset?.platform || ""} ${asset?.os || ""} ${asset?.role || ""} ${asset?.asset_id || ""}`.toLowerCase();
+  if (combined.includes("kubernetes") || combined.includes("k3s") || combined.includes("namespace")) return "k8s";
+  if (combined.includes("aws") || combined.includes("s3") || combined.includes("cloudtrail")) return "cloud";
+  if (combined.includes("elk") || combined.includes("monitoring") || combined.includes("log")) return "log";
+  if (combined.includes("windows")) return "windows";
+  if (combined.includes("ubuntu") || combined.includes("linux")) return "linux";
+  return "host";
+}
+
+function renderAssetOsMark(nodeKind) {
+  if (nodeKind === "log") {
+    return <i className="os-mark log-mark">ELK</i>;
+  }
+
+  const iconUrls = {
+    windows: "https://api.iconify.design/devicon/windows8.svg",
+    linux: "https://api.iconify.design/devicon/linux.svg",
+    k8s: "https://api.iconify.design/devicon/kubernetes.svg",
+    cloud: "https://api.iconify.design/devicon/amazonwebservices-wordmark.svg",
+  };
+  const labels = {
+    windows: "Windows",
+    linux: "Linux",
+    k8s: "Kubernetes",
+    cloud: "AWS",
+  };
+  const iconUrl = iconUrls[nodeKind];
+
+  if (!iconUrl) {
+    return <i className="os-mark host-mark">PC</i>;
+  }
+
+  return (
+    <img
+      className={`os-mark os-icon-image os-icon-${nodeKind}`}
+      src={iconUrl}
+      alt={labels[nodeKind]}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+    />
+  );
+}
+
 function getTargetCapabilities(target) {
   return new Set(normalizeList(target?.capabilities).map((item) => String(item).toLowerCase()));
 }
@@ -754,12 +802,27 @@ export default function App() {
 
   const assetPositionById = useMemo(() => {
     const map = new Map();
-    assets.forEach((asset) => map.set(asset.asset_id, asset.position));
+    assets.forEach((asset) => {
+      const position = asset.position;
+      map.set(asset.asset_id, {
+        ...position,
+        top: Math.max(8, Number(position?.top || 0) - 7),
+      });
+    });
     return map;
   }, [assets]);
 
   const mapLinks = useMemo(() => {
-    return normalizeList(target?.attack_paths).filter((path) => path.map_visible !== false).map((path, index) => {
+    const configuredPaths = normalizeList(target?.attack_paths).filter((path) => path.map_visible !== false);
+    const displayPaths = configuredPaths.length > 0
+      ? configuredPaths
+      : assets.slice(0, -1).map((asset, index) => ({
+        source_asset_id: asset.asset_id,
+        target_asset_id: assets[index + 1]?.asset_id,
+        label: "Default topology flow",
+      }));
+
+    return displayPaths.map((path, index) => {
       const sourceId = String(path.source_asset_id || "").toLowerCase();
       const targetId = String(path.target_asset_id || "").toLowerCase();
       const source = assetPositionById.get(sourceId);
@@ -775,23 +838,41 @@ export default function App() {
           sourceId,
           targetId,
           label: path.label,
+          tone: ["red", "blue", "amber"][index % 3],
           d: `M ${x} ${y} C ${x + 6} ${y - 12}, ${x + 18} ${y - 10}, ${x + 14} ${y + 2}`,
         };
       }
 
-      const isAligned = Math.abs(source.top - destination.top) <= 4;
-      const midX = (source.left + destination.left) / 2;
+      const deltaX = destination.left - source.left;
+      const deltaY = destination.top - source.top;
+      const length = Math.sqrt(deltaX * deltaX + deltaY * deltaY) || 1;
+      const unitX = deltaX / length;
+      const unitY = deltaY / length;
+      const start = {
+        left: source.left + unitX * 7.2,
+        top: source.top + unitY * 7.2,
+      };
+      const end = {
+        left: destination.left - unitX * 7.2,
+        top: destination.top - unitY * 7.2,
+      };
+      const midX = (start.left + end.left) / 2;
+      const midY = (start.top + end.top) / 2;
+      const longHorizontalPath = Math.abs(deltaX) > 34 && Math.abs(deltaY) < 12;
+      const curve = longHorizontalPath ? 14 : Math.min(7, Math.max(3, length * 0.08));
+      const direction = longHorizontalPath ? -1 : (index % 2 === 0 ? 1 : -1);
+      const normalX = -unitY * curve * direction;
+      const normalY = unitX * curve * direction;
       return {
         id: `${sourceId}-${targetId}-${index}`,
         sourceId,
         targetId,
         label: path.label,
-        d: isAligned
-          ? `M ${source.left} ${source.top} L ${destination.left} ${destination.top}`
-          : `M ${source.left} ${source.top} L ${midX} ${source.top} L ${midX} ${destination.top} L ${destination.left} ${destination.top}`,
+        tone: ["red", "blue", "amber"][index % 3],
+        d: `M ${start.left} ${start.top} Q ${midX + normalX} ${midY + normalY}, ${end.left} ${end.top}`,
       };
     }).filter(Boolean);
-  }, [target, assetPositionById]);
+  }, [target, assets, assetPositionById]);
 
   const mapZones = useMemo(() => {
     const segments = normalizeList(target?.segments);
@@ -1684,7 +1765,7 @@ export default function App() {
                 return (
                   <path
                     key={link.id}
-                    className={isActiveLink ? "active-link" : ""}
+                    className={`map-link tone-${link.tone || "red"} ${isActiveLink ? "active-link" : ""}`}
                     d={link.d}
                     markerEnd="url(#map-arrow)"
                   />
@@ -1711,12 +1792,14 @@ export default function App() {
               const isActive = activeAssetId === asset.asset_id;
               const isCompleted = timelineOperationSteps.some((step) => getStepAssetId(step) === asset.asset_id && ["completed", "success", "simulated"].includes(step.status));
               const logStatus = getLogCollectionStatus(asset);
+              const nodeKind = getAssetNodeKind(asset);
               return (
                 <button
                   key={asset.asset_id}
                   type="button"
                   className={[
                     "asset-node",
+                    `node-${nodeKind}`,
                     `risk-${asset.criticality || "medium"}`,
                     `agent-${asset.agentStatus}`,
                     isActive ? "active" : "",
@@ -1726,9 +1809,13 @@ export default function App() {
                   onClick={() => setNotice(`${asset.name || asset.asset_id}: ${asset.private_ip || asset.hostname || "수동 자산"} · ${asset.role || asset.segment_id || "역할 미정"}`)}
                 >
                   <span className="node-ring" />
+                  <span className="topology-device" aria-hidden="true">
+                    {renderAssetOsMark(nodeKind)}
+                  </span>
                   <strong>{asset.name || asset.asset_id}</strong>
+                  <small className="asset-ip-label">{getAssetDisplayIp(asset)}</small>
                   <div className="asset-facts">
-                    <span><b>IP</b>{asset.private_ip || "N/A"}</span>
+                    <span><b>IP</b>{getAssetDisplayIp(asset)}</span>
                     <span><b>OS</b>{asset.os || asset.platform || "N/A"}</span>
                     <span><b>Type</b>{asset.role || asset.segment_id || "N/A"}</span>
                   </div>

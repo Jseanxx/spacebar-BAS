@@ -1439,6 +1439,264 @@ button {
   animation: node-pulse 1s ease-in-out infinite;
 }
 
+.asset-map {
+  min-height: 520px;
+  background:
+    radial-gradient(circle at 20px 20px, rgba(100, 116, 139, 0.12) 1px, transparent 1.5px),
+    #ffffff;
+  background-size: 30px 30px;
+}
+
+.map-zone {
+  top: 16px;
+  bottom: 16px;
+  display: grid;
+  align-content: start;
+  padding: 12px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.58);
+  color: rgba(71, 85, 105, 0.48);
+  font-size: 10px;
+  letter-spacing: 0;
+  pointer-events: none;
+  box-shadow: inset 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.map-links path {
+  stroke-width: 1.45;
+  stroke-dasharray: none;
+  opacity: 0.82;
+}
+
+.map-links .tone-red {
+  stroke: #c75d62;
+}
+
+.map-links .tone-blue {
+  stroke: #3488c8;
+}
+
+.map-links .tone-amber {
+  stroke: #d9a72f;
+}
+
+.map-links .active-link {
+  stroke-width: 2.2;
+  stroke-dasharray: 6 5;
+  animation: dash-flow 0.9s linear infinite;
+}
+
+.asset-node,
+.asset-node.risk-critical,
+.asset-node.risk-high,
+.asset-node.risk-medium {
+  width: 190px;
+  min-height: 168px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: center;
+  overflow: visible;
+}
+
+.asset-node:hover,
+.asset-node.active {
+  transform: translate(-50%, -50%) translateY(-3px);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.topology-device {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 104px;
+  height: 72px;
+  border: 4px solid #334155;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #334155;
+  box-shadow: 0 4px 0 rgba(15, 23, 42, 0.12);
+  margin-bottom: 34px;
+}
+
+.topology-device::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -25px;
+  width: 20px;
+  height: 25px;
+  transform: translateX(-50%);
+  border: 0;
+  border-radius: 0;
+  background: #334155;
+}
+
+.topology-device::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -37px;
+  width: 70px;
+  height: 7px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: #334155;
+}
+
+.topology-device .os-mark {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  font-style: normal;
+}
+
+.os-icon-image {
+  display: block !important;
+  width: 54px;
+  height: 54px;
+  object-fit: contain;
+}
+
+.os-icon-windows {
+  width: 50px;
+  height: 50px;
+}
+
+.os-icon-linux {
+  width: 62px;
+  height: 62px;
+}
+
+.os-icon-k8s {
+  width: 58px;
+  height: 58px;
+}
+
+.os-icon-cloud {
+  width: 74px;
+  height: 46px;
+  padding: 6px 8px;
+  border: 3px solid #f97316;
+  border-radius: 999px;
+  background: #fff7ed;
+}
+
+.log-mark {
+  width: 72px;
+  height: 44px;
+  border: 3px solid #4f46e5;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 20px !important;
+  font-weight: 950;
+}
+
+.host-mark {
+  width: 54px;
+  height: 40px;
+  border: 4px solid #475569;
+  border-radius: 7px;
+  background: #e2e8f0;
+  color: #334155;
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.asset-node.node-k8s .topology-device,
+.asset-node.node-cloud .topology-device {
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.asset-node.node-log .topology-device {
+  background: #f8fafc;
+}
+
+.asset-node.node-linux .topology-device {
+  background: #ffffff;
+}
+
+.asset-node.node-windows .topology-device {
+  background: #f8fafc;
+}
+
+.asset-node strong {
+  position: relative;
+  z-index: 3;
+  width: 190px;
+  box-sizing: border-box;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.08;
+  text-align: center;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  min-height: 0;
+}
+
+.asset-ip-label {
+  position: relative;
+  z-index: 3;
+  display: block;
+  width: 190px;
+  box-sizing: border-box;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #64748b !important;
+  font-size: 11px !important;
+  font-weight: 850 !important;
+  line-height: 1 !important;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 0;
+}
+
+.asset-facts,
+.asset-tags,
+.asset-state-row,
+.log-detail {
+  display: none;
+}
+
+.node-ring {
+  right: 37px;
+  top: 34px;
+  z-index: 2;
+  width: 14px;
+  height: 14px;
+  border: 3px solid #515151;
+  background: #ffffff;
+}
+
+.asset-node.agent-online .node-ring,
+.asset-node.agent-running .node-ring,
+.asset-node.agent-observe .node-ring {
+  border-color: #16a34a;
+}
+
+.asset-node.agent-offline .node-ring {
+  border-color: #dc2626;
+}
+
 .lower-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);

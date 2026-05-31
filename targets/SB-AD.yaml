@@ -47,7 +47,7 @@ assets:
     agent_required: true
     criticality: medium
     position:
-      left: 12
+      left: 13.5
       top: 50
     controls: [aws_security_group, manual_response]
   - asset_id: pc01
@@ -65,7 +65,7 @@ assets:
     agent_required: true
     criticality: high
     position:
-      left: 32
+      left: 37.5
       top: 50
     controls: [sysmon, windows_security_log, powershell_logging, winlogbeat, kibana_rules]
   - asset_id: fs01
@@ -83,8 +83,8 @@ assets:
     agent_required: true
     criticality: critical
     position:
-      left: 54
-      top: 50
+      left: 61.5
+      top: 34
     controls: [sysmon, windows_security_log, winlogbeat, kibana_rules]
   - asset_id: dc01
     name: DC01
@@ -101,7 +101,7 @@ assets:
     agent_required: false
     criticality: critical
     position:
-      left: 76
+      left: 85.5
       top: 50
     controls: [windows_security_log, winlogbeat, kibana_rules]
   - asset_id: elk
@@ -119,8 +119,8 @@ assets:
     agent_required: false
     criticality: high
     position:
-      left: 76
-      top: 76
+      left: 61.5
+      top: 74
     controls: [kibana_rules]
 
 security_controls:

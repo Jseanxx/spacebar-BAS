@@ -57,7 +57,7 @@ assets:
     agent_required: false
     criticality: medium
     position:
-      left: 8
+      left: 9.5
       top: 50
     controls: [manual_response]
   - asset_id: bastion
@@ -75,7 +75,7 @@ assets:
     agent_required: true
     criticality: medium
     position:
-      left: 24
+      left: 25.5
       top: 50
     controls: [ssh_auth_log, hanguel_correlator, aws_security_group]
   - asset_id: pms
@@ -93,7 +93,7 @@ assets:
     agent_required: true
     criticality: high
     position:
-      left: 40
+      left: 41.5
       top: 50
     controls: [pms_logs, jboss_access_log, logstash, hanguel_correlator]
   - asset_id: win01
@@ -110,7 +110,7 @@ assets:
     agent_required: true
     criticality: high
     position:
-      left: 58
+      left: 57.5
       top: 50
     controls: [hanguel_ad_agent, powershell_logging, windows_security_log, hanguel_correlator]
   - asset_id: dc01
@@ -127,7 +127,7 @@ assets:
     agent_required: false
     criticality: critical
     position:
-      left: 76
+      left: 73.5
       top: 50
     controls: [windows_security_log, sysmon, hanguel_ad_agent, hanguel_correlator]
   - asset_id: soc01
@@ -144,8 +144,8 @@ assets:
     agent_required: false
     criticality: high
     position:
-      left: 76
-      top: 74
+      left: 89.5
+      top: 70
     controls: [elasticsearch, hanguel_agent, hanguel_correlator, ai_analysis_worker]
 
 security_controls:

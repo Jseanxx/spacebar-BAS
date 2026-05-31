@@ -570,6 +570,25 @@ def resolve_step_asset_id(step):
     if explicit_asset_id:
         return str(explicit_asset_id).lower()
 
+    target_id = step.get("target") or step.get("source_campaign_id") or step.get("campaign_id")
+    behavior = params.get("behavior") or step.get("behavior")
+    if target_id == "SB-05":
+        sb05_behavior_asset_map = {
+            "kube_get_pods": "sb05-kubernetes",
+            "kube_get_services": "prod-platform",
+            "kube_get_deployments": "prod-platform",
+            "kube_resource_discovery": "sb05-kubernetes",
+            "kube_secret_access": "prod-platform",
+            "kube_pod_exec": "prod-platform",
+            "kube_deploy_collector": "sb05-kubernetes",
+            "kube_rbac_addition": "sb05-kubernetes",
+            "local_data_staging": "sb05-attacker",
+            "archive_staged_data": "sb05-attacker",
+            "s3_exfiltration": "sb05-k8s-drain",
+        }
+        if behavior in sb05_behavior_asset_map:
+            return sb05_behavior_asset_map[behavior]
+
     behavior_asset_map = {
         "kerberoasting_tgs_request": "dc01",
         "winrm_remote_execution": "fs01",
@@ -587,7 +606,6 @@ def resolve_step_asset_id(step):
         "service_execution": "dc01",
         "ntds_dump": "dc01",
     }
-    behavior = params.get("behavior") or step.get("behavior")
     if behavior in behavior_asset_map:
         return behavior_asset_map[behavior]
 
@@ -698,6 +716,16 @@ def build_asset_discovery(target_id):
         for asset in target_assets
         if asset.get("asset_id")
     }
+    asset_id_by_agent_role = {
+        asset.get("agent_role"): asset.get("asset_id")
+        for asset in target_assets
+        if asset.get("agent_role") and asset.get("asset_id")
+    }
+    required_asset_ids = [
+        asset.get("asset_id")
+        for asset in target_assets
+        if asset.get("agent_required") and asset.get("asset_id")
+    ]
     target_agents = [
         agent
         for agent in load_registered_agents()
@@ -706,7 +734,21 @@ def build_asset_discovery(target_id):
 
     for agent in target_agents:
         discovered = build_discovered_asset_from_agent(agent)
-        asset_id = discovered.get("asset_id")
+        asset_id = asset_id_by_agent_role.get(agent.get("agent_role")) or discovered.get("asset_id")
+        agent_label = " ".join(
+            str(agent.get(field) or "")
+            for field in ("agent_id", "display_name", "hostname", "agent_role")
+        ).lower()
+        is_generic_bas_agent = "basagent" in agent_label or "bas-agent" in agent_label
+
+        if is_generic_bas_agent and asset_id not in assets_by_id and len(required_asset_ids) == 1:
+            asset_id = required_asset_ids[0]
+
+        if is_generic_bas_agent and asset_id not in assets_by_id:
+            continue
+
+        if asset_id:
+            discovered["asset_id"] = asset_id
 
         if not asset_id:
             continue

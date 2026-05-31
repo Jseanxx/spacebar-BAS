@@ -3,6 +3,56 @@ campaign_name: PipelineKey
 description: Jenkins에서 확보한 deploy key를 이용해 App 서버 SSH 접속과 App 운영 경로 탐색 행위를 재현한다.
 
 flow:
+  - order: -2
+    phase: normal
+    module: attack.T1021_004_ssh_remote_service
+    target: SB-01
+    name: baseline App SSH health check
+    requires:
+      - ssh
+      - app_host
+      - deploy_key
+    inputs:
+      - name: username
+        label: SSH user
+        source: app.ssh_user
+        default: deploy
+      - name: command
+        label: Remote command
+        default: "hostname && uptime"
+    params:
+      behavior: sb01_normal_app_ssh_health
+      username: deploy
+      command: "hostname && uptime"
+
+  - order: -1
+    phase: normal
+    module: attack.T1083_file_directory_discovery
+    target: SB-01
+    name: baseline App release path check
+    requires:
+      - ssh
+      - app_host
+      - linux_filesystem
+    inputs:
+      - name: username
+        label: SSH user
+        source: app.ssh_user
+        default: deploy
+      - name: base_path
+        label: Base path
+        source: app.base_path
+        default: /opt/spacebar-booking
+      - name: max_depth
+        label: Max depth
+        type: number
+        default: 1
+    params:
+      behavior: sb01_normal_app_release_path_check
+      username: deploy
+      base_path: /opt/spacebar-booking
+      max_depth: 1
+
   - order: 1
     phase: attack
     module: attack.T1021_004_ssh_remote_service

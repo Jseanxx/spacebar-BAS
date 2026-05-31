@@ -3,6 +3,71 @@ campaign_name: Spacebar AD Detection Validation
 description: Validates the SB-03 AWS AD intrusion scenario end to end. The flow keeps all 23 documented techniques visible in the BAS dashboard, routes each step to the proper SB-AD agent role, and blocks credential/domain-compromise actions unless explicit safety gates are set.
 
 flow:
+  - order: -2
+    phase: normal
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "Normal. PC01 User Context Check"
+    requires: [windows, cmd]
+    params:
+      behavior: sbad_normal_pc01_user_context
+      scenario_order: -2
+      execution_host: PC01
+      risk: low
+      description: Normal baseline log for PC01 user and host context before attack validation.
+      commands:
+        - name: normal-pc01-user-context
+          executor: local
+          agent_role: pc01
+          platform: windows
+          shell: cmd
+          timeout: 20
+          command: whoami & hostname
+
+  - order: -1
+    phase: normal
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "Normal. FS01 Share Read Check"
+    requires: [windows, cmd, active_directory]
+    params:
+      behavior: sbad_normal_fs01_share_check
+      scenario_order: -1
+      execution_host: PC01
+      risk: low
+      description: Normal baseline SMB read check against the FS01 share without staging or modifying files.
+      commands:
+        - name: normal-fs01-share-read
+          executor: windows_scheduled_user
+          agent_role: pc01
+          platform: windows
+          shell: cmd
+          run_as_user: "{{ netbios_domain }}\\{{ employee_user }}"
+          password_env: BAS_EMPLOYEE_PASSWORD
+          timeout: 30
+          command: dir \\FS01\share & exit /b 0
+
+  - order: 0
+    phase: normal
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "Normal. Domain Controller Availability Check"
+    requires: [windows, cmd, active_directory]
+    params:
+      behavior: sbad_normal_domain_controller_check
+      scenario_order: 0
+      execution_host: PC01
+      risk: low
+      description: Normal baseline domain controller lookup used as a comparison point for later AD discovery activity.
+      commands:
+        - name: normal-domain-controller-check
+          executor: local
+          agent_role: pc01
+          platform: windows
+          shell: cmd
+          timeout: 20
+          command: nltest /dsgetdc:{{ domain }}
+
   - order: 1
     phase: attack
     module: attack.sb_ad_technique
@@ -189,19 +254,19 @@ flow:
     phase: attack
     module: attack.sb_ad_technique
     target: SB-AD
-    name: "08. Permission Groups Discovery"
-    technique_id: T1069
+    name: "08. Local Groups Discovery"
+    technique_id: T1069.001
     requires: [windows, cmd, sysmon, active_directory]
     params:
-      behavior: permission_groups_discovery
-      technique_id: T1069
+      behavior: local_groups_discovery
+      technique_id: T1069.001
       scenario_order: 8
       execution_host: PC01
       risk: low
       description: Checks local and domain administrator group membership with built-in Windows commands.
       safety_gates: [BAS_ALLOW_REAL_EXECUTION]
       commands:
-        - name: admin-group-discovery-as-employee
+        - name: local-admin-group-discovery-as-employee
           executor: windows_scheduled_user
           agent_role: pc01
           platform: windows
@@ -209,7 +274,7 @@ flow:
           run_as_user: "{{ netbios_domain }}\\{{ employee_user }}"
           password_env: BAS_EMPLOYEE_PASSWORD
           timeout: 30
-          command: net localgroup Administrators & net group "Domain Admins" /domain & exit /b 0
+          command: net localgroup Administrators & exit /b 0
 
   - order: 9
     phase: attack
@@ -673,3 +738,79 @@ flow:
           command: >-
             cd {{ impacket_examples_dir }} &&
             KRB5CCNAME={{ admin_user }}.ccache /home/ubuntu/spacebar-BAS-codex/.venv/bin/python secretsdump.py '{{ domain }}/{{ admin_user }}@{{ dc01 }}' -k -no-pass -target-ip {{ dc01_private_ip }} >/dev/null 2>&1
+
+  - order: 24
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "24. Domain Groups Discovery"
+    technique_id: T1069.002
+    requires: [windows, cmd, sysmon, active_directory]
+    params:
+      behavior: domain_groups_discovery
+      technique_id: T1069.002
+      scenario_order: 24
+      execution_host: PC01
+      risk: low
+      description: Enumerates the Domain Admins group with net.exe so T1069.002 can be validated independently from local group discovery.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: domain-admin-group-discovery-as-employee
+          executor: windows_scheduled_user
+          agent_role: pc01
+          platform: windows
+          shell: cmd
+          run_as_user: "{{ netbios_domain }}\\{{ employee_user }}"
+          password_env: BAS_EMPLOYEE_PASSWORD
+          timeout: 30
+          command: net group "Domain Admins" /domain & exit /b 0
+
+  - order: 25
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "25. Local Account Discovery"
+    technique_id: T1087.001
+    requires: [windows, cmd, sysmon]
+    params:
+      behavior: local_account_discovery
+      technique_id: T1087.001
+      scenario_order: 25
+      execution_host: PC01
+      risk: low
+      description: Enumerates local users on PC01 with net.exe so T1087.001 can be validated separately from domain account discovery.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: local-user-discovery-as-employee
+          executor: windows_scheduled_user
+          agent_role: pc01
+          platform: windows
+          shell: cmd
+          run_as_user: "{{ netbios_domain }}\\{{ employee_user }}"
+          password_env: BAS_EMPLOYEE_PASSWORD
+          timeout: 30
+          command: net user & exit /b 0
+
+  - order: 26
+    phase: attack
+    module: attack.sb_ad_technique
+    target: SB-AD
+    name: "26. SAM Credential Store Access"
+    technique_id: T1003.002
+    requires: [windows, cmd, sysmon]
+    params:
+      behavior: sam_credential_store_access
+      technique_id: T1003.002
+      scenario_order: 26
+      execution_host: PC01
+      risk: high
+      description: Attempts a controlled SAM registry save to validate T1003.002 telemetry. The temporary file is deleted immediately and the step is blocked unless the dedicated credential-access gate is enabled.
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_ENABLE_CREDENTIAL_ACCESS_TESTS]
+      commands:
+        - name: sam-reg-save-smoke-test
+          executor: local
+          agent_role: pc01
+          platform: windows
+          shell: cmd
+          timeout: 45
+          command: reg save HKLM\SAM "%TEMP%\spacebar-bas-sam.save" /y & del "%TEMP%\spacebar-bas-sam.save" /f /q

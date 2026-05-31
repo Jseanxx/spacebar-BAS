@@ -133,6 +133,10 @@ function getTechniqueLabel(step) {
   return step.technique_id ? `${step.technique_id} · ${step.name}` : step.name;
 }
 
+function isSubTechnique(step) {
+  return /^T\d{4}\.\d{3}$/.test(String(step?.technique_id || ""));
+}
+
 function getStatusLabel(status) {
   const labels = {
     online: "온라인",
@@ -1208,6 +1212,7 @@ export default function App() {
                   <span className="phase-line">
                     <em>{phase === "normal" ? "Normal" : "Attack"}</em>
                     <b>{step.technique_id || "STEP"}</b>
+                    {isSubTechnique(step) && <i className="subtechnique-badge">서브테크닉</i>}
                   </span>
                   <strong>{step.name}</strong>
                   <small>{getStepSourceId(step, campaignId)} · {getStepRole(step)}</small>
@@ -1273,7 +1278,10 @@ export default function App() {
                   <div className="queue-card-head">
                     <span>{index + 1}</span>
                     <div>
-                      <strong>{getTechniqueLabel(step)}</strong>
+                      <strong>
+                        {getTechniqueLabel(step)}
+                        {isSubTechnique(step) && <i className="subtechnique-badge inline">서브테크닉</i>}
+                      </strong>
                       <small>{getStepAssetId(step).toUpperCase()} · {getStepRole(step)}</small>
                     </div>
                   </div>
@@ -1627,6 +1635,13 @@ export default function App() {
                     <span><b>OS</b>{asset.os || asset.platform || "N/A"}</span>
                     <span><b>Type</b>{asset.role || asset.segment_id || "N/A"}</span>
                   </div>
+                  {normalizeList(asset.tags).length > 0 && (
+                    <div className="asset-tags">
+                      {normalizeList(asset.tags).slice(0, 4).map((tag) => (
+                        <span key={`${asset.asset_id}-${tag}`}>{tag}</span>
+                      ))}
+                    </div>
+                  )}
                   <div className="asset-state-row">
                     <em className="agent-pill" title={`BAS Agent ${getStatusLabel(asset.agentStatus)}`}>
                       <span className="agent-status-dot" aria-hidden="true" />

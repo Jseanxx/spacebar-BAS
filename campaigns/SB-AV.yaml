@@ -3,6 +3,80 @@ campaign_name: Hanguel PMS AV Bypass Chain Validation
 description: SB-07 OZZY PMS Chain을 BAS로 검증한다. Bastion, PMS/JBoss, win01 AD discovery, credential artifact, DC SMB/WinRM harmless validation을 수행하고, loader/LSASS/PtH 계열은 안전 게이트가 열렸을 때 통제된 telemetry 검증 모드로 실행한다.
 
 flow:
+  - order: -2
+    phase: normal
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "Normal. Bastion Health Marker"
+    requires: [linux, bash]
+    params:
+      behavior: sbav_normal_bastion_health
+      scenario_order: -2
+      execution_host: hanguel-bastion
+      risk: low
+      description: Normal baseline event for Bastion session and host health before attack-chain validation.
+      hanguel_log_id: HAB-000
+      hanguel_event_action: normal_bastion_health
+      commands:
+        - name: normal-bastion-health
+          executor: local
+          agent_role: bastion
+          platform: linux
+          shell: bash
+          timeout: 20
+          command: >-
+            whoami; hostname; date -u +"%Y-%m-%dT%H:%M:%SZ"
+
+  - order: -1
+    phase: normal
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "Normal. PMS Update Path Health"
+    requires: [linux, bash]
+    params:
+      behavior: sbav_normal_pms_path_health
+      scenario_order: -1
+      execution_host: hanguel-ops-pms
+      risk: low
+      description: Normal baseline check for PMS update paths without creating or modifying patch artifacts.
+      hanguel_log_id: HAP-000
+      hanguel_event_action: normal_pms_path_health
+      commands:
+        - name: normal-pms-path-health
+          executor: local
+          agent_role: pms
+          platform: linux
+          shell: bash
+          timeout: 20
+          command: >-
+            for path in "{{ pms_update_manifest }}" "{{ pms_update_patch }}"; do
+              [ -e "$path" ] && ls -l "$path" || echo "missing $path";
+            done
+
+  - order: 0
+    phase: normal
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "Normal. WIN01 Agent Health"
+    requires: [windows, powershell]
+    params:
+      behavior: sbav_normal_win01_health
+      scenario_order: 0
+      execution_host: hanguel-win01
+      risk: low
+      description: Normal baseline event for WIN01 host context and agent reachability.
+      hanguel_log_id: HAW-000
+      hanguel_event_action: normal_win01_health
+      commands:
+        - name: normal-win01-health
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 30
+          command: >-
+            whoami; hostname; Get-Date -Format o
+
   - order: 1
     phase: attack
     module: attack.sb_av_hanguel_chain
@@ -379,13 +453,13 @@ flow:
     phase: attack
     module: attack.sb_av_hanguel_chain
     target: SB-AV
-    name: "13. Unsecured Credentials: dc_cred.xml Metadata"
-    technique_id: T1552
+    name: "13. Credentials In Files: dc_cred.xml Metadata"
+    technique_id: T1552.001
     requires: [windows, powershell]
     depends_on_orders: [10]
     params:
       behavior: win01_dc_cred_metadata_check
-      technique_id: T1552
+      technique_id: T1552.001
       scenario_order: 13
       execution_host: hanguel-win01
       risk: medium
@@ -478,13 +552,13 @@ flow:
     phase: attack
     module: attack.sb_av_hanguel_chain
     target: SB-AV
-    name: "16. Obfuscated Payload Artifact: Loader Marker"
-    technique_id: T1027
+    name: "16. Encrypted/Encoded File: Loader Marker"
+    technique_id: T1027.013
     requires: [windows, powershell]
     depends_on_orders: [15]
     params:
       behavior: dc_loader_obfuscated_artifact
-      technique_id: T1027
+      technique_id: T1027.013
       scenario_order: 16
       execution_host: hanguel-dc01
       risk: high
@@ -604,3 +678,64 @@ flow:
             if (Test-Path $path) { Get-Item $path | Select-Object FullName, Length, LastWriteTime | Format-List | Out-String };
             klist 2>$null | Out-String;
             nltest /sc_query:{{ domain }} | Out-String
+
+  - order: 20
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "20. PowerShell: WIN01 Context Command"
+    technique_id: T1059.001
+    requires: [windows, powershell]
+    depends_on_orders: [10]
+    params:
+      behavior: win01_powershell_context_command
+      technique_id: T1059.001
+      scenario_order: 20
+      execution_host: hanguel-win01
+      risk: low
+      description: Runs a harmless PowerShell context command so PowerShell execution can be scored independently from generic host discovery.
+      hanguel_log_id: HAW-005
+      hanguel_event_action: powershell_context_command
+      expected_rule_ids: [sb07-powershell-context-016]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: win01-powershell-context-command
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 30
+          command: >-
+            $PSVersionTable.PSVersion.ToString();
+            whoami;
+            Get-Process -Id $PID | Select-Object ProcessName, Id | Format-List | Out-String
+
+  - order: 21
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "21. Command Obfuscation: Encoded PowerShell Marker"
+    technique_id: T1027.010
+    requires: [windows, powershell]
+    depends_on_orders: [20]
+    params:
+      behavior: win01_encoded_powershell_marker
+      technique_id: T1027.010
+      scenario_order: 21
+      execution_host: hanguel-win01
+      risk: medium
+      description: Executes a harmless encoded PowerShell marker to validate command-obfuscation telemetry without downloading or running a payload.
+      hanguel_log_id: HAW-005
+      hanguel_event_action: encoded_powershell_marker
+      expected_rule_ids: [sb07-command-obfuscation-017]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: win01-encoded-powershell-marker
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 30
+          command: >-
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('Write-Output "SB-AV encoded marker"'));
+            powershell.exe -NoProfile -EncodedCommand $encoded

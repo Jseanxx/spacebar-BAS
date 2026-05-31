@@ -1,0 +1,16 @@
+agent_id: sbav-pms-bas-agent
+campaign_agent_id: SB-AV
+agent_role: pms
+asset_id: pms
+segment_id: pms-zone
+display_name: SB-AV PMS BasAgent
+hostname: hanguel-ops-pms
+platform: linux
+collector_type: hanguel-pms
+controller_url: http://54.116.166.183:443/api
+controller_urls: http://54.116.166.183:443/api,http://10.60.0.10:8000
+interval_seconds: 2
+execution_mode: real
+safety_mode: approval_required
+capabilities: linux,bash,http_probe,pms_update_path,marker_files
+controls: pms_logs,jboss_access_log,logstash,hanguel_correlator

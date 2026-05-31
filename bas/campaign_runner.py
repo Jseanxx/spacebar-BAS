@@ -1,5 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+import os
+import time
 import uuid
 
 from bas.loader import load_campaign, load_target
@@ -116,7 +118,9 @@ class CampaignRunner:
         invalid_steps = []
 
         for selection in selected_step_refs:
-            selection_id = f"{selection.get('campaign_id')}:{selection.get('order')}"
+            campaign_id = self._selection_value(selection, "campaign_id")
+            order = self._selection_value(selection, "order")
+            selection_id = f"{campaign_id}:{order}"
             step = library.get(selection_id)
 
             if not step:
@@ -126,12 +130,20 @@ class CampaignRunner:
             step_copy = dict(step)
             step_copy["source_target_id"] = step.get("target")
             step_copy["target"] = self.campaign_id
+            step_copy["selected_inputs"] = self._selection_value(selection, "inputs", {}) or {}
+            step_copy["runtime_context"] = self._selection_value(selection, "runtime_context", {}) or {}
             resolved.append(step_copy)
 
         if invalid_steps:
             raise ValueError(f"Invalid selected_steps: {', '.join(invalid_steps)}")
 
         return resolved
+
+    def _selection_value(self, selection, key, default=None):
+        if isinstance(selection, dict):
+            return selection.get(key, default)
+
+        return getattr(selection, key, default)
 
     def _select_steps(self, steps):
         """
@@ -243,6 +255,7 @@ class CampaignRunner:
         target 로딩, module import, module.run(), ELK 확인, 결과 정리를 처리합니다.
         """
         step_started_at = now_kst()
+        input_values = {}
 
         try:
             target = load_target(step["target"])
@@ -250,7 +263,16 @@ class CampaignRunner:
 
             # 중요한 줄: 각 공격/정상 행위 모듈의 run()이 실제로 호출되는 지점입니다.
             module_params = dict(step.get("params", {}))
+            input_values = self._resolve_input_values(step, target)
+            module_params.update(input_values)
+            module_params.update(step.get("runtime_context") or {})
             module_params["_execution_mode"] = self.execution_mode
+            module_params.setdefault("_operation_id", self.execution_id)
+            module_params.setdefault("_step_order", step.get("order"))
+            module_params.setdefault(
+                "_execution_marker",
+                f"{module_params.get('_operation_id')}-step-{step.get('order')}",
+            )
 
             module_result = module.run(
                 target=target,
@@ -274,8 +296,28 @@ class CampaignRunner:
 
         evidence_key = module_result.get("evidence_key")
 
-        # evidence_key가 있어야 target YAML의 log_queries 중 어떤 쿼리를 쓸지 결정할 수 있습니다.
-        elk_result = check_elk(target, evidence_key) if evidence_key else None
+        defer_elk_checks = os.environ.get("BAS_DEFER_ELK_CHECKS", "").lower() in ("1", "true", "yes")
+        wait_seconds = int(os.environ.get("BAS_STEP_ALERT_WAIT_SECONDS", "0") or "0")
+        if not defer_elk_checks and wait_seconds > 0 and status not in ("simulated", "blocked", "failed"):
+            time.sleep(wait_seconds)
+
+        # simulation은 실제 공격 행위가 없으므로 과거 로그와 섞이지 않게 ELK 검증을 생략합니다.
+        elk_result = None
+        if evidence_key and not defer_elk_checks and status not in ("simulated", "blocked", "failed"):
+            elk_result = check_elk(
+                target,
+                evidence_key,
+                execution_context={
+                    "operation_id": module_params.get("_operation_id"),
+                    "job_id": module_params.get("_job_id"),
+                    "execution_marker": module_params.get("_execution_marker"),
+                    "step_order": step.get("order"),
+                    "time_window": {
+                        "started_at": step_started_at,
+                        "finished_at": now_kst(),
+                    },
+                },
+            )
 
         return {
             "order": step.get("order"),
@@ -288,6 +330,8 @@ class CampaignRunner:
             "source_campaign_id": step.get("source_campaign_id", self.campaign_id),
             "source_campaign_name": step.get("source_campaign_name"),
             "selection_id": step.get("selection_id"),
+            "inputs_used": input_values,
+            "runtime_context": step.get("runtime_context") or {},
             "started_at": step_started_at,
             "finished_at": now_kst(),
             "status": status,
@@ -299,3 +343,60 @@ class CampaignRunner:
     def _is_simulated_result(self, module_result):
         message = str(module_result.get("message", "")).lower()
         return "simulated" in message or module_result.get("simulated") is True
+
+    def _resolve_input_values(self, step, target):
+        input_definitions = step.get("inputs") or []
+        selected_inputs = step.get("selected_inputs") or {}
+        params = step.get("params") or {}
+        values = {}
+
+        for definition in input_definitions:
+            name = definition.get("name")
+            if not name:
+                continue
+
+            fallback = self._resolve_input_fallback(definition, params, target)
+            raw_value = selected_inputs.get(name, fallback)
+
+            if raw_value in (None, ""):
+                if fallback in (None, ""):
+                    continue
+                raw_value = fallback
+
+            values[name] = self._coerce_input_value(raw_value, definition.get("type"))
+
+        return values
+
+    def _resolve_input_fallback(self, definition, params, target):
+        source_path = definition.get("source")
+
+        if source_path:
+            source_value = self._get_nested_value(target, source_path)
+            if source_value not in (None, ""):
+                return source_value
+
+        return definition.get("default", params.get(definition.get("name")))
+
+    def _get_nested_value(self, data, path):
+        current = data
+
+        for key in str(path).split("."):
+            if not isinstance(current, dict):
+                return None
+            current = current.get(key)
+
+        return current
+
+    def _coerce_input_value(self, value, input_type):
+        if input_type in ("number", "integer"):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return value
+
+        if input_type == "boolean":
+            if isinstance(value, bool):
+                return value
+            return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+        return value

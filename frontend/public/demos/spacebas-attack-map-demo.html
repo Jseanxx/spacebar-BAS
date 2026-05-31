@@ -1,0 +1,1432 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SpaceBaS Attack Map Demo</title>
+    <style>
+      :root {
+        --bg: #f6f7f9;
+        --surface: #ffffff;
+        --surface-soft: #f0f3f6;
+        --border: #d8dee6;
+        --border-strong: #b7c0cc;
+        --text: #18202a;
+        --muted: #687385;
+        --teal: #0f9f8f;
+        --teal-soft: #dff7f4;
+        --blue: #2563eb;
+        --blue-soft: #e4edff;
+        --amber: #b76b00;
+        --amber-soft: #fff2d8;
+        --red: #d33b32;
+        --red-soft: #ffe4e2;
+        --purple: #6852d9;
+        --purple-soft: #ece8ff;
+        --green: #16803c;
+        --green-soft: #e1f4e8;
+        --shadow: 0 18px 45px rgba(24, 32, 42, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        letter-spacing: 0;
+      }
+
+      button {
+        font: inherit;
+      }
+
+      .app {
+        max-width: 1500px;
+        margin: 0 auto;
+        padding: 22px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 18px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        min-width: 0;
+      }
+
+      .logo {
+        display: grid;
+        place-items: center;
+        width: 48px;
+        height: 48px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--teal);
+        font-weight: 900;
+        box-shadow: 0 7px 18px rgba(24, 32, 42, 0.08);
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 26px;
+        line-height: 1.1;
+      }
+
+      .brand p {
+        margin: 5px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .status-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(118px, 1fr));
+        gap: 10px;
+        min-width: 520px;
+      }
+
+      .metric {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 11px 12px;
+      }
+
+      .metric span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 5px;
+        font-size: 18px;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 1fr 360px;
+        gap: 16px;
+        align-items: start;
+      }
+
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      article.panel {
+        overflow-x: auto;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .panel-header h2,
+      .side-card h3 {
+        margin: 0;
+        font-size: 17px;
+      }
+
+      .panel-header p {
+        margin: 5px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+        max-width: 460px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 28px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface);
+        padding: 4px 9px;
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--muted);
+      }
+
+      .dot.planned {
+        background: var(--muted);
+      }
+
+      .dot.executed {
+        background: var(--blue);
+      }
+
+      .dot.detected {
+        background: var(--green);
+      }
+
+      .dot.gap {
+        background: var(--red);
+      }
+
+      .dot.blocked {
+        background: var(--purple);
+      }
+
+      .map-wrap {
+        position: relative;
+        width: 1120px;
+        max-width: 100%;
+        padding: 18px;
+        overflow: hidden;
+        background:
+          linear-gradient(rgba(24, 32, 42, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(24, 32, 42, 0.035) 1px, transparent 1px);
+        background-size: 32px 32px;
+      }
+
+      .map-stage {
+        position: relative;
+        height: 720px;
+        min-width: 1084px;
+      }
+
+      .zone {
+        position: absolute;
+        top: 18px;
+        bottom: 18px;
+        z-index: 0;
+        border: 2px solid var(--border-strong);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.55);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.75);
+      }
+
+      .zone-title {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        display: grid;
+        gap: 2px;
+        border: 1px solid rgba(255, 255, 255, 0.9);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.9);
+        padding: 7px 9px;
+        color: #263241;
+        font-size: 12px;
+        font-weight: 800;
+        box-shadow: 0 8px 18px rgba(24, 32, 42, 0.08);
+      }
+
+      .zone-title small {
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 750;
+      }
+
+      .zone.external {
+        left: 18px;
+        width: 206px;
+        border-color: rgba(104, 82, 217, 0.55);
+        background: rgba(104, 82, 217, 0.1);
+      }
+
+      .zone.endpoint {
+        left: 246px;
+        width: 220px;
+        border-color: rgba(37, 99, 235, 0.5);
+        background: rgba(37, 99, 235, 0.09);
+      }
+
+      .zone.server {
+        left: 496px;
+        width: 236px;
+        border-color: rgba(22, 128, 60, 0.5);
+        background: rgba(22, 128, 60, 0.09);
+      }
+
+      .zone.domain {
+        left: 744px;
+        width: 180px;
+        border-color: rgba(183, 107, 0, 0.55);
+        background: rgba(183, 107, 0, 0.1);
+      }
+
+      .zone.detection {
+        left: 914px;
+        width: 152px;
+        border-color: rgba(15, 159, 143, 0.55);
+        background: rgba(15, 159, 143, 0.11);
+      }
+
+      .edge-layer {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      .edge {
+        fill: none;
+        stroke: #8b96a6;
+        stroke-width: 3;
+        stroke-dasharray: 7 7;
+        transition: stroke 0.2s ease, stroke-width 0.2s ease;
+      }
+
+      .edge.executed {
+        stroke: var(--blue);
+        stroke-dasharray: 0;
+      }
+
+      .edge.detected {
+        stroke: var(--green);
+        stroke-dasharray: 0;
+        stroke-width: 4;
+      }
+
+      .edge.gap {
+        stroke: var(--red);
+        stroke-dasharray: 0;
+        stroke-width: 4;
+      }
+
+      .edge.blocked {
+        stroke: var(--purple);
+        stroke-dasharray: 12 5;
+        stroke-width: 4;
+      }
+
+      .node {
+        position: absolute;
+        z-index: 2;
+        width: 144px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface);
+        box-shadow: 0 12px 26px rgba(24, 32, 42, 0.14);
+        padding: 14px 12px 12px;
+        text-align: center;
+      }
+
+      .node[data-selected="true"] {
+        outline: 3px solid rgba(15, 159, 143, 0.25);
+        border-color: var(--teal);
+      }
+
+      .node-header {
+        display: grid;
+        place-items: center;
+        gap: 8px;
+      }
+
+      .node-title {
+        min-width: 0;
+      }
+
+      .node-title strong {
+        display: block;
+        font-size: 14px;
+      }
+
+      .node-title span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .asset-visual {
+        position: relative;
+        width: 88px;
+        height: 72px;
+        margin: 0 auto;
+      }
+
+      .asset-visual.workstation .screen {
+        position: absolute;
+        left: 8px;
+        top: 6px;
+        width: 72px;
+        height: 46px;
+        border: 4px solid #263241;
+        border-radius: 8px;
+        background: linear-gradient(180deg, #f8fbff 0%, #dceefe 100%);
+      }
+
+      .asset-visual.workstation .stand {
+        position: absolute;
+        left: 36px;
+        top: 51px;
+        width: 16px;
+        height: 12px;
+        background: #263241;
+      }
+
+      .asset-visual.workstation .base {
+        position: absolute;
+        left: 23px;
+        top: 62px;
+        width: 42px;
+        height: 5px;
+        border-radius: 999px;
+        background: #263241;
+      }
+
+      .asset-visual.terminal {
+        width: 84px;
+        height: 60px;
+        margin-top: 6px;
+        border: 4px solid #263241;
+        border-radius: 10px;
+        background: #111827;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+      }
+
+      .asset-visual.terminal .prompt {
+        position: absolute;
+        left: 14px;
+        top: 18px;
+        width: 28px;
+        height: 18px;
+        border-right: 4px solid #a7f3d0;
+      }
+
+      .asset-visual.terminal .prompt::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 3px;
+        width: 15px;
+        height: 15px;
+        border-top: 4px solid #a7f3d0;
+        border-right: 4px solid #a7f3d0;
+        transform: rotate(45deg);
+      }
+
+      .asset-visual.server {
+        display: grid;
+        gap: 6px;
+        width: 78px;
+        height: 66px;
+        margin-top: 3px;
+      }
+
+      .asset-visual.server span {
+        display: block;
+        border: 3px solid #263241;
+        border-radius: 8px;
+        background: linear-gradient(90deg, #edf2f7 0%, #d9e8ff 100%);
+      }
+
+      .asset-visual.server span::before {
+        content: "";
+        display: block;
+        width: 8px;
+        height: 8px;
+        margin: 7px 0 0 9px;
+        border-radius: 999px;
+        background: var(--teal);
+      }
+
+      .asset-visual.domain {
+        width: 78px;
+        height: 70px;
+      }
+
+      .asset-visual.domain .tower {
+        position: absolute;
+        left: 19px;
+        top: 6px;
+        width: 40px;
+        height: 58px;
+        border: 4px solid #263241;
+        border-radius: 10px;
+        background: linear-gradient(180deg, #fff 0%, #e9e8ff 100%);
+      }
+
+      .asset-visual.domain .tower::before,
+      .asset-visual.domain .tower::after {
+        content: "";
+        position: absolute;
+        left: 8px;
+        width: 16px;
+        height: 4px;
+        border-radius: 999px;
+        background: #263241;
+      }
+
+      .asset-visual.domain .tower::before {
+        top: 13px;
+      }
+
+      .asset-visual.domain .tower::after {
+        top: 28px;
+      }
+
+      .asset-visual.domain .lock {
+        position: absolute;
+        right: 5px;
+        bottom: 3px;
+        width: 25px;
+        height: 20px;
+        border: 3px solid var(--purple);
+        border-radius: 6px;
+        background: var(--purple-soft);
+      }
+
+      .asset-visual.domain .lock::before {
+        content: "";
+        position: absolute;
+        left: 5px;
+        top: -13px;
+        width: 10px;
+        height: 13px;
+        border: 3px solid var(--purple);
+        border-bottom: 0;
+        border-radius: 999px 999px 0 0;
+      }
+
+      .asset-visual.siem {
+        width: 80px;
+        height: 68px;
+        border: 4px solid #263241;
+        border-radius: 12px;
+        background: linear-gradient(180deg, #fff 0%, #e7fbf7 100%);
+      }
+
+      .asset-visual.siem span {
+        position: absolute;
+        bottom: 14px;
+        width: 10px;
+        border-radius: 5px 5px 0 0;
+        background: var(--teal);
+      }
+
+      .asset-visual.siem span:nth-child(1) {
+        left: 19px;
+        height: 18px;
+      }
+
+      .asset-visual.siem span:nth-child(2) {
+        left: 35px;
+        height: 30px;
+      }
+
+      .asset-visual.siem span:nth-child(3) {
+        left: 51px;
+        height: 42px;
+      }
+
+      .node-body {
+        display: grid;
+        justify-items: center;
+        gap: 8px;
+        padding-top: 10px;
+      }
+
+      .kv {
+        display: none;
+      }
+
+      .node-role {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .kv dt {
+        color: var(--muted);
+      }
+
+      .kv dd {
+        margin: 0;
+        font-weight: 650;
+      }
+
+      .agent {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .agent.online {
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .agent.log-only {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .control-list {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 5px;
+      }
+
+      .control-tag {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 3px 6px;
+        background: var(--surface-soft);
+        color: #344052;
+        font-size: 10px;
+      }
+
+      .attacker {
+        left: 48px;
+        top: 250px;
+      }
+
+      .pc01 {
+        left: 284px;
+        top: 110px;
+      }
+
+      .fs01 {
+        left: 548px;
+        top: 255px;
+      }
+
+      .dc01 {
+        left: 762px;
+        top: 104px;
+      }
+
+      .elk {
+        left: 918px;
+        top: 415px;
+      }
+
+      .edge-label {
+        position: absolute;
+        z-index: 3;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 210px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.95);
+        padding: 6px 9px;
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 750;
+        box-shadow: 0 8px 18px rgba(24, 32, 42, 0.1);
+      }
+
+      .edge-label button {
+        border: 0;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font-weight: inherit;
+        text-align: left;
+      }
+
+      .edge-label[data-selected="true"] {
+        border-color: var(--teal);
+        background: var(--teal-soft);
+      }
+
+      .label-initial {
+        left: 185px;
+        top: 285px;
+      }
+
+      .label-winrm {
+        left: 430px;
+        top: 310px;
+      }
+
+      .label-exfil {
+        left: 365px;
+        top: 565px;
+      }
+
+      .label-dcsync {
+        left: 625px;
+        top: 215px;
+      }
+
+      .map-footer {
+        position: relative;
+        z-index: 5;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 14px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.96);
+        padding: 12px;
+      }
+
+      .scenario-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .scenario-buttons button,
+      .ghost-btn {
+        min-height: 34px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        color: #263241;
+        padding: 7px 10px;
+        cursor: pointer;
+        font-weight: 750;
+      }
+
+      .scenario-buttons button.active {
+        border-color: var(--teal);
+        background: var(--teal-soft);
+        color: #08685e;
+      }
+
+      .side {
+        display: grid;
+        gap: 14px;
+      }
+
+      .side-card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 15px;
+      }
+
+      .side-card p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .selected-title {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .selected-title strong {
+        display: block;
+        font-size: 15px;
+      }
+
+      .selected-title span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .status-badge {
+        border-radius: 999px;
+        padding: 5px 8px;
+        font-size: 11px;
+        font-weight: 900;
+        white-space: nowrap;
+      }
+
+      .status-badge.planned {
+        background: var(--surface-soft);
+        color: var(--muted);
+      }
+
+      .status-badge.executed {
+        background: var(--blue-soft);
+        color: var(--blue);
+      }
+
+      .status-badge.detected {
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .status-badge.gap {
+        background: var(--red-soft);
+        color: var(--red);
+      }
+
+      .status-badge.blocked {
+        background: var(--purple-soft);
+        color: var(--purple);
+      }
+
+      .evidence-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .evidence-box {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface-soft);
+        padding: 10px;
+      }
+
+      .evidence-box span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .evidence-box strong {
+        display: block;
+        margin-top: 5px;
+        font-size: 13px;
+      }
+
+      pre {
+        margin: 12px 0 0;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #10151d;
+        color: #d9f6ef;
+        padding: 12px;
+        overflow: auto;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+
+      .control-row {
+        display: grid;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .control-item {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        align-items: center;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px;
+        background: var(--surface-soft);
+      }
+
+      .control-item strong {
+        display: block;
+        font-size: 13px;
+      }
+
+      .control-item span {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .mini-table {
+        width: 100%;
+        margin-top: 12px;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      .mini-table th,
+      .mini-table td {
+        border-bottom: 1px solid var(--border);
+        padding: 8px 6px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .mini-table th {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .note {
+        border-left: 3px solid var(--teal);
+        background: var(--teal-soft);
+        padding: 11px 12px;
+        color: #0b4e47;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      @media (max-width: 1150px) {
+        .topbar,
+        .layout {
+          grid-template-columns: 1fr;
+          display: grid;
+        }
+
+        .status-strip {
+          min-width: 0;
+        }
+
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        article.panel {
+          overflow-x: auto;
+        }
+
+        .map-wrap {
+          width: 1120px;
+          max-width: none;
+        }
+
+        .map-stage {
+          min-width: 1084px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="logo">SB</div>
+          <div>
+            <h1>SpaceBaS Attack Map Demo</h1>
+            <p>
+              자산 위치, BAS Agent, 보안 통제, 공격 경로, ELK Evidence를
+              한 화면에서 보는 BAS형 맵 초안
+            </p>
+          </div>
+        </div>
+        <section class="status-strip" aria-label="summary metrics">
+          <div class="metric">
+            <span>등록 자산</span>
+            <strong>5</strong>
+          </div>
+          <div class="metric">
+            <span>BAS Agent</span>
+            <strong>3 Online</strong>
+          </div>
+          <div class="metric">
+            <span>보안 통제</span>
+            <strong>5개</strong>
+          </div>
+          <div class="metric">
+            <span>Attack Paths</span>
+            <strong>4개</strong>
+          </div>
+        </section>
+      </header>
+
+      <section class="layout">
+        <article class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>SB-AD 자산 기반 공격 경로 맵</h2>
+              <p>
+                멘토님 피드백 기준으로 “어디에 자산이 있고, 어떤 보안 통제가
+                있으며, 어떤 구간으로 공격이 흐르는지”를 먼저 보여주는 구조입니다.
+              </p>
+            </div>
+            <div class="legend" aria-label="status legend">
+              <span class="pill"><i class="dot planned"></i>실행 전</span>
+              <span class="pill"><i class="dot executed"></i>실행됨</span>
+              <span class="pill"><i class="dot detected"></i>탐지됨</span>
+              <span class="pill"><i class="dot gap"></i>미탐지</span>
+              <span class="pill"><i class="dot blocked"></i>차단</span>
+            </div>
+          </div>
+
+          <div class="map-wrap" id="map">
+            <div class="map-stage">
+              <div class="zone external">
+                <span class="zone-title">External Zone<small>10.0.1.0/24</small></span>
+              </div>
+              <div class="zone endpoint">
+                <span class="zone-title">User Endpoint<small>10.0.4.0/24</small></span>
+              </div>
+              <div class="zone server">
+                <span class="zone-title">Server Zone<small>10.0.10.0/24</small></span>
+              </div>
+              <div class="zone domain">
+                <span class="zone-title">Domain Core<small>10.0.13.0/24</small></span>
+              </div>
+              <div class="zone detection">
+                <span class="zone-title">SIEM<small>ELK</small></span>
+              </div>
+
+            <svg class="edge-layer" viewBox="0 0 1084 720" preserveAspectRatio="none">
+              <defs>
+                <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                  <path d="M0,0 L10,4 L0,8 z" fill="#8b96a6"></path>
+                </marker>
+                <marker id="arrowGreen" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                  <path d="M0,0 L10,4 L0,8 z" fill="#16803c"></path>
+                </marker>
+                <marker id="arrowBlue" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                  <path d="M0,0 L10,4 L0,8 z" fill="#2563eb"></path>
+                </marker>
+                <marker id="arrowRed" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                  <path d="M0,0 L10,4 L0,8 z" fill="#d33b32"></path>
+                </marker>
+                <marker id="arrowPurple" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                  <path d="M0,0 L10,4 L0,8 z" fill="#6852d9"></path>
+                </marker>
+              </defs>
+              <path id="edge-initial" class="edge" d="M192 355 C230 305, 250 245, 284 230" marker-end="url(#arrow)" />
+              <path id="edge-winrm" class="edge" d="M428 235 C475 255, 505 335, 548 372" marker-end="url(#arrow)" />
+              <path id="edge-exfil" class="edge" d="M548 445 C430 590, 250 585, 192 430" marker-end="url(#arrow)" />
+              <path id="edge-dcsync" class="edge" d="M192 320 C420 75, 660 60, 762 230" marker-end="url(#arrow)" />
+              <path id="edge-elk" class="edge detected" d="M692 430 C770 505, 850 540, 918 540" marker-end="url(#arrowGreen)" />
+            </svg>
+
+            <section class="node attacker" data-asset="attacker">
+              <div class="node-header">
+                <div class="asset-visual terminal" aria-hidden="true">
+                  <span class="prompt"></span>
+                </div>
+                <div class="node-title">
+                  <strong>Attacker Ubuntu</strong>
+                  <span>10.0.1.194 / 외부 검증 시작점</span>
+                </div>
+              </div>
+              <div class="node-body">
+                <span class="agent online">Agent Online</span>
+                <span class="node-role">Operator · External</span>
+                <div class="control-list">
+                  <span class="control-tag">AWS SG</span>
+                  <span class="control-tag">Response</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="node pc01" data-asset="pc01">
+              <div class="node-header">
+                <div class="asset-visual workstation" aria-hidden="true">
+                  <span class="screen"></span>
+                  <span class="stand"></span>
+                  <span class="base"></span>
+                </div>
+                <div class="node-title">
+                  <strong>PC01 Employee</strong>
+                  <span>10.0.4.216 / 초기 실행 지점</span>
+                </div>
+              </div>
+              <div class="node-body">
+                <span class="agent online">Agent Online</span>
+                <span class="node-role">User Host · Endpoint</span>
+                <div class="control-list">
+                  <span class="control-tag">Defender</span>
+                  <span class="control-tag">Sysmon</span>
+                  <span class="control-tag">Winlogbeat</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="node fs01" data-asset="fs01">
+              <div class="node-header">
+                <div class="asset-visual server" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <div class="node-title">
+                  <strong>FS01 File Server</strong>
+                  <span>10.0.10.77 / 내부 이동 대상</span>
+                </div>
+              </div>
+              <div class="node-body">
+                <span class="agent online">Agent Online</span>
+                <span class="node-role">File Server · Server</span>
+                <div class="control-list">
+                  <span class="control-tag">Defender</span>
+                  <span class="control-tag">Sysmon</span>
+                  <span class="control-tag">Winlogbeat</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="node dc01" data-asset="dc01">
+              <div class="node-header">
+                <div class="asset-visual domain" aria-hidden="true">
+                  <span class="tower"></span>
+                  <span class="lock"></span>
+                </div>
+                <div class="node-title">
+                  <strong>DC01 Domain Controller</strong>
+                  <span>10.0.13.205 / Kerberos, AD 로그</span>
+                </div>
+              </div>
+              <div class="node-body">
+                <span class="agent log-only">Log Source</span>
+                <span class="node-role">Domain Core · Critical</span>
+                <div class="control-list">
+                  <span class="control-tag">Security Log</span>
+                  <span class="control-tag">Winlogbeat</span>
+                  <span class="control-tag">Kibana Rule</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="node elk" data-asset="elk">
+              <div class="node-header">
+                <div class="asset-visual siem" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <div class="node-title">
+                  <strong>ELK</strong>
+                  <span>10.0.4.30 / Evidence Backend</span>
+                </div>
+              </div>
+              <div class="node-body">
+                <span class="agent log-only">Detection Backend</span>
+                <span class="node-role">SIEM · Detection</span>
+                <div class="control-list">
+                  <span class="control-tag">KQL</span>
+                  <span class="control-tag">Alert Rule</span>
+                  <span class="control-tag">Evidence</span>
+                </div>
+              </div>
+            </section>
+
+            <div class="edge-label label-initial" data-path="initial">
+              <i class="dot planned"></i>
+              <button type="button">T1204.002 / T1059.003</button>
+            </div>
+            <div class="edge-label label-winrm" data-path="winrm">
+              <i class="dot planned"></i>
+              <button type="button">T1021.006 WinRM</button>
+            </div>
+            <div class="edge-label label-exfil" data-path="exfil">
+              <i class="dot planned"></i>
+              <button type="button">T1074.001 / T1041</button>
+            </div>
+              <div class="edge-label label-dcsync" data-path="dcsync">
+                <i class="dot planned"></i>
+                <button type="button">T1003.006 DCSync</button>
+              </div>
+            </div>
+
+            <div class="map-footer">
+              <div>
+                <strong>데모 시나리오 상태 변경</strong>
+                <p style="margin: 3px 0 0; color: var(--muted); font-size: 12px">
+                  실제 실행 전 UI 검증용입니다. 버튼을 누르면 공격 경로와 Evidence 상태가 바뀝니다.
+                </p>
+              </div>
+              <div class="scenario-buttons">
+                <button type="button" class="active" data-scenario="planned">초기 상태</button>
+                <button type="button" data-scenario="winrm">WinRM 탐지</button>
+                <button type="button" data-scenario="lsass">LSASS 탐지</button>
+                <button type="button" data-scenario="dcsync-gap">DCSync 미탐지</button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <aside class="side">
+          <section class="side-card">
+            <h3>선택한 공격 경로</h3>
+            <p>경로를 클릭하면 Technique, 자산, 보안 통제, KQL 근거가 바뀝니다.</p>
+            <div id="selected-card" style="margin-top: 12px"></div>
+          </section>
+
+          <section class="side-card">
+            <h3>보안 통제 점검</h3>
+            <p>상용 BAS처럼 “어떤 보안 솔루션을 검증하는지”를 명시하는 영역입니다.</p>
+            <div class="control-row" id="control-row"></div>
+          </section>
+
+          <section class="side-card">
+            <h3>구간별 테스트 관점</h3>
+            <table class="mini-table">
+              <thead>
+                <tr>
+                  <th>구간</th>
+                  <th>검증 의미</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Attacker -> PC01</td>
+                  <td>초기 실행 및 콜백 탐지</td>
+                </tr>
+                <tr>
+                  <td>PC01 -> FS01</td>
+                  <td>내부 이동, WinRM 탐지</td>
+                </tr>
+                <tr>
+                  <td>FS01 -> Attacker</td>
+                  <td>스테이징 및 외부 전송 탐지</td>
+                </tr>
+                <tr>
+                  <td>Attacker -> DC01</td>
+                  <td>도메인 핵심 자산 접근 탐지</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="side-card">
+            <div class="note">
+              지금 데모의 핵심은 자동 자산 탐색이 아니라,
+              <strong>수동 등록 자산 맵 기반 BAS 검증 UI</strong>입니다.
+              이후 실제 Agent heartbeat와 ELK Alert API를 연결하면 됩니다.
+            </div>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script>
+      const paths = {
+        initial: {
+          title: "Initial Execution / Reverse Shell",
+          technique: "T1204.002, T1059.003",
+          from: "Attacker Ubuntu",
+          to: "PC01 Employee",
+          controls: ["Defender", "Sysmon", "Winlogbeat"],
+          status: "planned",
+          summary: "사용자 실행 기반 초기 침투와 명령 셸 실행 여부를 검증합니다.",
+          kql: 'host.name:"PC01.mycompany.local" AND event.code:"1" AND winlog.event_data.Image:*cmd.exe',
+          evidence:
+            'event.code=1, Image=C:\\Windows\\System32\\cmd.exe, User=MYCOMPANY\\employee1',
+        },
+        winrm: {
+          title: "WinRM Lateral Movement",
+          technique: "T1021.006",
+          from: "PC01 Employee",
+          to: "FS01 File Server",
+          controls: ["Windows Security 4624", "Sysmon", "Winlogbeat", "Kibana Rule"],
+          status: "planned",
+          summary: "PC01에서 FS01로 svc_file 계정 기반 WinRM 원격 실행을 검증합니다.",
+          kql:
+            'host.name:"FS01.mycompany.local" AND event.code:"1" AND winlog.event_data.Image:"C:\\\\Windows\\\\System32\\\\wsmprovhost.exe"',
+          evidence:
+            "event.code=4624, LogonType=3, TargetUserName=svc_file, SourceIp=10.0.4.216",
+        },
+        exfil: {
+          title: "Data Staging and Exfiltration",
+          technique: "T1074.001, T1041",
+          from: "FS01 File Server",
+          to: "Attacker Ubuntu",
+          controls: ["Sysmon FileCreate", "Sysmon Network", "Winlogbeat"],
+          status: "planned",
+          summary: "FS01에서 파일 스테이징 후 외부 방향 전송 흔적을 검증합니다.",
+          kql:
+            'host.name:"FS01.mycompany.local" AND (event.code:"11" OR event.code:"3") AND message:("C:\\\\Windows\\\\Temp" OR "10.0.1.194")',
+          evidence:
+            "event.code=11 TargetFilename=C:\\Windows\\Temp\\data.zip / event.code=3 DestinationIp=10.0.1.194",
+        },
+        dcsync: {
+          title: "Domain Replication Abuse",
+          technique: "T1003.006",
+          from: "Attacker Ubuntu",
+          to: "DC01 Domain Controller",
+          controls: ["Windows Security 4662", "Winlogbeat", "Kibana Rule"],
+          status: "planned",
+          summary: "도메인 복제 권한 악용 여부를 DC01 보안 이벤트로 검증합니다.",
+          kql:
+            'host.name:"DC01.mycompany.local" AND event.code:"4662" AND winlog.event_data.Properties:(*DS-Replication-Get-Changes*)',
+          evidence:
+            "event.code=4662, ObjectType=domainDNS, AccessMask=0x100, SubjectUserName=admin_user",
+        },
+      };
+
+      const controls = [
+        { name: "Defender", scope: "PC01 / FS01", state: "configured" },
+        { name: "Sysmon", scope: "PC01 / FS01", state: "configured" },
+        { name: "Winlogbeat", scope: "PC01 / FS01 / DC01", state: "configured" },
+        { name: "Kibana Rules", scope: "ELK", state: "partial" },
+        { name: "AWS Security Group", scope: "Network Boundary", state: "manual review" },
+      ];
+
+      const scenarios = {
+        planned: {
+          selected: "winrm",
+          states: { initial: "planned", winrm: "planned", exfil: "planned", dcsync: "planned" },
+        },
+        winrm: {
+          selected: "winrm",
+          states: { initial: "executed", winrm: "detected", exfil: "planned", dcsync: "planned" },
+        },
+        lsass: {
+          selected: "exfil",
+          states: { initial: "detected", winrm: "detected", exfil: "detected", dcsync: "planned" },
+        },
+        "dcsync-gap": {
+          selected: "dcsync",
+          states: { initial: "detected", winrm: "detected", exfil: "detected", dcsync: "gap" },
+        },
+      };
+
+      let selectedPath = "winrm";
+      let currentStates = { ...scenarios.planned.states };
+
+      function statusLabel(status) {
+        return {
+          planned: "실행 전",
+          executed: "실행됨",
+          detected: "탐지됨",
+          gap: "미탐지",
+          blocked: "차단됨",
+        }[status];
+      }
+
+      function markerFor(status) {
+        if (status === "detected") return "url(#arrowGreen)";
+        if (status === "executed") return "url(#arrowBlue)";
+        if (status === "gap") return "url(#arrowRed)";
+        if (status === "blocked") return "url(#arrowPurple)";
+        return "url(#arrow)";
+      }
+
+      function renderSelected() {
+        const path = paths[selectedPath];
+        const status = currentStates[selectedPath] || path.status;
+        const card = document.getElementById("selected-card");
+        card.innerHTML = `
+          <div class="selected-title">
+            <div>
+              <strong>${path.title}</strong>
+              <span>${path.technique} / ${path.from} -> ${path.to}</span>
+            </div>
+            <span class="status-badge ${status}">${statusLabel(status)}</span>
+          </div>
+          <p>${path.summary}</p>
+          <div class="evidence-grid">
+            <div class="evidence-box">
+              <span>Source</span>
+              <strong>${path.from}</strong>
+            </div>
+            <div class="evidence-box">
+              <span>Target</span>
+              <strong>${path.to}</strong>
+            </div>
+            <div class="evidence-box">
+              <span>검증 통제</span>
+              <strong>${path.controls.join(", ")}</strong>
+            </div>
+            <div class="evidence-box">
+              <span>결과</span>
+              <strong>${statusLabel(status)}</strong>
+            </div>
+          </div>
+          <pre><strong>KQL</strong>
+${path.kql}
+
+<strong>Sample Evidence</strong>
+${path.evidence}</pre>
+        `;
+      }
+
+      function renderControls() {
+        const row = document.getElementById("control-row");
+        row.innerHTML = controls
+          .map(
+            (control) => `
+            <div class="control-item">
+              <div>
+                <strong>${control.name}</strong>
+                <span>${control.scope}</span>
+              </div>
+              <span class="status-badge ${control.state === "configured" ? "detected" : "executed"}">${control.state}</span>
+            </div>
+          `,
+          )
+          .join("");
+      }
+
+      function renderMap() {
+        Object.keys(paths).forEach((key) => {
+          const status = currentStates[key] || "planned";
+          const edge = document.getElementById(`edge-${key}`);
+          if (edge) {
+            edge.setAttribute("class", `edge ${status}`);
+            edge.setAttribute("marker-end", markerFor(status));
+          }
+
+          const label = document.querySelector(`.edge-label[data-path="${key}"]`);
+          if (label) {
+            label.dataset.selected = key === selectedPath ? "true" : "false";
+            const dot = label.querySelector(".dot");
+            dot.className = `dot ${status}`;
+          }
+        });
+
+        document.querySelectorAll(".node").forEach((node) => {
+          const asset = node.dataset.asset;
+          const selected = paths[selectedPath].from.toLowerCase().includes(asset) ||
+            paths[selectedPath].to.toLowerCase().includes(asset);
+          node.dataset.selected = String(selected);
+        });
+
+        renderSelected();
+      }
+
+      document.querySelectorAll(".edge-label").forEach((label) => {
+        label.addEventListener("click", () => {
+          selectedPath = label.dataset.path;
+          renderMap();
+        });
+      });
+
+      document.querySelectorAll(".scenario-buttons button").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll(".scenario-buttons button").forEach((btn) => btn.classList.remove("active"));
+          button.classList.add("active");
+          const scenario = scenarios[button.dataset.scenario];
+          selectedPath = scenario.selected;
+          currentStates = { ...scenario.states };
+          renderMap();
+        });
+      });
+
+      renderControls();
+      renderMap();
+    </script>
+  </body>
+</html>

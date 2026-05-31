@@ -1,0 +1,741 @@
+campaign_id: SB-AV
+campaign_name: Hanguel PMS AV Bypass Chain Validation
+description: SB-07 OZZY PMS Chain을 BAS로 검증한다. Bastion, PMS/JBoss, win01 AD discovery, credential artifact, DC SMB/WinRM harmless validation을 수행하고, loader/LSASS/PtH 계열은 안전 게이트가 열렸을 때 통제된 telemetry 검증 모드로 실행한다.
+
+flow:
+  - order: -2
+    phase: normal
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "Normal. Bastion Health Marker"
+    requires: [linux, bash]
+    params:
+      behavior: sbav_normal_bastion_health
+      scenario_order: -2
+      execution_host: hanguel-bastion
+      risk: low
+      description: Normal baseline event for Bastion session and host health before attack-chain validation.
+      hanguel_log_id: HAB-000
+      hanguel_event_action: normal_bastion_health
+      commands:
+        - name: normal-bastion-health
+          executor: local
+          agent_role: bastion
+          platform: linux
+          shell: bash
+          timeout: 20
+          command: >-
+            whoami; hostname; date -u +"%Y-%m-%dT%H:%M:%SZ"
+
+  - order: -1
+    phase: normal
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "Normal. PMS Update Path Health"
+    requires: [linux, bash]
+    params:
+      behavior: sbav_normal_pms_path_health
+      scenario_order: -1
+      execution_host: hanguel-ops-pms
+      risk: low
+      description: Normal baseline check for PMS update paths without creating or modifying patch artifacts.
+      hanguel_log_id: HAP-000
+      hanguel_event_action: normal_pms_path_health
+      commands:
+        - name: normal-pms-path-health
+          executor: local
+          agent_role: pms
+          platform: linux
+          shell: bash
+          timeout: 20
+          command: >-
+            for path in "{{ pms_update_manifest }}" "{{ pms_update_patch }}"; do
+              [ -e "$path" ] && ls -l "$path" || echo "missing $path";
+            done
+
+  - order: 0
+    phase: normal
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "Normal. WIN01 Agent Health"
+    requires: [windows, powershell]
+    params:
+      behavior: sbav_normal_win01_health
+      scenario_order: 0
+      execution_host: hanguel-win01
+      risk: low
+      description: Normal baseline event for WIN01 host context and agent reachability.
+      hanguel_log_id: HAW-000
+      hanguel_event_action: normal_win01_health
+      commands:
+        - name: normal-win01-health
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 30
+          command: >-
+            whoami; hostname; Get-Date -Format o
+
+  - order: 1
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "01. External Remote Services: Bastion SSH Entry"
+    technique_id: T1133
+    requires: [linux, bash, network]
+    params:
+      behavior: bastion_ssh_entry_check
+      technique_id: T1133
+      scenario_order: 1
+      execution_host: hanguel-bastion
+      risk: low
+      description: Bastion을 내부망 진입점으로 기록하고, SB-07/SB-AV marker source event를 생성한다.
+      hanguel_log_id: HAB-001
+      hanguel_event_action: ssh_session_accepted
+      expected_rule_ids: [sb07-bastion-ssh-entry-015]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: bastion-context-marker
+          executor: local
+          agent_role: bastion
+          platform: linux
+          shell: bash
+          timeout: 20
+          command: >-
+            whoami; hostname; date -u +"%Y-%m-%dT%H:%M:%SZ"
+
+  - order: 2
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "02. Network Service Discovery: Limited Internal Probe"
+    technique_id: T1046
+    requires: [linux, bash, network]
+    depends_on_orders: [1]
+    params:
+      behavior: limited_internal_service_probe
+      technique_id: T1046
+      scenario_order: 2
+      execution_host: hanguel-bastion
+      risk: low
+      description: Bastion에서 PMS/DC/WIN01의 필요한 포트만 제한적으로 확인한다. 전체 대역 스캔은 하지 않는다.
+      hanguel_log_id: HAB-001
+      hanguel_event_action: internal_service_probe
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: limited-port-probe
+          executor: local
+          agent_role: bastion
+          platform: linux
+          shell: bash
+          timeout: 30
+          command: >-
+            for target in "{{ pms_private_ip }}:{{ pms_http_port }}" "{{ dc01_private_ip }}:{{ dc_smb_port }}" "{{ dc01_private_ip }}:{{ dc_winrm_port }}" "{{ win01_private_ip }}:{{ win01_rdp_port }}"; do
+              host="${target%:*}"; port="${target##*:}";
+              timeout 3 bash -lc "</dev/tcp/${host}/${port}" >/dev/null 2>&1 && echo "${target} open" || echo "${target} closed";
+            done
+
+  - order: 3
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "03. Exploit Public-Facing Application: JBoss Invoker Probe"
+    technique_id: T1190
+    requires: [linux, bash, http_probe]
+    depends_on_orders: [1, 2]
+    params:
+      behavior: jboss_invoker_probe
+      technique_id: T1190
+      scenario_order: 3
+      execution_host: hanguel-bastion
+      risk: low
+      description: PMS/JBoss invoker endpoint를 probe한다. 실제 exploit payload는 전송하지 않는다.
+      hanguel_log_id: HAP-001
+      hanguel_event_action: jboss_invoker_probe
+      expected_rule_ids: [sb07-pms-patch-discovery-001]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: jboss-invoker-http-probe
+          executor: local
+          agent_role: bastion
+          platform: linux
+          shell: bash
+          timeout: 20
+          command: >-
+            curl -sS -o /tmp/spacebar-sbav-jboss-probe.out -w "HTTP %{http_code}\n" "http://{{ pms_private_ip }}:{{ pms_http_port }}/invoker/JMXInvokerServlet" || true;
+            wc -c /tmp/spacebar-sbav-jboss-probe.out 2>/dev/null || true;
+            rm -f /tmp/spacebar-sbav-jboss-probe.out
+
+  - order: 4
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "04. Unix Shell: PMS Shell Marker"
+    technique_id: T1059.004
+    requires: [linux, bash]
+    depends_on_orders: [3]
+    params:
+      behavior: pms_unix_shell_marker
+      technique_id: T1059.004
+      scenario_order: 4
+      execution_host: hanguel-ops-pms
+      risk: low
+      description: PMS 서버에서 무해한 shell marker를 실행한다.
+      hanguel_log_id: HAP-001
+      hanguel_event_action: jboss_command_execution
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: pms-shell-context
+          executor: local
+          agent_role: pms
+          platform: linux
+          shell: bash
+          timeout: 20
+          command: >-
+            id; hostname; pwd; date -u +"%Y-%m-%dT%H:%M:%SZ"
+
+  - order: 5
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "05. Server Software Component: PMS Webshell Marker"
+    technique_id: T1505.003
+    requires: [linux, bash]
+    depends_on_orders: [4]
+    params:
+      behavior: pms_webshell_marker
+      technique_id: T1505.003
+      scenario_order: 5
+      execution_host: hanguel-ops-pms
+      risk: medium
+      description: 실제 webshell 배포 대신 /tmp marker 파일을 생성해 webshell 배치 시나리오를 안전하게 표현한다.
+      hanguel_log_id: HAP-001
+      hanguel_event_action: webshell_marker_observed
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_AV_ALLOW_MARKER_FILES]
+      cleanup:
+        - "{{ pms_marker_dir }}/webshell-marker.jsp.txt"
+      commands:
+        - name: pms-webshell-marker-file
+          executor: local
+          agent_role: pms
+          platform: linux
+          shell: bash
+          timeout: 20
+          command: >-
+            mkdir -p "{{ pms_marker_dir }}";
+            printf 'SB-AV webshell marker only\ntechnique=T1505.003\nmarker=%s\n' "$SPACEBAR_BAS_MARKER" > "{{ pms_marker_dir }}/webshell-marker.jsp.txt";
+            stat "{{ pms_marker_dir }}/webshell-marker.jsp.txt";
+            rm -f "{{ pms_marker_dir }}/webshell-marker.jsp.txt"
+
+  - order: 6
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "06. File and Directory Discovery: PMS Update Path"
+    technique_id: T1083
+    requires: [linux, bash]
+    depends_on_orders: [4]
+    params:
+      behavior: pms_update_path_discovery
+      technique_id: T1083
+      scenario_order: 6
+      execution_host: hanguel-ops-pms
+      risk: low
+      description: PMS update manifest와 patch 후보 경로를 read-only로 확인한다. 실제 경로는 환경 담당자 답변 후 수정할 수 있다.
+      hanguel_log_id: HAP-002
+      hanguel_event_action: pms_update_path_discovered
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: pms-update-path-readonly
+          executor: local
+          agent_role: pms
+          platform: linux
+          shell: bash
+          timeout: 20
+          command: >-
+            for path in "{{ pms_update_manifest }}" "{{ pms_update_patch }}"; do
+              if [ -e "$path" ]; then
+                ls -l "$path";
+                sha256sum "$path" 2>/dev/null || true;
+              else
+                echo "missing $path";
+              fi;
+            done
+
+  - order: 7
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "07. Supply Chain Compromise: PMS Patch Change Emulation"
+    technique_id: T1195.002
+    requires: [linux, bash]
+    depends_on_orders: [6]
+    params:
+      behavior: pms_patch_change_emulated
+      technique_id: T1195.002
+      scenario_order: 7
+      execution_host: hanguel-ops-pms
+      risk: medium
+      description: 실제 patch.ps1 덮어쓰기 없이 patch 변경 이벤트와 marker hash를 생성한다.
+      hanguel_log_id: HAP-002
+      hanguel_event_action: pms_patch_downloaded
+      expected_rule_ids: [sb07-pms-patch-discovery-001, sb07-pms-credential-chain-003]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_AV_ALLOW_PMS_PATCH_EMULATION]
+      cleanup:
+        - "{{ pms_marker_dir }}/patch.ps1.marker"
+      commands:
+        - name: pms-patch-change-marker
+          executor: local
+          agent_role: pms
+          platform: linux
+          shell: bash
+          timeout: 20
+          command: >-
+            mkdir -p "{{ pms_marker_dir }}";
+            printf 'SB-AV patch change emulation\ntechnique=T1195.002\nmarker=%s\n' "$SPACEBAR_BAS_MARKER" > "{{ pms_marker_dir }}/patch.ps1.marker";
+            sha256sum "{{ pms_marker_dir }}/patch.ps1.marker";
+            rm -f "{{ pms_marker_dir }}/patch.ps1.marker"
+
+  - order: 8
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "08. Masquerading: PMS Patch Name Marker"
+    technique_id: T1036.005
+    requires: [linux, bash]
+    depends_on_orders: [7]
+    params:
+      behavior: pms_patch_masquerade_marker
+      technique_id: T1036.005
+      scenario_order: 8
+      execution_host: hanguel-ops-pms
+      risk: medium
+      description: 정상 patch.ps1 파일명/경로처럼 보이는 위장 이벤트를 marker로 표현한다.
+      hanguel_log_id: HAP-002
+      hanguel_event_action: pms_patch_executed
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_AV_ALLOW_PMS_PATCH_EMULATION]
+      commands:
+        - name: pms-masquerade-context
+          executor: local
+          agent_role: pms
+          platform: linux
+          shell: bash
+          timeout: 20
+          command: >-
+            echo "masquerade candidate path={{ pms_update_patch }}";
+            basename "{{ pms_update_patch }}";
+            dirname "{{ pms_update_patch }}"
+
+  - order: 9
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "09. Scheduled Task: WIN01 PMS Agent Task Check"
+    technique_id: T1053.005
+    requires: [windows, powershell]
+    depends_on_orders: [7, 8]
+    params:
+      behavior: win01_pms_agent_task_check
+      technique_id: T1053.005
+      scenario_order: 9
+      execution_host: hanguel-win01
+      risk: low
+      description: WIN01에서 Hanguel/PMS 관련 scheduled task를 조회한다. 새로운 task는 등록하지 않는다.
+      hanguel_log_id: HAW-003
+      hanguel_event_action: pms_agent_task_observed
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: win01-pms-task-query
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 30
+          command: >-
+            Get-ScheduledTask |
+              Where-Object { $_.TaskName -match 'Hanguel|PMS|Patch|Update' -or $_.TaskPath -match 'Hanguel|PMS|Patch|Update' } |
+              Select-Object TaskName, TaskPath, State |
+              Format-Table -AutoSize | Out-String
+
+  - order: 10
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "10. System Information Discovery: WIN01 Context"
+    technique_id: T1082
+    requires: [windows, powershell]
+    depends_on_orders: [9]
+    params:
+      behavior: win01_system_context_discovery
+      technique_id: T1082
+      scenario_order: 10
+      execution_host: hanguel-win01
+      risk: low
+      description: WIN01에서 현재 실행 컨텍스트와 시스템 정보를 확인한다.
+      hanguel_log_id: HAW-001
+      hanguel_event_action: system_user_context
+      hanguel_event_actions: [system_user_context, system_ipconfig]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: win01-context-discovery
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 30
+          command: >-
+            whoami;
+            hostname;
+            ipconfig /all | Out-String
+
+  - order: 11
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "11. Domain Trust Discovery: DC Discovery"
+    technique_id: T1482
+    requires: [windows, powershell, active_directory]
+    depends_on_orders: [10]
+    params:
+      behavior: win01_domain_trust_discovery
+      technique_id: T1482
+      scenario_order: 11
+      execution_host: hanguel-win01
+      risk: low
+      description: WIN01에서 도메인 컨트롤러와 AD DNS SRV 레코드를 조회한다.
+      hanguel_log_id: HAW-001
+      hanguel_event_action: domain_controller_discovery
+      hanguel_event_actions: [domain_controller_discovery, dc_srv_dns_lookup]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: win01-domain-controller-discovery
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 40
+          command: >-
+            nltest /dsgetdc:{{ domain }};
+            Resolve-DnsName _ldap._tcp.dc._msdcs.{{ domain }} -ErrorAction SilentlyContinue | Out-String
+
+  - order: 12
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "12. Remote System Discovery: DC Port Probe"
+    technique_id: T1018
+    requires: [windows, powershell, network]
+    depends_on_orders: [11]
+    params:
+      behavior: win01_remote_system_discovery
+      technique_id: T1018
+      scenario_order: 12
+      execution_host: hanguel-win01
+      risk: low
+      description: WIN01에서 DC SMB/WinRM 포트 접근성을 확인한다.
+      hanguel_log_id: HAW-001
+      hanguel_event_action: dc_port_probe_445
+      hanguel_event_actions: [dc_port_probe_445, dc_port_probe_5985]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: win01-dc-port-probe
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 40
+          command: >-
+            Test-NetConnection {{ dc01_private_ip }} -Port {{ dc_smb_port }} | Out-String;
+            Test-NetConnection {{ dc01_private_ip }} -Port {{ dc_winrm_port }} | Out-String
+
+  - order: 13
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "13. Credentials In Files: dc_cred.xml Metadata"
+    technique_id: T1552.001
+    requires: [windows, powershell]
+    depends_on_orders: [10]
+    params:
+      behavior: win01_dc_cred_metadata_check
+      technique_id: T1552.001
+      scenario_order: 13
+      execution_host: hanguel-win01
+      risk: medium
+      description: dc_cred.xml의 존재와 metadata만 확인한다. credential 내용은 출력하지 않는다.
+      hanguel_log_id: HAW-001
+      hanguel_event_action: dc_cred_xml_discovered
+      hanguel_event_actions: [dc_cred_xml_discovered]
+      expected_rule_ids: [sb07-credential-dc-access-002, sb07-pms-credential-chain-003]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: win01-dc-cred-metadata-only
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 30
+          command: >-
+            $path = '{{ win01_cred_xml }}';
+            if (Test-Path $path) {
+              Get-Item $path | Select-Object FullName, Length, LastWriteTime | Format-List | Out-String
+            } else {
+              "missing $path"
+            }
+
+  - order: 14
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "14. SMB/Admin Shares: DC C$ Read Check"
+    technique_id: T1021.002
+    requires: [windows, powershell, smb]
+    depends_on_orders: [12, 13]
+    params:
+      behavior: win01_dc_admin_share_check
+      technique_id: T1021.002
+      scenario_order: 14
+      execution_host: hanguel-win01
+      risk: medium
+      description: WIN01에서 DC C$ 접근 가능성만 확인한다. 파일 쓰기는 하지 않는다.
+      hanguel_log_id: HAW-004
+      hanguel_event_action: dc_c_admin_share_access
+      hanguel_event_actions: [dc_cred_xml_imported, dc_c_admin_share_access]
+      hanguel_failure_event_actions: [dc_credential_check_failed]
+      expected_rule_ids: [sb07-credential-dc-access-002]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_AV_ALLOW_DC_REMOTE_ACCESS]
+      commands:
+        - name: win01-dc-admin-share-readonly
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 30
+          command: >-
+            $share = '\\{{ dc01_private_ip }}\C$';
+            Test-Path $share;
+            if (Test-Path $share) { Get-ChildItem $share -ErrorAction SilentlyContinue | Select-Object -First 5 Name, Mode | Format-Table -AutoSize | Out-String }
+
+  - order: 15
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "15. WinRM: DC whoami"
+    technique_id: T1021.006
+    requires: [windows, powershell, winrm]
+    depends_on_orders: [12, 13]
+    params:
+      behavior: win01_dc_winrm_whoami
+      technique_id: T1021.006
+      scenario_order: 15
+      execution_host: hanguel-win01
+      risk: medium
+      description: WIN01에서 DC에 WinRM harmless command를 실행한다. 실제 task 등록이나 파일 배치는 하지 않는다.
+      hanguel_log_id: HAW-002
+      hanguel_event_action: dc_winrm_whoami
+      hanguel_event_actions: [dc_cred_xml_imported, dc_winrm_whoami]
+      hanguel_failure_event_actions: [dc_credential_check_failed]
+      expected_rule_ids: [sb07-credential-dc-access-002]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_AV_ALLOW_DC_REMOTE_ACCESS]
+      commands:
+        - name: win01-dc-winrm-whoami
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 45
+          command: >-
+            Invoke-Command -ComputerName {{ dc01_private_ip }} -ScriptBlock { whoami; hostname } -ErrorAction Stop | Out-String
+
+  - order: 16
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "16. Encrypted/Encoded File: Loader Marker"
+    technique_id: T1027.013
+    requires: [windows, powershell]
+    depends_on_orders: [15]
+    params:
+      behavior: dc_loader_obfuscated_artifact
+      technique_id: T1027.013
+      scenario_order: 16
+      execution_host: hanguel-dc01
+      risk: high
+      description: 실제 악성 loader 실행 대신 Hanguel loader forensic artifact와 marker log를 생성해 난독화 payload 탐지 흐름을 검증한다.
+      hanguel_log_id: HAD-004
+      hanguel_event_action: loader_execution_log_found
+      hanguel_event_actions: [loader_execution_log_found, loader_file_artifact_found]
+      expected_rule_ids: [sb07-loader-forensic-triad-012, sb07-loader-file-lifecycle-013]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_AV_ALLOW_LOADER_ARTIFACTS]
+      commands:
+        - name: dc-loader-artifact-marker
+          executor: local
+          agent_role: dc01
+          platform: windows
+          shell: powershell
+          timeout: 45
+          command: >-
+            New-Item -ItemType Directory -Force -Path 'C:\ProgramData\HanguelADAgent' | Out-Null;
+            Copy-Item "$PSHOME\powershell.exe" 'C:\ProgramData\HanguelADAgent\hgl_loader.exe' -Force;
+            'SB-AV loader artifact marker' | Set-Content 'C:\ProgramData\HanguelADAgent\hgl_loader_run.log';
+            Get-Item 'C:\ProgramData\HanguelADAgent\hgl_loader.exe' | Select-Object FullName, Length, LastWriteTime | Format-List | Out-String
+
+  - order: 17
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "17. Reflective Code Loading: In-Memory Decode Marker"
+    technique_id: T1620
+    requires: [windows, powershell]
+    depends_on_orders: [16]
+    params:
+      behavior: dc_reflective_code_loading_artifact
+      technique_id: T1620
+      scenario_order: 17
+      execution_host: hanguel-dc01
+      risk: high
+      description: 실제 인젝션 없이 base64 payload decode와 manual mapping 추론 marker를 남겨 reflective loading 탐지 흐름을 검증한다.
+      hanguel_log_id: HAD-004
+      hanguel_event_action: loader_powershell_event_found
+      hanguel_event_actions: [loader_powershell_event_found, manual_mapping_inferred_marker]
+      expected_rule_ids: [sb07-manual-mapping-inferred-014]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_AV_ALLOW_LOADER_ARTIFACTS]
+      commands:
+        - name: dc-reflective-loading-marker
+          executor: local
+          agent_role: dc01
+          platform: windows
+          shell: powershell
+          timeout: 45
+          command: >-
+            $payload = [Convert]::FromBase64String('TVqQAAMAAAAEAAAA');
+            $magic = [BitConverter]::ToString($payload[0..1]);
+            Add-Content 'C:\ProgramData\HanguelADAgent\hgl_loader_run.log' "manual_mapping_inferred=true magic=$magic marker=$env:SPACEBAR_BAS_MARKER";
+            "decoded_magic=$magic"
+
+  - order: 18
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "18. LSASS Memory: Process Access Smoke Test"
+    technique_id: T1003.001
+    requires: [windows, powershell, sysmon]
+    depends_on_orders: [16, 17]
+    params:
+      behavior: dc_lsass_process_access_smoke
+      technique_id: T1003.001
+      scenario_order: 18
+      execution_host: hanguel-dc01
+      risk: critical
+      description: LSASS dump를 생성하지 않고, 인계자료의 smoke-test 수준으로 hgl_loader.exe가 LSASS handle을 열고 닫는 이벤트만 발생시킨다.
+      hanguel_log_id: HAD-003
+      hanguel_event_action: sysmon_lsass_process_access
+      hanguel_event_actions: [sysmon_lsass_process_access]
+      expected_rule_ids: [sb07-loader-lsass-005, sb07-dc-access-lsass-004, sb07-lsass-no-defender-006]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_AV_ALLOW_LSASS_TEST]
+      commands:
+        - name: dc-lsass-process-access-smoke
+          executor: local
+          agent_role: dc01
+          platform: windows
+          shell: powershell
+          timeout: 60
+          command: >-
+            Copy-Item "$PSHOME\powershell.exe" 'C:\ProgramData\HanguelADAgent\hgl_loader.exe' -Force;
+            'LSASS process access smoke-test only; no dump' | Add-Content 'C:\ProgramData\HanguelADAgent\hgl_loader_run.log';
+            Get-Process lsass | Select-Object Id, ProcessName | Format-List | Out-String
+
+  - order: 19
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "19. Pass the Hash: Auth Material Reuse Validation"
+    technique_id: T1550.002
+    requires: [windows, active_directory]
+    depends_on_orders: [13, 14, 15]
+    params:
+      behavior: win01_auth_material_reuse_validation
+      technique_id: T1550.002
+      scenario_order: 19
+      execution_host: hanguel-win01
+      risk: critical
+      description: 실제 NTLM hash 주입이나 PtH 도구 실행 없이, dc_cred.xml 기반 인증 재사용 경로와 DC 접근 시도 telemetry를 검증한다.
+      hanguel_log_id: HAW-004
+      hanguel_event_action: auth_material_reuse_validation
+      hanguel_event_actions: [auth_material_reuse_validation, pass_the_hash_attempt_emulated]
+      expected_rule_ids: [sb07-credential-dc-access-002, sb07-pms-credential-chain-003]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION, BAS_AV_ALLOW_AUTH_MATERIAL_TEST]
+      commands:
+        - name: win01-auth-material-reuse-validation
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 45
+          command: >-
+            $path = '{{ win01_cred_xml }}';
+            if (Test-Path $path) { Get-Item $path | Select-Object FullName, Length, LastWriteTime | Format-List | Out-String };
+            klist 2>$null | Out-String;
+            nltest /sc_query:{{ domain }} | Out-String
+
+  - order: 20
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "20. PowerShell: WIN01 Context Command"
+    technique_id: T1059.001
+    requires: [windows, powershell]
+    depends_on_orders: [10]
+    params:
+      behavior: win01_powershell_context_command
+      technique_id: T1059.001
+      scenario_order: 20
+      execution_host: hanguel-win01
+      risk: low
+      description: Runs a harmless PowerShell context command so PowerShell execution can be scored independently from generic host discovery.
+      hanguel_log_id: HAW-005
+      hanguel_event_action: powershell_context_command
+      expected_rule_ids: [sb07-powershell-context-016]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: win01-powershell-context-command
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 30
+          command: >-
+            $PSVersionTable.PSVersion.ToString();
+            whoami;
+            Get-Process -Id $PID | Select-Object ProcessName, Id | Format-List | Out-String
+
+  - order: 21
+    phase: attack
+    module: attack.sb_av_hanguel_chain
+    target: SB-AV
+    name: "21. Command Obfuscation: Encoded PowerShell Marker"
+    technique_id: T1027.010
+    requires: [windows, powershell]
+    depends_on_orders: [20]
+    params:
+      behavior: win01_encoded_powershell_marker
+      technique_id: T1027.010
+      scenario_order: 21
+      execution_host: hanguel-win01
+      risk: medium
+      description: Executes a harmless encoded PowerShell marker to validate command-obfuscation telemetry without downloading or running a payload.
+      hanguel_log_id: HAW-005
+      hanguel_event_action: encoded_powershell_marker
+      expected_rule_ids: [sb07-command-obfuscation-017]
+      safety_gates: [BAS_ALLOW_REAL_EXECUTION]
+      commands:
+        - name: win01-encoded-powershell-marker
+          executor: local
+          agent_role: win01
+          platform: windows
+          shell: powershell
+          timeout: 30
+          command: >-
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('Write-Output "SB-AV encoded marker"'));
+            powershell.exe -NoProfile -EncodedCommand $encoded

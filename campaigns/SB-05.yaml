@@ -5,6 +5,39 @@ campaign_name: ClusterDrain
 description: ingress-nginx 권한을 이용해 k3s 클러스터 리소스를 정찰하고, Secret 수집, Pod exec, Collector 배포, RBAC 추가, 로컬 스테이징, 압축, S3 유출 흐름을 재현한다.
 
 flow:
+  - order: 0
+    phase: attack
+    module: attack.T1021_004_ssh_remote_service
+    target: SB-05
+    name: sb05 attacker SSH access check
+    technique_id: T1021.004
+    risk: low
+    requires:
+      - ssh
+      - attacker_host
+      - deploy_key
+    inputs:
+      - name: username
+        label: SSH user
+        source: ssh.ssh_user
+        default: ubuntu
+      - name: command
+        label: Remote command
+        default: hostname
+    params:
+      behavior: sb05_ssh_access_check
+      execution_location: controller
+      username: ubuntu
+      command: hostname
+      local_command: hostname
+      expected_agent_role: campaign_agent
+      allow_local_agent_control: true
+      local_hostnames:
+        - sb05-attacker
+      simulation_message: Simulated SB-05 attacker host SSH access check
+      simulation_stdout: sb05-attacker
+      simulation_artifact: "/var/log/auth.log: Accepted publickey for ubuntu from BAS operator"
+
   - order: 1
     phase: normal
     module: normal.kube_get_pods
@@ -36,6 +69,11 @@ flow:
     requires:
       - kubernetes
       - kubectl
+    inputs:
+      - name: namespace
+        label: Namespace
+        source: primary_namespace
+        default: prod-platform
     params:
       behavior: kube_resource_discovery
       namespace: prod-platform
@@ -51,6 +89,17 @@ flow:
       - kubectl
     depends_on_orders:
       - 3
+    inputs:
+      - name: namespace
+        label: Namespace
+        source: primary_namespace
+        default: prod-platform
+      - name: resource
+        label: Resource
+        default: secrets
+        options:
+          - secrets
+          - configmaps
     params:
       behavior: kube_secret_access
       namespace: prod-platform
@@ -79,6 +128,15 @@ flow:
     depends_on_orders:
       - 3
       - 4
+    inputs:
+      - name: namespace
+        label: Namespace
+        source: primary_namespace
+        default: prod-platform
+      - name: pod_selector
+        label: Pod selector
+        source: operation_defaults.pod_selector
+        default: orders-api
     params:
       behavior: kube_pod_exec
       namespace: prod-platform
@@ -97,6 +155,15 @@ flow:
       - 3
       - 4
       - 6
+    inputs:
+      - name: namespace
+        label: Namespace
+        source: primary_namespace
+        default: prod-platform
+      - name: pod_name
+        label: Collector pod
+        source: operation_defaults.collector_pod
+        default: sb05-collector
     params:
       behavior: kube_deploy_collector
       namespace: prod-platform
@@ -114,6 +181,15 @@ flow:
     depends_on_orders:
       - 3
       - 4
+    inputs:
+      - name: namespace
+        label: Namespace
+        source: primary_namespace
+        default: prod-platform
+      - name: service_account
+        label: Service account
+        source: operation_defaults.service_account
+        default: sb05-reader
     params:
       behavior: kube_rbac_addition
       namespace: prod-platform
@@ -134,6 +210,11 @@ flow:
       - 6
       - 7
       - 8
+    inputs:
+      - name: staging_dir
+        label: Staging directory
+        source: operation_defaults.staging_dir
+        default: /tmp/sb05_stage
     params:
       behavior: local_data_staging
       staging_dir: /tmp/sb05_stage
@@ -150,6 +231,11 @@ flow:
       - archive_utility
     depends_on_orders:
       - 9
+    inputs:
+      - name: archive_name
+        label: Archive name
+        source: operation_defaults.archive_name
+        default: sb05_archive.zip
     params:
       behavior: archive_staged_data
       archive_name: sb05_archive.zip
@@ -166,6 +252,11 @@ flow:
     depends_on_orders:
       - 9
       - 10
+    inputs:
+      - name: destination
+        label: Destination
+        source: operation_defaults.destination
+        default: private_s3_bucket
     params:
       behavior: s3_exfiltration
       destination: private_s3_bucket

@@ -1,0 +1,16 @@
+agent_id: sbad-fs01-bas-agent
+campaign_agent_id: SB-AD
+agent_role: fs01
+asset_id: fs01
+segment_id: server-subnet
+display_name: SB-AD FS01 BasAgent
+hostname: FS01.mycompany.local
+platform: windows
+collector_type: winlogbeat
+controller_url: http://54.116.166.183:443/api
+controller_urls: http://54.116.166.183:443/api,http://10.0.1.194:8000,http://192.168.10.59:8000
+interval_seconds: 2
+execution_mode: real
+safety_mode: approval_required
+capabilities: windows,powershell,sysmon,windows_security,credential_test
+controls: sysmon,windows_security_log,winlogbeat,kibana_rules

@@ -1,0 +1,333 @@
+target_id: SB-AD
+name: Spacebar AWS AD Lab
+description: PC01, FS01, DC01, Attacker Ubuntu, and ELK based Windows AD intrusion simulation lab.
+environment_type: aws-ad
+
+hosts:
+  pc01: PC01.mycompany.local
+  fs01: FS01.mycompany.local
+  dc01: DC01.mycompany.local
+  attacker_private_ip: 10.0.1.194
+  attacker_public_ip: 54.180.55.229
+  fs01_private_ip: 10.0.10.77
+  dc01_private_ip: 10.0.13.205
+  pc01_private_ip: 10.0.4.216
+
+segments:
+  - segment_id: attacker-subnet
+    name: Attacker Zone
+    type: external
+    description: 공격자 우분투가 위치한 검증 시작 구간
+  - segment_id: user-subnet
+    name: User Endpoint Zone
+    type: internal
+    description: 직원 PC 역할의 PC01 구간
+  - segment_id: server-subnet
+    name: Server Zone
+    type: internal
+    description: 파일 서버와 ELK가 위치한 서버 구간
+  - segment_id: domain-subnet
+    name: Domain Core Zone
+    type: critical
+    description: 도메인 컨트롤러가 위치한 핵심 인증 구간
+
+assets:
+  - asset_id: attacker
+    name: Attacker Ubuntu
+    hostname: Attacker-Ubuntu
+    private_ip: 10.0.1.194
+    public_ip: 54.180.55.229
+    platform: Ubuntu
+    os: Ubuntu 24.04.4 LTS
+    role: 공격자 시뮬레이션 서버
+    log_collection_status: Manual
+    log_collection_detail: 수동 실행 로그 및 BAS Agent heartbeat 기준 확인
+    segment_id: attacker-subnet
+    agent_role: attacker
+    agent_required: true
+    criticality: medium
+    position:
+      left: 13.5
+      top: 50
+    controls: [aws_security_group, manual_response]
+  - asset_id: pc01
+    name: PC01
+    hostname: PC01.mycompany.local
+    private_ip: 10.0.4.216
+    public_ip: 43.201.217.167
+    platform: Windows Server
+    os: Windows Server 2022 Datacenter
+    role: 직원 PC
+    log_collection_status: Active
+    log_collection_detail: Sysmon, Windows Security Log, PowerShell Logging, Winlogbeat
+    segment_id: user-subnet
+    agent_role: pc01
+    agent_required: true
+    criticality: high
+    position:
+      left: 37.5
+      top: 50
+    controls: [sysmon, windows_security_log, powershell_logging, winlogbeat, kibana_rules]
+  - asset_id: fs01
+    name: FS01
+    hostname: FS01.mycompany.local
+    private_ip: 10.0.10.77
+    public_ip: 3.36.156.17
+    platform: Windows Server
+    os: Windows Server 2022 Datacenter
+    role: 파일 서버
+    log_collection_status: Active
+    log_collection_detail: Sysmon, Windows Security Log, Winlogbeat
+    segment_id: server-subnet
+    agent_role: fs01
+    agent_required: true
+    criticality: critical
+    position:
+      left: 61.5
+      top: 34
+    controls: [sysmon, windows_security_log, winlogbeat, kibana_rules]
+  - asset_id: dc01
+    name: DC01
+    hostname: DC01.mycompany.local
+    private_ip: 10.0.13.205
+    public_ip: 52.78.216.139
+    platform: Windows Server
+    os: Windows Server 2022 Datacenter
+    role: 도메인 컨트롤러
+    log_collection_status: Active
+    log_collection_detail: Windows Security Log, Sysmon, Winlogbeat
+    segment_id: domain-subnet
+    agent_role: log_source
+    agent_required: false
+    criticality: critical
+    position:
+      left: 85.5
+      top: 50
+    controls: [windows_security_log, winlogbeat, kibana_rules]
+  - asset_id: elk
+    name: ELK
+    hostname: elk-gh
+    private_ip: 10.0.4.30
+    public_ip: 54.116.120.198
+    platform: Linux
+    os: Ubuntu 24.04 LTS
+    role: SIEM 로그 분석 서버
+    log_collection_status: Detection Backend
+    log_collection_detail: Elasticsearch, Kibana Detection Rules
+    segment_id: server-subnet
+    agent_role: detection_backend
+    agent_required: false
+    criticality: high
+    position:
+      left: 61.5
+      top: 74
+    controls: [kibana_rules]
+
+security_controls:
+  - control_id: sysmon
+    name: Sysmon
+    category: endpoint telemetry
+    status: configured
+  - control_id: windows_security_log
+    name: Windows Security Log
+    category: identity and audit log
+    status: configured
+  - control_id: powershell_logging
+    name: PowerShell Logging
+    category: script visibility
+    status: configured
+  - control_id: winlogbeat
+    name: Winlogbeat
+    category: log forwarding
+    status: configured
+  - control_id: kibana_rules
+    name: Kibana Detection Rules
+    category: SIEM detection
+    status: configured
+  - control_id: aws_security_group
+    name: AWS Security Group
+    category: network boundary
+    status: manual review
+  - control_id: manual_response
+    name: Manual Response
+    category: response procedure
+    status: planned
+
+attack_paths:
+  - source_asset_id: attacker
+    target_asset_id: pc01
+    label: Initial access / reverse shell
+    techniques: [T1204.002, T1059.003, T1095]
+  - source_asset_id: pc01
+    target_asset_id: dc01
+    label: AD discovery / Kerberos ticket request
+    map_visible: false
+    techniques: [T1087.001, T1087.002, T1018, T1033, T1135, T1069.001, T1069.002, T1558.003]
+  - source_asset_id: pc01
+    target_asset_id: fs01
+    label: WinRM lateral movement
+    techniques: [T1021.006, T1059.001, T1105]
+  - source_asset_id: fs01
+    target_asset_id: fs01
+    label: Credential access and local staging
+    map_visible: false
+    techniques: [T1003.001, T1003.002, T1218.011, T1074.001, T1036.005, T1560.001]
+  - source_asset_id: fs01
+    target_asset_id: attacker
+    label: Data staging and exfiltration
+    map_visible: false
+    techniques: [T1074.001, T1041]
+  - source_asset_id: attacker
+    target_asset_id: dc01
+    label: Domain compromise
+    map_visible: false
+    techniques: [T1003.006, T1558.001, T1078.002, T1569.002, T1003.003]
+
+ad:
+  domain: mycompany.local
+  netbios_domain: MYCOMPANY
+
+accounts:
+  employee_user: employee1
+  service_user: svc_file
+  admin_user: Administrator
+
+paths:
+  pc01_drop_dir: C:\Users\Public\Downloads\SB03
+  tool_drop_path: C:\Users\Public\Downloads\Rubeus.exe
+  fs01_temp_dir: C:\Windows\Temp
+  fs01_public_share: C:\share\01_Public
+  staged_lsass_name: sys_evnt_log_20260508.log
+  staged_customer_name: tmp_bak_0508.dat
+  archive_name: data.zip
+  golden_ticket_ccache: Administrator.ccache
+
+tools:
+  rubeus_path: C:\Users\Public\Downloads\Rubeus.exe
+  impacket_examples_dir: /home/ubuntu/impacket/examples
+  attacker_http_port: 80
+  attacker_upload_port: 8080
+  benign_download_name: bas_t1105_probe.txt
+
+operation_defaults:
+  reverse_shell_port: 4444
+  suspicious_ssh_port: 22
+  smb_port: 445
+  winrm_port: 5985
+
+capabilities:
+  - windows
+  - powershell
+  - cmd
+  - sysmon
+  - winlogbeat
+  - powershell_logging
+  - windows_security
+  - network
+  - active_directory
+  - winrm
+  - kerberos
+  - impacket
+  - attacker_host
+  - elk
+  - manual_operator
+
+elk:
+  enabled: true
+  url: http://127.0.0.1:19201
+  username_env: BAS_SBAD_ELK_USERNAME
+  password_env: BAS_SBAD_ELK_PASSWORD
+  index: winlogbeat-*
+  alert_index: .alerts-security.alerts-default
+  alert_rule_prefix: SB-AD
+
+log_queries:
+  sbad_normal_pc01_user_context: >-
+    host.name:"PC01.mycompany.local" AND event.code:"1" AND winlog.event_data.CommandLine:(*whoami* OR *hostname*)
+  sbad_normal_fs01_share_check: >-
+    host.name:"PC01.mycompany.local" AND event.code:"1" AND winlog.event_data.CommandLine:*"\\\\FS01\\share"*
+  sbad_normal_domain_controller_check: >-
+    host.name:"PC01.mycompany.local" AND event.code:"1" AND winlog.event_data.CommandLine:*dsgetdc*
+  user_execution_malicious_file: >-
+    host.name:"PC01.mycompany.local" AND event.code:"1" AND winlog.event_data.Image:*SecurityUpdate.exe
+  windows_command_shell: >-
+    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:1 AND winlog.event_data.Image:"C:\\Windows\\System32\\cmd.exe" AND NOT winlog.event_data.ParentImage:("C:\\Windows\\explorer.exe" OR *\\devenv.exe OR *\\code.exe)
+  non_application_tcp_connection: >-
+    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:3 AND winlog.event_data.Initiated:"true" AND NOT winlog.event_data.DestinationIp:("10.0.10.77" OR "10.0.4.216" OR "10.0.13.205" OR "10.0.4.30" OR "127.0.0.1" OR "::1" OR "0:0:0:0:0:0:0:1" OR fe80*) AND NOT winlog.event_data.DestinationPort:(80 OR 443) AND NOT winlog.event_data.Image:("System" OR "C:\\Windows\\System32\\lsass.exe" OR "C:\\Windows\\ADWS\\Microsoft.ActiveDirectory.WebServices.exe" OR "C:\\Windows\\System32\\svchost.exe" OR "C:\\Windows\\System32\\spoolsv.exe" OR "C:\\Windows\\System32\\dns.exe" OR "C:\\Windows\\System32\\dfsrs.exe" OR "C:\\Program Files\\Windows Defender\\MsMpEng.exe" OR "C:\\Windows\\System32\\wbem\\WmiPrvSE.exe" OR *\\winlogbeat.exe OR *\\elastic-agent.exe OR *\\chrome.exe OR *\\msedge.exe OR *\\iexplore.exe OR *\\firefox.exe OR *\\teams.exe OR *\\slack.exe OR *\\zoom.exe)
+  domain_account_discovery: >-
+    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:1 AND winlog.event_data.Image:(*net.exe OR *net1.exe OR *wmic.exe OR *nltest.exe OR *dsquery.exe OR *powershell.exe) AND winlog.event_data.CommandLine:(*domain* OR *group* OR *useraccount* OR *enterprise_admins*) AND NOT winlog.event_data.ParentImage:(*devenv.exe OR *code.exe)
+  local_account_discovery: >-
+    host.name:"PC01.mycompany.local" AND event.code:"1" AND (winlog.event_data.Image:*net.exe OR winlog.event_data.Image:*net1.exe) AND winlog.event_data.CommandLine:*user* AND NOT winlog.event_data.CommandLine:*domain*
+  remote_system_discovery: >-
+    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:1 AND winlog.event_data.Image:(*nltest.exe OR *nslookup.exe OR *net.exe OR *net1.exe OR *ping.exe OR *arp.exe) AND winlog.event_data.CommandLine:(*dsgetdc* OR *dclist* OR *domain_trusts* OR *view* OR *type=srv* OR *nslookup *) AND NOT winlog.event_data.ParentImage:(*devenv.exe OR *code.exe)
+  system_owner_user_discovery: >-
+    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND winlog.event_id:1 AND winlog.event_data.Image:(*whoami.exe OR *quser.exe OR *qwinsta.exe) AND winlog.event_data.CommandLine:(*whoami* OR *quser* OR *qwinsta*) AND NOT winlog.event_data.ParentImage:(*devenv.exe OR *code.exe)
+  network_share_discovery: >-
+    host.name:"PC01.mycompany.local" AND event.code:"1" AND (winlog.event_data.CommandLine:*"net view"* OR winlog.event_data.CommandLine:*"\\\\FS01\\share"* OR winlog.event_data.CommandLine:*"\\\\FS01"*)
+  local_groups_discovery: >-
+    host.name:"PC01.mycompany.local" AND event.code:"1" AND (winlog.event_data.Image:*net.exe OR winlog.event_data.Image:*net1.exe) AND winlog.event_data.CommandLine:*localgroup* AND winlog.event_data.CommandLine:*Administrators*
+  domain_groups_discovery: >-
+    host.name:"PC01.mycompany.local" AND event.code:"1" AND (winlog.event_data.Image:*net.exe OR winlog.event_data.Image:*net1.exe) AND winlog.event_data.CommandLine:*group* AND winlog.event_data.CommandLine:*"Domain Admins"* AND winlog.event_data.CommandLine:*domain*
+  permission_groups_discovery: >-
+    host.name:"PC01.mycompany.local" AND event.code:"1" AND (winlog.event_data.Image:*net.exe OR winlog.event_data.Image:*net1.exe) AND (winlog.event_data.CommandLine:*localgroup* OR winlog.event_data.CommandLine:*"Domain Admins"* OR winlog.event_data.CommandLine:*Administrators*)
+  kerberoasting_tgs_request: >-
+    host.name:"DC01.mycompany.local" AND event.code:"4769" AND (winlog.event_data.TargetUserName:*svc_file* OR winlog.event_data.ServiceName:*svc_file* OR winlog.event_data.ServiceName:*FS01*)
+  winrm_remote_execution: >-
+    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND event.code:"1" AND host.name:"FS01.mycompany.local" AND winlog.event_data.Image:"C:\\Windows\\System32\\wsmprovhost.exe" AND winlog.event_data.User:"MYCOMPANY\\svc_file"
+  powershell_over_winrm: >-
+    host.name:"FS01.mycompany.local" AND event.code:"1" AND winlog.event_data.Image:*powershell.exe AND winlog.event_data.CommandLine:(*whoami* OR *Get-Date* OR *Invoke-Command* OR *PowerShell*)
+  ingress_tool_transfer: >-
+    host.name:"FS01.mycompany.local" AND ((event.code:"4104" AND (message:*Invoke-WebRequest* OR message:*iwr* OR message:*DownloadFile* OR message:*Start-BitsTransfer* OR message:*curl* OR message:*wget*)) OR (event.code:"1" AND winlog.event_data.CommandLine:(*Invoke-WebRequest* OR *iwr* OR *DownloadFile* OR *Start-BitsTransfer* OR *curl* OR *wget*)))
+  lsass_memory_dump: >-
+    winlog.channel:"Microsoft-Windows-Sysmon/Operational" AND event.code:"10" AND host.name:"FS01.mycompany.local" AND winlog.event_data.TargetImage:*lsass.exe AND winlog.event_data.SourceImage:*rundll32.exe AND winlog.event_data.CallTrace:*comsvcs.dll* AND (winlog.event_data.GrantedAccess:"0x1410" OR winlog.event_data.GrantedAccess:"0x1F0FFF" OR winlog.event_data.GrantedAccess:"0x1fffff")
+  sam_credential_store_access: >-
+    host.name:"PC01.mycompany.local" AND event.code:"1" AND winlog.event_data.Image:*reg.exe AND winlog.event_data.CommandLine:(*save* AND *HKLM\\SAM*)
+  rundll32_comsvcs_proxy: >-
+    host.name:"FS01.mycompany.local" AND event.code:"1" AND winlog.event_data.Image:*rundll32.exe AND winlog.event_data.CommandLine:*comsvcs.dll* AND winlog.event_data.CommandLine:*MiniDump*
+  local_data_staging: >-
+    host.name:"FS01.mycompany.local" AND event.code:"11" AND winlog.event_data.TargetFilename:(*\\share\\01_Public\\* OR *\\01_Public\\* OR *data.zip OR *sys_evnt_log_20260508.log OR *tmp_bak_0508.dat)
+  exfiltration_over_c2: >-
+    host.name:("FS01.mycompany.local" OR "PC01.mycompany.local") AND (((event.code:("3" OR "5156") AND (winlog.event_data.Image:(*powershell.exe OR *cmd.exe OR "<unknown process>") OR winlog.event_data.Application:(*powershell.exe OR *cmd.exe)) AND NOT (winlog.event_data.DestinationIp:10.* OR winlog.event_data.DestAddress:10.* OR winlog.event_data.DestinationIp:127.0.0.1 OR winlog.event_data.DestAddress:127.0.0.1 OR winlog.event_data.DestinationIp:169.254.* OR winlog.event_data.DestAddress:169.254.*)) OR (event.code:"1" AND winlog.event_data.Image:*powershell.exe AND winlog.event_data.CommandLine:(*Invoke-WebRequest* OR *iwr*) AND winlog.event_data.CommandLine:*upload*) OR (event.code:"4104" AND message:(*Invoke-WebRequest* OR *iwr*) AND message:*upload*)))
+  masquerading_legitimate_name: >-
+    host.name:"FS01.mycompany.local" AND ((event.code:"11" AND winlog.event_data.TargetFilename:*01_Public*) OR (event.code:"1" AND winlog.event_data.Image:*powershell.exe AND winlog.event_data.CommandLine:*Out-File* AND winlog.event_data.CommandLine:*01_Public*))
+  archive_collected_data: >-
+    host.name:"FS01.mycompany.local" AND ((event.code:"4104" AND message:*Compress-Archive*) OR (event.code:"1" AND winlog.event_data.CommandLine:*Compress-Archive*))
+  dcsync_replication: >-
+    host.name:"DC01.mycompany.local" AND event.code:"4662" AND winlog.event_data.Properties:*1131f6ad-9c07-11d1-f79f-00c04fc2dcd2* AND NOT winlog.event_data.SubjectUserName:*$*
+  golden_ticket_service_ticket: >-
+    host.name:"DC01.mycompany.local" AND event.code:"4769" AND winlog.event_data.TargetUserName:(*Administrator* OR *admin_user*) AND (winlog.event_data.IpAddress:"::ffff:10.0.1.194" OR winlog.event_data.IpAddress:"10.0.1.194")
+  valid_domain_account_remote_logon: >-
+    host.name:"DC01.mycompany.local" AND event.code:"4624" AND winlog.event_data.LogonType:"3" AND (winlog.event_data.IpAddress:"10.0.1.194" OR winlog.event_data.IpAddress:"::ffff:10.0.1.194") AND winlog.event_data.TargetUserName:(*Administrator* OR *admin_user*)
+  service_execution: >-
+    host.name:"DC01.mycompany.local" AND event.code:"7045" AND winlog.event_data.AccountName:("LocalSystem" OR "NT AUTHORITY\\SYSTEM") AND winlog.event_data.ImagePath:(*\\Windows\\*.exe OR *systemroot%\\*.exe OR *\\*.exe) AND NOT winlog.event_data.ImagePath:(*\\System32\\* OR *\\SysWOW64\\* OR *\\regedit.exe*)
+  ntds_dump: >-
+    host.name:"DC01.mycompany.local" AND ((event.code:"4662" AND winlog.event_data.Properties:*1131f6ad-9c07-11d1-f79f-00c04fc2dcd2*) OR (event.code:"7045" AND winlog.event_data.ImagePath:(*\\Windows\\*.exe OR *systemroot%\\*.exe)))
+
+alert_queries:
+  user_execution_malicious_file: 'kibana.alert.rule.name:"01.T1204.002" OR kibana.alert.rule.tags:"T1204.002"'
+  windows_command_shell: 'kibana.alert.rule.name:"02.T1059.003" OR kibana.alert.rule.name:"[CONTEXT][T1059.003] Suspicious Windows Command Shell Execution" OR kibana.alert.rule.tags:"T1059.003"'
+  non_application_tcp_connection: 'kibana.alert.rule.name:"03.T1095" OR kibana.alert.rule.name:"[CONTEXT][T1095] Suspicious Non-Web External Network Connection" OR kibana.alert.rule.tags:"T1095"'
+  domain_account_discovery: 'kibana.alert.rule.name:"04.T1087.002" OR kibana.alert.rule.name:"[CONTEXT][T1087.002] Domain Account Discovery Commands" OR kibana.alert.rule.tags:"T1087.002"'
+  local_account_discovery: 'kibana.alert.rule.tags:"T1087.001"'
+  remote_system_discovery: 'kibana.alert.rule.name:"05.T1018" OR kibana.alert.rule.name:"[CONTEXT][T1018] Remote System and Domain Controller Discovery" OR kibana.alert.rule.tags:"T1018"'
+  system_owner_user_discovery: 'kibana.alert.rule.name:"06.T1033" OR kibana.alert.rule.name:"[CONTEXT][T1033] System Owner or Logged-on User Discovery" OR kibana.alert.rule.tags:"T1033"'
+  network_share_discovery: 'kibana.alert.rule.name:"07.T1135" OR kibana.alert.rule.name:"[CONTEXT][T1135] Network Share Discovery Commands" OR kibana.alert.rule.tags:"T1135"'
+  local_groups_discovery: 'kibana.alert.rule.tags:"T1069.001"'
+  domain_groups_discovery: 'kibana.alert.rule.tags:"T1069.002"'
+  permission_groups_discovery: 'kibana.alert.rule.name:"08.T1069" OR kibana.alert.rule.name:"[CONTEXT][T1069] Permission Group Discovery Commands" OR kibana.alert.rule.tags:"T1069"'
+  kerberoasting_tgs_request: 'kibana.alert.rule.name:"09.T1558.003" OR kibana.alert.rule.name:"[ANCHOR][T1558.003] Kerberoasting Service Ticket Request" OR kibana.alert.rule.tags:"T1558.003"'
+  winrm_remote_execution: 'kibana.alert.rule.name:"10.T1021.006" OR kibana.alert.rule.name:"[ANCHOR][T1021.006] WinRM Remote Execution via wsmprovhost" OR kibana.alert.rule.tags:"T1021.006"'
+  powershell_over_winrm: 'kibana.alert.rule.name:"11.T1059.001" OR kibana.alert.rule.name:"[CONTEXT][T1059.001] PowerShell Execution from WinRM Session" OR kibana.alert.rule.tags:"T1059.001"'
+  ingress_tool_transfer: 'kibana.alert.rule.name:"12.T1105" OR kibana.alert.rule.name:"[CONTEXT][T1105] PowerShell Tool Download or File Transfer" OR kibana.alert.rule.tags:"T1105"'
+  lsass_memory_dump: 'kibana.alert.rule.name:"13.T1003.001" OR kibana.alert.rule.name:"[ANCHOR][T1003.001] LSASS Dump via comsvcs MiniDump" OR kibana.alert.rule.tags:"T1003.001"'
+  sam_credential_store_access: 'kibana.alert.rule.tags:"T1003.002"'
+  rundll32_comsvcs_proxy: 'kibana.alert.rule.name:"14.T1218.011" OR kibana.alert.rule.tags:"T1218.011"'
+  local_data_staging: 'kibana.alert.rule.name:"15.T1074.001" OR kibana.alert.rule.tags:"T1074.001"'
+  exfiltration_over_c2: 'kibana.alert.rule.name:"16.T1041" OR kibana.alert.rule.name:"[ANCHOR][T1041] PowerShell HTTP File Upload via Invoke-WebRequest" OR kibana.alert.rule.name:"[CONTEXT][T1041] Suspicious External Network Connection from Shell" OR kibana.alert.rule.tags:"T1041"'
+  masquerading_legitimate_name: 'kibana.alert.rule.name:"17.T1036.005" OR kibana.alert.rule.tags:"T1036.005"'
+  archive_collected_data: 'kibana.alert.rule.name:"18.T1560.001" OR kibana.alert.rule.tags:"T1560.001"'
+  dcsync_replication: 'kibana.alert.rule.name:"19.T1003.006" OR kibana.alert.rule.name:"[ANCHOR][T1003.006] DCSync Replication Rights Access on DC" OR kibana.alert.rule.tags:"T1003.006"'
+  golden_ticket_service_ticket: 'kibana.alert.rule.name:"20.T1558.001" OR kibana.alert.rule.name:"[ANCHOR][T1558.001] Suspicious Golden Ticket Kerberos Activity" OR kibana.alert.rule.tags:"T1558.001"'
+  valid_domain_account_remote_logon: 'kibana.alert.rule.name:"21.T1078.002" OR kibana.alert.rule.name:"[CONTEXT][T1078.002] Suspicious Domain Admin Network Logon" OR kibana.alert.rule.tags:"T1078.002"'
+  service_execution: 'kibana.alert.rule.name:"22.T1569.002" OR kibana.alert.rule.name:"[ANCHOR][T1569.002] Suspicious Service Installation or Execution" OR kibana.alert.rule.tags:"T1569.002"'
+  ntds_dump: 'kibana.alert.rule.name:"23.T1003.003" OR kibana.alert.rule.tags:"T1003.003"'

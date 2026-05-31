@@ -5,7 +5,181 @@ name: ClusterDrain k3s Environment
 description: k3s 기반 Kubernetes 클러스터와 공격자 EC2, AWS S3 유출 경로를 포함한 SB-05 대상 환경이다.
 environment_type: k3s
 primary_namespace: prod-platform
+operation_defaults:
+  pod_selector: orders-api
+  collector_pod: sb05-collector
+  service_account: sb05-reader
+  staging_dir: /tmp/sb05_stage
+  archive_name: sb05_archive.zip
+  destination: private_s3_bucket
+ssh:
+  host: 44.196.147.30
+  ssh_user: ubuntu
+  ssh_key_path: 'C:\Users\KISIA\Downloads\Attacker-key.pem'
+  ssh_port: 22
+  local_hostnames:
+    - sb05-attacker
+segments:
+  - segment_id: compromised-zone
+    name: ATTACKER / COMPROMISED ZONE
+    type: external
+  - segment_id: kubernetes-zone
+    name: KUBERNETES CLUSTER ZONE
+    type: cluster
+  - segment_id: cloud-storage-zone
+    name: CLOUD STORAGE ZONE
+    type: cloud
+  - segment_id: monitoring-zone
+    name: LOG & MONITORING ZONE
+    type: monitoring
+assets:
+  - asset_id: sb05-attacker
+    name: Compromised Deploy Host
+    hostname: sb05-attacker
+    private_ip: N/A
+    public_ip: 44.196.147.30
+    elastic_ip: 44.196.147.30
+    role: 침해된 배포/운영 지점
+    segment_id: compromised-zone
+    platform: Ubuntu
+    os: Ubuntu 24.04 LTS
+    agent_role: campaign_agent
+    agent_required: true
+    criticality: high
+    controls: [auditd, elastic_agent]
+    logs: [Linux auditd, Elastic Agent]
+    log_collection_status: Active
+    log_collection_detail: Linux auditd, Elastic Agent
+    description: 노출된 kubeconfig를 이용해 Kubernetes API를 호출하고 staging/archive/aws CLI를 실행하는 시작점
+    position:
+      left: 13.5
+      top: 50
+  - asset_id: sb05-kubernetes
+    name: Kubernetes Node / k3s Cluster
+    hostname: sb05-kubernetes
+    private_ip: N/A
+    public_ip: 54.209.58.38
+    elastic_ip: 54.209.58.38
+    role: k3s Kubernetes Node
+    segment_id: kubernetes-zone
+    platform: Kubernetes
+    os: Ubuntu 24.04 LTS
+    agent_required: false
+    criticality: critical
+    controls: [kube_audit, elastic_agent]
+    logs: [k3s audit log]
+    log_collection_status: Active
+    log_collection_detail: k3s audit log
+    description: API Server, 업무 namespace, Pod/Service/Ingress/Secret/RBAC 구성
+    position:
+      left: 37.5
+      top: 34
+  - asset_id: prod-platform
+    name: Business Namespace
+    hostname: prod-platform
+    role: Kubernetes Namespace
+    segment_id: kubernetes-zone
+    platform: Kubernetes Namespace
+    os: N/A
+    agent_required: false
+    criticality: high
+    controls: [kube_audit]
+    resources: [orders-api, settlement-worker, notification-gateway, Service, Ingress, Secret, ConfigMap]
+    log_collection_status: Active
+    log_collection_detail: Kubernetes audit log
+    description: 업무 서비스가 배포된 namespace이며 Discovery, Secret 조회, Pod exec 대상
+    position:
+      left: 37.5
+      top: 74
+  - asset_id: sb05-k8s-drain
+    name: S3 Exfiltration Bucket
+    hostname: sb05-k8s-drain
+    role: AWS S3 Bucket
+    segment_id: cloud-storage-zone
+    platform: AWS S3
+    os: N/A
+    agent_required: false
+    criticality: high
+    controls: [cloudtrail]
+    logs: [CloudTrail PutObject]
+    log_collection_status: Active
+    log_collection_detail: CloudTrail PutObject
+    description: 수집 archive 업로드 대상 및 T1567.002 검증 대상
+    position:
+      left: 61.5
+      top: 50
+  - asset_id: sb05-elk
+    name: ELK / Monitoring
+    hostname: sb05-elk
+    private_ip: N/A
+    public_ip: 35.168.42.122
+    elastic_ip: 35.168.42.122
+    role: 로그 분석 서버
+    segment_id: monitoring-zone
+    platform: Ubuntu
+    os: Ubuntu 24.04 LTS
+    agent_required: false
+    criticality: medium
+    controls: [elasticsearch, kibana, elastic_agent]
+    logs: [Kubernetes audit log, Linux auditd, AWS CloudTrail]
+    log_collection_status: Detection Backend
+    log_collection_detail: Kubernetes audit log, Linux auditd, AWS CloudTrail
+    description: 각 Technique 증적 수집 및 Kibana Discover 분석
+    position:
+      left: 85.5
+      top: 32
+  - asset_id: cloudtrail-sqs-pipeline
+    name: CloudTrail-SQS Pipeline
+    hostname: CloudTrail-SQS Pipeline
+    role: AWS Log Pipeline
+    segment_id: monitoring-zone
+    platform: AWS
+    os: N/A
+    agent_required: false
+    criticality: medium
+    controls: [cloudtrail, s3_log_bucket, sqs, elastic_agent_aws_integration]
+    log_collection_status: Planned
+    log_collection_detail: S3 PutObject Data Event -> ELK
+    description: S3 PutObject Data Event를 ELK로 전달하는 로그 파이프라인
+    position:
+      left: 85.5
+      top: 74
+attack_paths:
+  - source_asset_id: sb05-attacker
+    target_asset_id: sb05-kubernetes
+    label: Exposed kubeconfig to Kubernetes API
+    techniques: [T1613, T1552.007]
+  - source_asset_id: sb05-kubernetes
+    target_asset_id: prod-platform
+    label: Namespace discovery, secret access, pod exec, RBAC changes
+    techniques: [T1609, T1610, T1098.006]
+  - source_asset_id: sb05-attacker
+    target_asset_id: sb05-k8s-drain
+    label: Archive upload to S3 exfiltration bucket
+    techniques: [T1074.001, T1560.001, T1567.002]
+  - source_asset_id: sb05-k8s-drain
+    target_asset_id: cloudtrail-sqs-pipeline
+    label: CloudTrail PutObject event delivery
+    map_visible: false
+    techniques: [T1567.002]
+  - source_asset_id: cloudtrail-sqs-pipeline
+    target_asset_id: sb05-elk
+    label: AWS integration forwards evidence to ELK
+    map_visible: false
+    techniques: [T1567.002]
+  - source_asset_id: sb05-kubernetes
+    target_asset_id: sb05-elk
+    label: Kubernetes audit evidence
+    map_visible: false
+    techniques: [T1613, T1552.007, T1609, T1610, T1098.006]
+  - source_asset_id: sb05-attacker
+    target_asset_id: sb05-elk
+    label: Linux auditd staging and archive evidence
+    map_visible: false
+    techniques: [T1074.001, T1560.001]
 capabilities:
+  - ssh
+  - deploy_key
   - kubernetes
   - kubectl
   - kube_audit
@@ -25,6 +199,7 @@ elk:
     aws_cloudtrail: sb05.aws_cloudtrail
 
 log_queries:
+  sb05_ssh_access_check: 'data_stream.dataset:"sb05.attacker_auditd" and (process.name:"sshd" or event.action:"ssh_login" or message:"Accepted publickey")'
   kube_get_pods: 'data_stream.dataset:"sb05.kubernetes_audit" and objectRef.resource:"pods"'
   kube_get_services: 'data_stream.dataset:"sb05.kubernetes_audit" and objectRef.resource:"services"'
   kube_get_deployments: 'data_stream.dataset:"sb05.kubernetes_audit" and objectRef.resource:"deployments"'

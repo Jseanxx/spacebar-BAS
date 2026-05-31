@@ -1,0 +1,350 @@
+target_id: SB-AV
+name: Hanguel PMS AV Bypass AD Lab
+description: SB-07 OZZY PMS Chain을 BAS로 검증하기 위한 Hanguel PMS, Windows endpoint, DC, SOC 기반 환경.
+environment_type: aws-ad-pms-av
+
+hosts:
+  bastion: hanguel-bastion
+  pms: hanguel-ops-pms
+  win01: hanguel-win01
+  dc01: hanguel-dc01
+  soc01: hanguel-soc01
+  domain: hanguel.local
+  bastion_private_ip: 10.60.0.10
+  bastion_public_ip: 43.201.29.242
+  pms_private_ip: 10.60.0.20
+  pms_public_ip: 3.38.96.225
+  win01_private_ip: 10.60.30.10
+  dc01_private_ip: 10.60.20.10
+  soc01_private_ip: 10.60.40.10
+
+segments:
+  - segment_id: external-zone
+    name: External Access
+    type: external
+    description: 외부 운영자/공격자 관점의 Bastion 진입 구간
+  - segment_id: bastion-zone
+    name: Bastion Zone
+    type: external
+    description: 운영자와 내부망을 연결하는 배스천 구간
+  - segment_id: pms-zone
+    name: PMS Server Zone
+    type: server
+    description: JBoss/PMS 업데이트 서버 구간
+  - segment_id: endpoint-zone
+    name: Windows Endpoint Zone
+    type: internal
+    description: PMS Agent가 동작하는 Windows endpoint 구간
+  - segment_id: domain-zone
+    name: Domain Core Zone
+    type: critical
+    description: Domain Controller 구간
+  - segment_id: soc-zone
+    name: SOC Zone
+    type: detection
+    description: ELK와 Hanguel custom correlator 구간
+
+assets:
+  - asset_id: external
+    name: External
+    hostname: operator-workstation
+    platform: External
+    os: Operator
+    role: 외부 접속 시작점
+    log_collection_status: Manual
+    log_collection_detail: Bastion SSH/auth log에서 외부 진입 흔적 확인
+    segment_id: external-zone
+    agent_required: false
+    criticality: medium
+    position:
+      left: 9.5
+      top: 50
+    controls: [manual_response]
+  - asset_id: bastion
+    name: Bastion
+    hostname: hanguel-bastion
+    private_ip: 10.60.0.10
+    public_ip: 43.201.29.242
+    platform: Linux
+    os: Linux
+    role: 내부망 진입 배스천
+    log_collection_status: Active
+    log_collection_detail: Bastion SSH/auth log와 Hanguel source event 기준 확인
+    segment_id: bastion-zone
+    agent_role: bastion
+    agent_required: true
+    criticality: medium
+    position:
+      left: 25.5
+      top: 50
+    controls: [ssh_auth_log, hanguel_correlator, aws_security_group]
+  - asset_id: pms
+    name: PMS
+    hostname: hanguel-ops-pms
+    private_ip: 10.60.0.20
+    public_ip: 3.38.96.225
+    platform: Linux
+    os: Linux
+    role: JBoss/PMS update server
+    log_collection_status: Active
+    log_collection_detail: PMS/JBoss access, update path, patch hash event 기준 확인
+    segment_id: pms-zone
+    agent_role: pms
+    agent_required: true
+    criticality: high
+    position:
+      left: 41.5
+      top: 50
+    controls: [pms_logs, jboss_access_log, logstash, hanguel_correlator]
+  - asset_id: win01
+    name: WIN01
+    hostname: hanguel-win01
+    private_ip: 10.60.30.10
+    platform: Windows
+    os: Windows
+    role: PMS Agent endpoint / AD discovery origin
+    log_collection_status: Active
+    log_collection_detail: Hanguel AD Agent, PowerShell summary, Windows Security Log 기준 확인
+    segment_id: endpoint-zone
+    agent_role: win01
+    agent_required: true
+    criticality: high
+    position:
+      left: 57.5
+      top: 50
+    controls: [hanguel_ad_agent, powershell_logging, windows_security_log, hanguel_correlator]
+  - asset_id: dc01
+    name: DC01
+    hostname: hanguel-dc01
+    private_ip: 10.60.20.10
+    platform: Windows
+    os: Windows Domain Controller
+    role: Domain Controller / controlled loader and LSASS telemetry target
+    log_collection_status: Active
+    log_collection_detail: DC security, Sysmon, forensic artifact collector 기준 확인
+    segment_id: domain-zone
+    agent_role: dc01
+    agent_required: false
+    criticality: critical
+    position:
+      left: 73.5
+      top: 50
+    controls: [windows_security_log, sysmon, hanguel_ad_agent, hanguel_correlator]
+  - asset_id: soc01
+    name: SOC01
+    hostname: hanguel-soc01
+    private_ip: 10.60.40.10
+    platform: Linux
+    os: Linux
+    role: ELK / Hanguel agent custom correlator
+    log_collection_status: Detection Backend
+    log_collection_detail: hanguel-ad-agent-*, hanguel-alerts-*, hanguel-ai-analysis-* 조회 대상
+    segment_id: soc-zone
+    agent_role: detection_backend
+    agent_required: false
+    criticality: high
+    position:
+      left: 89.5
+      top: 70
+    controls: [elasticsearch, hanguel_agent, hanguel_correlator, ai_analysis_worker]
+
+security_controls:
+  - control_id: hanguel_correlator
+    name: Hanguel Custom Sequential Correlator
+    category: siem correlation
+    status: configured
+  - control_id: hanguel_ad_agent
+    name: Hanguel AD Agent
+    category: endpoint telemetry
+    status: configured
+  - control_id: logstash
+    name: Logstash
+    category: log pipeline
+    status: configured
+  - control_id: kibana
+    name: Kibana
+    category: visualization
+    status: optional
+  - control_id: hanguel_agent
+    name: Hanguel Agent Detection Pipeline
+    category: custom detection pipeline
+    status: configured
+  - control_id: ai_analysis_worker
+    name: AI Analysis Worker
+    category: ai assisted investigation
+    status: planned
+
+attack_paths:
+  - source_asset_id: external
+    target_asset_id: bastion
+    label: External SSH entry into Bastion
+    techniques: [T1133]
+  - source_asset_id: bastion
+    target_asset_id: pms
+    label: Bastion to PMS reconnaissance
+    techniques: [T1046, T1190]
+  - source_asset_id: pms
+    target_asset_id: pms
+    label: PMS/JBoss command and update path manipulation
+    map_visible: false
+    techniques: [T1059.004, T1505.003, T1083, T1195.002, T1036.005]
+  - source_asset_id: pms
+    target_asset_id: win01
+    label: PMS Agent scheduled update chain
+    techniques: [T1053.005]
+  - source_asset_id: win01
+    target_asset_id: win01
+    label: WIN01 local context and credential artifact
+    map_visible: false
+    techniques: [T1082, T1552.001, T1059.001, T1027.010]
+  - source_asset_id: win01
+    target_asset_id: dc01
+    label: AD discovery, DC access, and auth material reuse
+    techniques: [T1482, T1018, T1021.002, T1021.006, T1550.002]
+  - source_asset_id: dc01
+    target_asset_id: dc01
+    label: Controlled loader and LSASS telemetry on DC
+    map_visible: false
+    techniques: [T1027.013, T1620, T1003.001]
+  - source_asset_id: dc01
+    target_asset_id: soc01
+    label: Telemetry and alert validation
+    map_visible: false
+    techniques: [HAC-001]
+
+ad:
+  domain: hanguel.local
+  netbios_domain: HANGUEL
+  dc_hostname: hanguel-dc01
+  dc_ip: 10.60.20.10
+
+paths:
+  pms_update_manifest: /opt/hanguel-pms/updates/manifest.json
+  pms_update_patch: /opt/hanguel-pms/updates/patch.ps1
+  pms_marker_dir: /tmp/spacebar-bas/SB-AV
+  win01_cred_xml: C:\ProgramData\HanguelPMS\dc_cred.xml
+  windows_marker_dir: C:\ProgramData\SpacebarBAS\SB-AV
+
+operation_defaults:
+  pms_http_port: 8080
+  dc_smb_port: 445
+  dc_winrm_port: 5985
+  win01_rdp_port: 3389
+  logstash_http_url: http://10.60.40.10:8088
+
+capabilities:
+  - linux
+  - bash
+  - http_probe
+  - windows
+  - powershell
+  - cmd
+  - network
+  - active_directory
+  - winrm
+  - smb
+  - sysmon
+  - hanguel_correlator
+  - elk
+
+elk:
+  enabled: true
+  url: http://127.0.0.1:19200
+  index: hanguel-ad-agent-*
+  alert_index: hanguel-alerts-*
+  alert_rule_prefix: sb07-
+  alert_wait_seconds: 25
+
+log_queries:
+  sbav_normal_bastion_health: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"normal_bastion_health"
+  sbav_normal_pms_path_health: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"normal_pms_path_health"
+  sbav_normal_win01_health: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"normal_win01_health"
+  bastion_ssh_entry_check: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"ssh_session_accepted"
+  limited_internal_service_probe: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"internal_service_probe"
+  jboss_invoker_probe: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"jboss_invoker_probe"
+  pms_unix_shell_marker: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"jboss_command_execution"
+  pms_webshell_marker: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"webshell_marker_observed"
+  pms_update_path_discovery: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"pms_update_path_discovered"
+  pms_patch_change_emulated: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"pms_patch_downloaded"
+  pms_patch_masquerade_marker: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"pms_patch_executed"
+  win01_pms_agent_task_check: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"pms_agent_task_observed"
+  win01_system_context_discovery: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:("system_user_context" OR "system_ipconfig")
+  win01_domain_trust_discovery: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:("domain_controller_discovery" OR "dc_srv_dns_lookup")
+  win01_remote_system_discovery: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND (event.action:"dc_port_probe_445" OR event.action:"dc_port_probe_5985")
+  win01_dc_cred_metadata_check: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:("dc_cred_xml_discovered" OR "dc_cred_xml_imported")
+  win01_dc_admin_share_check: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"dc_c_admin_share_access"
+  win01_dc_winrm_whoami: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"dc_winrm_whoami"
+  dc_loader_obfuscated_artifact: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:("loader_execution_log_found" OR "loader_file_artifact_found")
+  dc_reflective_code_loading_artifact: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:("loader_powershell_event_found" OR "manual_mapping_inferred_marker")
+  dc_lsass_process_access_smoke: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"sysmon_lsass_process_access"
+  win01_auth_material_reuse_validation: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:("auth_material_reuse_validation" OR "pass_the_hash_attempt_emulated")
+  win01_powershell_context_command: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"powershell_context_command"
+  win01_encoded_powershell_marker: >-
+    campaign.id:"SB-07" AND bas.campaign_id:"SB-AV" AND event.action:"encoded_powershell_marker"
+
+alert_queries:
+  bastion_ssh_entry_check: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-bastion-ssh-entry-015" OR hanguel.rule_id:"sb07-bastion-ssh-entry-015" OR alert.rule_id:"sb07-bastion-ssh-entry-015" OR detection.rule_id:"sb07-bastion-ssh-entry-015")
+  limited_internal_service_probe: >-
+    campaign.id:"SB-07" AND (rule.id:("sb07-bastion-ssh-entry-015" OR "sb07-pms-patch-discovery-001") OR hanguel.rule_id:("sb07-bastion-ssh-entry-015" OR "sb07-pms-patch-discovery-001") OR alert.rule_id:("sb07-bastion-ssh-entry-015" OR "sb07-pms-patch-discovery-001") OR detection.rule_id:("sb07-bastion-ssh-entry-015" OR "sb07-pms-patch-discovery-001"))
+  jboss_invoker_probe: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-pms-patch-discovery-001" OR hanguel.rule_id:"sb07-pms-patch-discovery-001" OR alert.rule_id:"sb07-pms-patch-discovery-001" OR detection.rule_id:"sb07-pms-patch-discovery-001")
+  pms_unix_shell_marker: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-pms-patch-discovery-001" OR hanguel.rule_id:"sb07-pms-patch-discovery-001" OR alert.rule_id:"sb07-pms-patch-discovery-001" OR detection.rule_id:"sb07-pms-patch-discovery-001")
+  pms_webshell_marker: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-pms-patch-discovery-001" OR hanguel.rule_id:"sb07-pms-patch-discovery-001" OR alert.rule_id:"sb07-pms-patch-discovery-001" OR detection.rule_id:"sb07-pms-patch-discovery-001")
+  pms_update_path_discovery: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-pms-patch-discovery-001" OR hanguel.rule_id:"sb07-pms-patch-discovery-001" OR alert.rule_id:"sb07-pms-patch-discovery-001" OR detection.rule_id:"sb07-pms-patch-discovery-001")
+  pms_patch_change_emulated: >-
+    campaign.id:"SB-07" AND (rule.id:("sb07-pms-patch-discovery-001" OR "sb07-pms-credential-chain-003") OR hanguel.rule_id:("sb07-pms-patch-discovery-001" OR "sb07-pms-credential-chain-003") OR alert.rule_id:("sb07-pms-patch-discovery-001" OR "sb07-pms-credential-chain-003") OR detection.rule_id:("sb07-pms-patch-discovery-001" OR "sb07-pms-credential-chain-003"))
+  pms_patch_masquerade_marker: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-pms-patch-discovery-001" OR hanguel.rule_id:"sb07-pms-patch-discovery-001" OR alert.rule_id:"sb07-pms-patch-discovery-001" OR detection.rule_id:"sb07-pms-patch-discovery-001")
+  win01_pms_agent_task_check: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-pms-credential-chain-003" OR hanguel.rule_id:"sb07-pms-credential-chain-003" OR alert.rule_id:"sb07-pms-credential-chain-003" OR detection.rule_id:"sb07-pms-credential-chain-003")
+  win01_system_context_discovery: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-pms-credential-chain-003" OR hanguel.rule_id:"sb07-pms-credential-chain-003" OR alert.rule_id:"sb07-pms-credential-chain-003" OR detection.rule_id:"sb07-pms-credential-chain-003")
+  win01_domain_trust_discovery: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-pms-credential-chain-003" OR hanguel.rule_id:"sb07-pms-credential-chain-003" OR alert.rule_id:"sb07-pms-credential-chain-003" OR detection.rule_id:"sb07-pms-credential-chain-003")
+  win01_remote_system_discovery: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-pms-credential-chain-003" OR hanguel.rule_id:"sb07-pms-credential-chain-003" OR alert.rule_id:"sb07-pms-credential-chain-003" OR detection.rule_id:"sb07-pms-credential-chain-003")
+  win01_dc_cred_metadata_check: >-
+    campaign.id:"SB-07" AND (rule.id:("sb07-credential-dc-access-002" OR "sb07-pms-credential-chain-003") OR hanguel.rule_id:("sb07-credential-dc-access-002" OR "sb07-pms-credential-chain-003") OR alert.rule_id:("sb07-credential-dc-access-002" OR "sb07-pms-credential-chain-003") OR detection.rule_id:("sb07-credential-dc-access-002" OR "sb07-pms-credential-chain-003"))
+  win01_dc_admin_share_check: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-credential-dc-access-002" OR hanguel.rule_id:"sb07-credential-dc-access-002" OR alert.rule_id:"sb07-credential-dc-access-002" OR detection.rule_id:"sb07-credential-dc-access-002")
+  win01_dc_winrm_whoami: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-credential-dc-access-002" OR hanguel.rule_id:"sb07-credential-dc-access-002" OR alert.rule_id:"sb07-credential-dc-access-002" OR detection.rule_id:"sb07-credential-dc-access-002")
+  dc_loader_obfuscated_artifact: >-
+    campaign.id:"SB-07" AND (rule.id:("sb07-loader-forensic-triad-012" OR "sb07-loader-file-lifecycle-013") OR hanguel.rule_id:("sb07-loader-forensic-triad-012" OR "sb07-loader-file-lifecycle-013") OR alert.rule_id:("sb07-loader-forensic-triad-012" OR "sb07-loader-file-lifecycle-013") OR detection.rule_id:("sb07-loader-forensic-triad-012" OR "sb07-loader-file-lifecycle-013"))
+  dc_reflective_code_loading_artifact: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-manual-mapping-inferred-014" OR hanguel.rule_id:"sb07-manual-mapping-inferred-014" OR alert.rule_id:"sb07-manual-mapping-inferred-014" OR detection.rule_id:"sb07-manual-mapping-inferred-014")
+  dc_lsass_process_access_smoke: >-
+    campaign.id:"SB-07" AND (rule.id:("sb07-loader-lsass-005" OR "sb07-dc-access-lsass-004" OR "sb07-lsass-no-defender-006") OR hanguel.rule_id:("sb07-loader-lsass-005" OR "sb07-dc-access-lsass-004" OR "sb07-lsass-no-defender-006") OR alert.rule_id:("sb07-loader-lsass-005" OR "sb07-dc-access-lsass-004" OR "sb07-lsass-no-defender-006") OR detection.rule_id:("sb07-loader-lsass-005" OR "sb07-dc-access-lsass-004" OR "sb07-lsass-no-defender-006"))
+  win01_auth_material_reuse_validation: >-
+    campaign.id:"SB-07" AND (rule.id:("sb07-credential-dc-access-002" OR "sb07-pms-credential-chain-003") OR hanguel.rule_id:("sb07-credential-dc-access-002" OR "sb07-pms-credential-chain-003") OR alert.rule_id:("sb07-credential-dc-access-002" OR "sb07-pms-credential-chain-003") OR detection.rule_id:("sb07-credential-dc-access-002" OR "sb07-pms-credential-chain-003"))
+  win01_powershell_context_command: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-powershell-context-016" OR hanguel.rule_id:"sb07-powershell-context-016" OR alert.rule_id:"sb07-powershell-context-016" OR detection.rule_id:"sb07-powershell-context-016")
+  win01_encoded_powershell_marker: >-
+    campaign.id:"SB-07" AND (rule.id:"sb07-command-obfuscation-017" OR hanguel.rule_id:"sb07-command-obfuscation-017" OR alert.rule_id:"sb07-command-obfuscation-017" OR detection.rule_id:"sb07-command-obfuscation-017")

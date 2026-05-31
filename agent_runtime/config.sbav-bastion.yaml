@@ -1,0 +1,16 @@
+agent_id: sbav-bastion-bas-agent
+campaign_agent_id: SB-AV
+agent_role: bastion
+asset_id: bastion
+segment_id: bastion-zone
+display_name: SB-AV Bastion BasAgent
+hostname: hanguel-bastion
+platform: linux
+collector_type: manual
+controller_url: http://54.116.166.183:443/api
+controller_urls: http://54.116.166.183:443/api,http://127.0.0.1:8000,http://10.60.0.10:8000
+interval_seconds: 2
+execution_mode: real
+safety_mode: approval_required
+capabilities: linux,bash,network,http_probe,bastion_host
+controls: ssh_auth_log,aws_security_group,hanguel_correlator

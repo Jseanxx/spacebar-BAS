@@ -234,10 +234,17 @@ def load_technique_library():
     techniques = []
 
     for path in sorted(CAMPAIGNS_DIR.glob("*.yaml")):
-        campaign = load_campaign(path.stem)
+        try:
+            campaign = load_campaign(path.stem)
+        except Exception:
+            continue
+
         campaign_id = campaign.get("campaign_id") or path.stem
 
         for step in load_sorted_steps(campaign):
+            if not isinstance(step, dict):
+                continue
+
             step_copy = dict(step)
             step_copy["source_campaign_id"] = campaign_id
             step_copy["source_campaign_name"] = campaign.get("campaign_name")

@@ -145,7 +145,7 @@ assets:
     criticality: high
     position:
       left: 89.5
-      top: 70
+      top: 50
     controls: [elasticsearch, hanguel_agent, hanguel_correlator, ai_analysis_worker]
 
 security_controls:

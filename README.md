@@ -19,3 +19,4 @@ MITRE ATT&CK 캠페인 기반 Mini BAS 프레임워크입니다.
 - [BAS 고도화 체크리스트 및 상용 BAS 비교 분석](docs/BAS-advancement-gap-analysis.md)
 - [BAS 개발 기록 및 고도화 로드맵](docs/BAS-development-roadmap.md)
 - [SB-01 BAS 고도화 구현 체크리스트](docs/SB-01-BAS-hardening-checklist.md)
+- [최종 발표 PPT 목차](docs/발표_PPT_목차.md)

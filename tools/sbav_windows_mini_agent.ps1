@@ -299,6 +299,14 @@ function Get-StepMeta {
     param([int]$Order)
 
     switch ($Order) {
+        0 {
+            return [ordered]@{
+                order = 0; agent_role = "win01"; name = "Normal. WIN01 Agent Health"
+                technique_id = "NORMAL"; behavior = "sbav_normal_win01_health"
+                log_id = "HAW-000"; actions = @("normal_win01_health"); gates = @()
+                script = { whoami; hostname; Get-Date -Format o }
+            }
+        }
         9 {
             return [ordered]@{
                 order = 9; agent_role = "win01"; name = "09. Scheduled Task: WIN01 PMS Agent Task Check"
@@ -434,6 +442,29 @@ function Get-StepMeta {
                 script = { Invoke-SbavAuthMaterialReuseValidation }
             }
         }
+        20 {
+            return [ordered]@{
+                order = 20; agent_role = "win01"; name = "20. PowerShell: WIN01 Context Command"
+                technique_id = "T1059.001"; behavior = "win01_powershell_context_command"
+                log_id = "HAW-005"; actions = @("powershell_context_command"); gates = @()
+                script = {
+                    $PSVersionTable.PSVersion.ToString()
+                    whoami
+                    Get-Process -Id $PID | Select-Object ProcessName, Id | Format-List | Out-String
+                }
+            }
+        }
+        21 {
+            return [ordered]@{
+                order = 21; agent_role = "win01"; name = "21. Command Obfuscation: Encoded PowerShell Marker"
+                technique_id = "T1027.010"; behavior = "win01_encoded_powershell_marker"
+                log_id = "HAW-005"; actions = @("encoded_powershell_marker"); gates = @()
+                script = {
+                    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('Write-Output "SB-AV encoded marker"'))
+                    powershell.exe -NoProfile -EncodedCommand $encoded
+                }
+            }
+        }
         default { return $null }
     }
 }
@@ -463,6 +494,15 @@ function Test-Gates {
 function Get-HanguelStage {
     param([string]$Action)
 
+    if ($Action -like "normal_*") {
+        return "normal"
+    }
+    if ($Action -eq "powershell_context_command") {
+        return "execution"
+    }
+    if ($Action -eq "encoded_powershell_marker") {
+        return "defense_evasion"
+    }
     if ($Action -in @("system_user_context", "system_ipconfig", "domain_controller_discovery", "dc_srv_dns_lookup", "dc_port_probe_445", "dc_port_probe_5985")) {
         return "discovery"
     }
@@ -487,6 +527,9 @@ function Get-HanguelStage {
 function Get-HanguelRiskScore {
     param([string]$Action)
 
+    if ($Action -like "normal_*") { return 10 }
+    if ($Action -eq "powershell_context_command") { return 45 }
+    if ($Action -eq "encoded_powershell_marker") { return 65 }
     if ($Action -in @("dc_winrm_whoami", "dc_c_admin_share_access")) { return 85 }
     if ($Action -in @("sysmon_lsass_process_access", "pass_the_hash_attempt_emulated")) { return 85 }
     if ($Action -eq "dc_cred_xml_imported") { return 80 }
@@ -501,7 +544,10 @@ function Get-HanguelRiskScore {
 function Get-HanguelClassification {
     param([string]$Action)
 
-    if ($Action -in @("dc_cred_xml_imported", "dc_winrm_whoami", "dc_c_admin_share_access", "loader_execution_log_found", "loader_file_artifact_found", "loader_powershell_event_found", "manual_mapping_inferred_marker", "sysmon_lsass_process_access", "auth_material_reuse_validation", "pass_the_hash_attempt_emulated")) {
+    if ($Action -like "normal_*") {
+        return "normal"
+    }
+    if ($Action -in @("dc_cred_xml_imported", "dc_winrm_whoami", "dc_c_admin_share_access", "loader_execution_log_found", "loader_file_artifact_found", "loader_powershell_event_found", "manual_mapping_inferred_marker", "sysmon_lsass_process_access", "auth_material_reuse_validation", "pass_the_hash_attempt_emulated", "encoded_powershell_marker")) {
         return "attack"
     }
     return "suspicious"

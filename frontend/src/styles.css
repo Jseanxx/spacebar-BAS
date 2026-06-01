@@ -1448,6 +1448,7 @@ button {
 }
 
 .map-zone {
+  z-index: 1;
   top: 16px;
   bottom: 16px;
   display: grid;
@@ -1464,27 +1465,41 @@ button {
 }
 
 .map-links path {
-  stroke-width: 1.05;
-  stroke-dasharray: 5 7;
-  opacity: 0.48;
+  stroke-width: 1.65;
+  stroke-dasharray: none;
+  opacity: 0.86;
+}
+
+.map-links {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.map-links marker path {
+  fill: none;
+  stroke: context-stroke;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 1;
 }
 
 .map-links .tone-red {
-  stroke: #b45309;
+  stroke: #d06a4b;
 }
 
 .map-links .tone-blue {
-  stroke: #2563eb;
+  stroke: #3b82c4;
 }
 
 .map-links .tone-amber {
-  stroke: #ca8a04;
+  stroke: #d2a12b;
 }
 
 .map-links .active-link {
   stroke: #c2410c;
-  stroke-width: 1.9;
-  stroke-dasharray: 6 5;
+  stroke-width: 2.6;
+  stroke-dasharray: 7 5;
   opacity: 0.95;
   animation: dash-flow 0.9s linear infinite;
 }
@@ -1493,6 +1508,7 @@ button {
 .asset-node.risk-critical,
 .asset-node.risk-high,
 .asset-node.risk-medium {
+  z-index: 3;
   width: 176px;
   min-height: 218px;
   display: flex;

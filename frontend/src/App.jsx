@@ -1773,15 +1773,15 @@ export default function App() {
               <defs>
                 <marker
                   id="map-arrow"
-                  viewBox="0 0 6 6"
-                  refX="5.2"
-                  refY="3"
-                  markerWidth="5"
-                  markerHeight="5"
+                  viewBox="0 0 10 10"
+                  refX="8.2"
+                  refY="5"
+                  markerWidth="8"
+                  markerHeight="8"
                   orient="auto"
                   markerUnits="strokeWidth"
                 >
-                  <path d="M 0 0 L 6 3 L 0 6 z" />
+                  <path d="M 2 2 L 8 5 L 2 8" />
                 </marker>
               </defs>
               {mapLinks.length > 0 ? mapLinks.map((link) => {

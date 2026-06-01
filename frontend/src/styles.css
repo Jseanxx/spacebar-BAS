@@ -2165,6 +2165,12 @@ button {
   color: #166534;
 }
 
+.execution-pill.baseline,
+.detection-pill.baseline {
+  background: #e0f2fe;
+  color: #075985;
+}
+
 .execution-pill.simulated {
   background: #e0f2fe;
   color: #075985;

@@ -234,6 +234,8 @@ def load_technique_library():
     techniques = []
 
     for path in sorted(CAMPAIGNS_DIR.glob("*.yaml")):
+        if path.name.startswith("._"):
+            continue
         try:
             campaign = load_campaign(path.stem)
         except Exception:
@@ -2207,6 +2209,8 @@ def list_campaigns():
     errors = []
 
     for path in sorted(CAMPAIGNS_DIR.glob("*.yaml")):
+        if path.name.startswith("._"):
+            continue
         try:
             campaign = load_campaign(path.stem)
         except Exception as exc:

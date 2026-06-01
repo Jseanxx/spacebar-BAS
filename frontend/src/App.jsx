@@ -256,6 +256,14 @@ function isSubTechnique(step) {
   return /^T\d{4}\.\d{3}$/.test(String(step?.technique_id || ""));
 }
 
+function isNormalStep(step) {
+  return String(step?.phase || "").toLowerCase() === "normal";
+}
+
+function isScoredStep(step) {
+  return step && !isNormalStep(step);
+}
+
 function getStatusLabel(status) {
   const labels = {
     online: "온라인",
@@ -285,6 +293,29 @@ function isOperationSettled(operation) {
 
   if (operation.status === "completed" && !operation.report && !operation.report_error) return false;
   return true;
+}
+
+function isLiveOperation(operation) {
+  if (!operation || !["pending", "queued", "running"].includes(operation.status)) return false;
+
+  const timestamp = Date.parse(operation.started_at || operation.created_at || "");
+  if (!timestamp) return true;
+
+  return Date.now() - timestamp < 15 * 60 * 1000;
+}
+
+function reportScore(report) {
+  const score = Number(report?.summary?.final_score);
+  return Number.isFinite(score) ? score : -1;
+}
+
+function reportDetectionCoverage(report) {
+  const coverage = Number(report?.summary?.detection_coverage);
+  return Number.isFinite(coverage) ? coverage : -1;
+}
+
+function reportGeneratedTime(report) {
+  return Date.parse(report?.generated_at || report?.created_at || "") || 0;
 }
 
 function getToastTone(error, notice) {
@@ -320,6 +351,7 @@ function getLogCollectionClass(status) {
 
 function getDetectionStatus(step) {
   if (!step) return "not_run";
+  if (isNormalStep(step)) return "baseline";
   if (step.detection_status) return step.detection_status;
   if (step.status === "blocked") return "blocked";
   if (["failed", "manual_required", "not_supported"].includes(step.status)) return "execution_failed";
@@ -345,6 +377,7 @@ function getDetectionLabel(status) {
     blocked: "차단",
     execution_failed: "실패",
     not_run: "대기",
+    baseline: "기준",
   };
   return labels[status] || status;
 }
@@ -379,6 +412,10 @@ function getStepEvidenceText(step) {
   const missingGates = step?.module_result?.missing_safety_gates || [];
   const commandResults = step?.module_result?.command_results || [];
   const failedCommand = commandResults.find((item) => item?.returncode || item?.status === "failed");
+
+  if (isNormalStep(step)) {
+    return "정상 기준선 확인 단계입니다. 공격 탐지 점수와 미탐 분모에서는 제외됩니다.";
+  }
 
   if (executionStatus === "simulated") {
     return "Simulation mode: 실제 공격 명령과 ELK 조회는 수행하지 않았습니다.";
@@ -614,7 +651,7 @@ function summarizeStepStatuses(steps) {
 
 function hasSuccessfulStep(item) {
   return normalizeList(item?.steps || item?.final_steps).some((step) => (
-    ["success", "completed"].includes(step?.status || step?.execution_status)
+    isScoredStep(step) && ["success", "completed"].includes(step?.status || step?.execution_status)
   ));
 }
 
@@ -719,7 +756,7 @@ export default function App() {
       setCampaign(cachedCampaign || null);
       setTarget(cachedTarget || null);
       setCampaignId(nextCampaignId);
-      setSourceFilter("all");
+      setSourceFilter(nextCampaignId);
       syncCampaignUrl(nextCampaignId);
       setSelectedRun(null);
       setSelectedOperation(null);
@@ -745,7 +782,7 @@ export default function App() {
 
     setCampaign(campaignData);
     setCampaignId(nextCampaignId);
-    setSourceFilter("all");
+    setSourceFilter(nextCampaignId);
     syncCampaignUrl(nextCampaignId);
     setSelectedRun(null);
     setSelectedOperation(null);
@@ -780,7 +817,7 @@ export default function App() {
       if (cached.campaignsById?.[bootCampaignId]) setCampaign(cached.campaignsById[bootCampaignId]);
       if (cached.targetsById?.[bootCampaignId]) setTarget(cached.targetsById[bootCampaignId]);
       setCampaignId(bootCampaignId);
-      setSourceFilter("all");
+      setSourceFilter(bootCampaignId);
       syncCampaignUrl(bootCampaignId);
 
       try {
@@ -1021,7 +1058,32 @@ export default function App() {
   const campaignRuns = useMemo(() => (
     runs.filter((run) => !run.campaign_id || run.campaign_id === campaignId)
   ), [runs, campaignId]);
-  const latestOperation = selectedRun ? null : (selectedOperation || campaignOperations[0] || null);
+  const campaignReports = useMemo(() => (
+    reports.filter((report) => !report.campaign_id || report.campaign_id === campaignId)
+  ), [reports, campaignId]);
+  const operationById = useMemo(() => {
+    const map = new Map();
+    campaignOperations.forEach((operation) => {
+      if (operation.operation_id) map.set(operation.operation_id, operation);
+    });
+    return map;
+  }, [campaignOperations]);
+  const liveOperation = useMemo(() => (
+    campaignOperations.find(isLiveOperation) || null
+  ), [campaignOperations]);
+  const representativeReport = useMemo(() => (
+    [...campaignReports].sort((left, right) => (
+      reportScore(right) - reportScore(left)
+      || reportDetectionCoverage(right) - reportDetectionCoverage(left)
+      || reportGeneratedTime(right) - reportGeneratedTime(left)
+    ))[0] || null
+  ), [campaignReports]);
+  const representativeOperation = representativeReport?.source_id
+    ? operationById.get(representativeReport.source_id) || null
+    : null;
+  const latestOperation = selectedRun ? null : (
+    selectedOperation || liveOperation || representativeOperation || campaignOperations[0] || null
+  );
   const canCancelLatestOperation = Boolean(
     latestOperation?.operation_id && ["pending", "queued", "running"].includes(latestOperation.status),
   );
@@ -1032,6 +1094,7 @@ export default function App() {
   );
   const timelineOperationSteps = shouldShowOperationTimeline ? operationSteps : [];
   const evidenceSteps = operationSteps.length > 0 ? operationSteps : normalizeList(latestRun?.steps);
+  const scoredEvidenceSteps = evidenceSteps.filter(isScoredStep);
   const visibleSteps = timelineOperationSteps.length > 0 ? timelineOperationSteps : selectedSteps;
   const runningStep = timelineOperationSteps.find((step) => step.status === "running")
     || timelineOperationSteps.find((step) => step.status === "queued")
@@ -1043,16 +1106,29 @@ export default function App() {
     : selectedSteps.length;
   const requiredAssets = assets.filter((asset) => asset.agent_required);
   const onlineRequiredAssets = requiredAssets.filter((asset) => asset.agentStatus === "online");
-  const detectionCounts = evidenceSteps.reduce((counts, step) => {
+  const detectionCounts = scoredEvidenceSteps.reduce((counts, step) => {
     const status = getDetectionStatus(step);
     return { ...counts, [status]: (counts[status] || 0) + 1 };
   }, {});
-  const stepStatusSummary = summarizeStepStatuses(evidenceSteps);
-  const operationSummary = latestOperation?.summary || stepStatusSummary;
-  const latestReport = latestOperation?.report || reports.find((report) => report.campaign_id === campaignId) || reports[0] || null;
+  const stepStatusSummary = summarizeStepStatuses(scoredEvidenceSteps);
+  const operationSummary = evidenceSteps.length > 0 ? stepStatusSummary : (latestOperation?.summary || stepStatusSummary);
+  const operationReport = latestOperation?.report
+    || (latestOperation?.operation_id
+      ? campaignReports.find((report) => report.source_id === latestOperation.operation_id)
+      : null);
+  const latestReport = operationReport || representativeReport || campaignReports[0] || reports[0] || null;
   const reportSummary = latestReport?.summary || {};
   const selectedOperationKey = latestOperation?.operation_id || "";
-  const executionTotal = operationSummary.total || evidenceSteps.length || selectedSteps.length || 0;
+  const operationSelectOptions = useMemo(() => {
+    const options = campaignOperations.slice(0, 12);
+    if (!latestOperation?.operation_id) return options;
+    if (options.some((operation) => operation.operation_id === latestOperation.operation_id)) return options;
+    return [latestOperation, ...options];
+  }, [campaignOperations, latestOperation]);
+  const resultExecutionMode = latestOperation?.status === "simulated"
+    ? "simulation"
+    : (latestOperation?.execution_mode || executionMode);
+  const executionTotal = operationSummary.total || scoredEvidenceSteps.length || selectedSteps.filter(isScoredStep).length || 0;
   const executionSucceeded = (operationSummary.success || 0) + (operationSummary.completed || 0);
   const executionFailed = (operationSummary.failed || 0) + (operationSummary.blocked || 0);
   const executionSimulated = operationSummary.simulated || 0;
@@ -1130,10 +1206,10 @@ export default function App() {
     selectableFilteredSelectionIds.filter((id) => selectedIds.includes(id)).length
   ), [selectableFilteredSelectionIds, selectedIds]);
   const safetySummary = useMemo(() => summarizeSafetyProfiles(selectedSteps), [selectedSteps]);
-  const successfulRuns = useMemo(() => runs.filter(hasSuccessfulStep), [runs]);
-  const successfulOperations = useMemo(() => operations.filter((operation) => (
+  const successfulRuns = useMemo(() => campaignRuns.filter(hasSuccessfulStep), [campaignRuns]);
+  const successfulOperations = useMemo(() => campaignOperations.filter((operation) => (
     hasSuccessfulStep(operation) || (operation.summary?.success || operation.summary?.completed || 0) > 0
-  )), [operations]);
+  )), [campaignOperations]);
 
   function getDependencyStepsForStep(step) {
     const sourceId = getStepSourceId(step, campaignId);
@@ -1478,7 +1554,7 @@ export default function App() {
             <div><span>Assets</span><strong>{assets.length}</strong></div>
             <div><span>BAS Agents</span><strong>{onlineRequiredAssets.length}/{requiredAssets.length}</strong></div>
             <div><span>Queue</span><strong>{selectedSteps.length}</strong></div>
-            <div><span>Runs</span><strong>{runs.length}</strong></div>
+            <div><span>Operations</span><strong>{campaignOperations.length}</strong></div>
           </div>
           <div className={`elk-status-card ${elkStatus}`}>
             <span>ELK 연동</span>
@@ -1515,7 +1591,7 @@ export default function App() {
           <div className="filter-grid">
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="T1059, WinRM, shell..." />
             <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
-              <option value="all">전체 소스</option>
+              <option value="all">전체 캠페인</option>
               {sourceOptions.map((sourceId) => <option key={sourceId} value={sourceId}>{sourceId}</option>)}
             </select>
             <select value={phaseFilter} onChange={(event) => setPhaseFilter(event.target.value)}>
@@ -1740,8 +1816,8 @@ export default function App() {
         <label className="result-select-field">
           <span>결과 선택</span>
           <select value={selectedOperationKey} onChange={(event) => chooseOperation(event.target.value)}>
-            <option value="">최신 결과</option>
-            {operations.slice(0, 12).map((operation) => (
+            <option value="">대표 결과</option>
+            {operationSelectOptions.map((operation) => (
               <option key={operation.operation_id} value={operation.operation_id}>
                 {operation.operation_id} · {operation.campaign_id} · {getStatusLabel(operation.status)}
               </option>
@@ -1749,10 +1825,10 @@ export default function App() {
           </select>
         </label>
         <div className="evidence-callout">
-          <span>현재 결과</span>
-          <strong>{latestOperation?.status ? getStatusLabel(latestOperation.status) : selectedRun ? "Run 기록" : "런 선택 전"}</strong>
+          <span>대표/선택 결과</span>
+          <strong>{latestOperation?.status ? getStatusLabel(latestOperation.status) : selectedRun ? "이전 실행 기록" : "Operation 선택 전"}</strong>
           <small>
-            {(latestOperation?.execution_mode || executionMode) === "simulation"
+            {resultExecutionMode === "simulation"
               ? "Simulation은 공격과 ELK 조회를 실행하지 않아 탐지 결과가 미확인으로 표시됩니다."
               : "Real 모드에서 Agent가 명령을 실행한 뒤 ELK source/alert 조회 결과가 채워집니다."}
           </small>
@@ -1805,7 +1881,7 @@ export default function App() {
           {successfulRuns.length > 0 && (
             <>
               <div className="record-section-title">
-                <span>성공 Run</span>
+                <span>이전 성공 기록</span>
                 <strong>{successfulRuns.length}</strong>
               </div>
               {successfulRuns.slice(0, 6).map((run) => {
@@ -1821,28 +1897,28 @@ export default function App() {
           )}
           <div className="record-section-title muted">
             <span>최근 Operation</span>
-            <strong>{operations.length}</strong>
+            <strong>{campaignOperations.length}</strong>
           </div>
-          {operations.slice(0, 6).map((operation) => (
+          {campaignOperations.slice(0, 6).map((operation) => (
             <button key={operation.operation_id} type="button" onClick={() => { setSelectedOperation(operation); setSelectedRun(null); }}>
               <strong>{operation.operation_id}</strong>
               <span>{operation.campaign_id} · {getStatusLabel(operation.status)} · {operation.created_at || "-"}</span>
             </button>
           ))}
-          {operations.length === 0 && <p className="empty">아직 Operation 기록이 없습니다.</p>}
+          {campaignOperations.length === 0 && <p className="empty">아직 Operation 기록이 없습니다.</p>}
         </div>
         <div className="run-list legacy-run-list">
           <div className="record-section-title muted">
-            <span>최근 Run</span>
-            <strong>{runs.length}</strong>
+            <span>이전 Runner 기록</span>
+            <strong>{campaignRuns.length}</strong>
           </div>
-          {runs.slice(0, 8).map((run) => (
+          {campaignRuns.slice(0, 8).map((run) => (
             <button key={run.execution_id} type="button" onClick={() => loadRun(run.execution_id)}>
               <strong>{run.execution_id}</strong>
               <span>{run.campaign_id} · {run.started_at || "-"}</span>
             </button>
           ))}
-          {runs.length === 0 && <p className="empty">아직 실행 기록이 없습니다.</p>}
+          {campaignRuns.length === 0 && <p className="empty">아직 이전 Runner 기록이 없습니다.</p>}
         </div>
       </div>
     );
@@ -2058,7 +2134,7 @@ export default function App() {
           <div className="evidence-panel">
             <div className="panel-heading horizontal">
               <div>
-                <span>Run Result</span>
+                <span>Operation Result</span>
                 <strong>{latestOperation?.operation_id || latestRun?.execution_id || "결과 없음"}</strong>
               </div>
             </div>
@@ -2098,6 +2174,7 @@ export default function App() {
                 const coverageFields = getCoverageFields(step, detectionStatus);
                 const evidenceKey = step.job_id || step.execution_id || `${step.order}-${step.technique_id || index}`;
                 const isExpanded = expandedEvidenceKey === evidenceKey;
+                const executionLabel = isNormalStep(step) ? "기준 성공" : getExecutionLabel(executionStatus);
                 return (
                   <div key={evidenceKey} className={`evidence-row ${isExpanded ? "expanded" : ""}`}>
                     <button
@@ -2107,7 +2184,7 @@ export default function App() {
                       aria-expanded={isExpanded}
                     >
                       <div className="result-pill-stack">
-                        <span className={`execution-pill ${executionStatus}`}>{getExecutionLabel(executionStatus)}</span>
+                        <span className={`execution-pill ${isNormalStep(step) ? "baseline" : executionStatus}`}>{executionLabel}</span>
                         <span className={`detection-pill ${detectionStatus}`}>{getDetectionLabel(detectionStatus)}</span>
                       </div>
                       <div className="evidence-summary-content">

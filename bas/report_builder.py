@@ -50,6 +50,7 @@ DETECTION_RESULT_LABELS = {
     "not_checked": "확인 안 됨",
     "blocked": "차단됨",
     "execution_failed": "실행 실패",
+    "baseline": "기준선",
 }
 
 DETECTION_STATUS_ALIASES = {
@@ -78,6 +79,8 @@ DETECTION_STATUS_ALIASES = {
     "차단됨": "blocked",
     "execution_failed": "execution_failed",
     "실행 실패": "execution_failed",
+    "baseline": "baseline",
+    "기준선": "baseline",
 }
 
 COVERAGE_STATUS_LABELS = {
@@ -88,6 +91,7 @@ COVERAGE_STATUS_LABELS = {
     "not_checked": "확인 필요",
     "blocked": "차단",
     "execution_failed": "실행 실패",
+    "baseline": "기준선",
 }
 
 EXECUTION_STATUS_LABELS = {
@@ -116,6 +120,7 @@ ACTION_LABELS = {
     "review_safety_or_prevention_control": "안전 게이트 또는 차단 정책 검토",
     "rerun_real_or_implement_module": "Real 모드 재실행 또는 모듈 구현",
     "review_detection_logic": "탐지 로직 검토",
+    "baseline_only": "기준선 유지",
 }
 
 ACTION_REASONS_KO = {
@@ -127,6 +132,7 @@ ACTION_REASONS_KO = {
     "review_safety_or_prevention_control": "정상 탐지 검증 전에 실행이 차단되었습니다.",
     "rerun_real_or_implement_module": "실제 실행 증거가 아니므로 Real 모드 검증이 필요합니다.",
     "review_detection_logic": "알림 증거와 원본 로그 샘플의 매칭 조건을 다시 확인해야 합니다.",
+    "baseline_only": "정상 기준선 단계이므로 공격 탐지 점수에서 제외됩니다.",
 }
 
 TACTIC_ORDER = [
@@ -360,6 +366,18 @@ def classify_gap(detection_status, source_checked, source_matched, alert_checked
 
 def classify_detection_status(step):
     execution_status = canonical_execution_status(step)
+
+    if is_normal_step(step):
+        return {
+            "execution_status": execution_status,
+            "detection_status": "baseline",
+            "source_status": "not_scored",
+            "alert_status": "not_scored",
+            "source_event_count": event_count(step.get("elk_check") or {}),
+            "alert_count": event_count(get_alert_check(step.get("elk_check") or {})),
+            "gap_type": None,
+        }
+
     elk_check = step.get("elk_check") or {}
     alert_check = get_alert_check(elk_check)
     source_checked = is_checked(elk_check)
@@ -429,6 +447,11 @@ def classify_detection_status(step):
 def recommendation_for(step, classification):
     status = classification["detection_status"]
 
+    if status == "baseline":
+        return {
+            "action": "baseline_only",
+            "reason": "Normal baseline step is retained for context but excluded from attack detection scoring.",
+        }
     if classification["execution_status"] == "simulated":
         return {
             "action": "rerun_real_or_implement_module",
@@ -892,16 +915,21 @@ def risk_weight(risk):
     }.get(str(risk or "medium").lower(), 1.2)
 
 
+def is_normal_step(step):
+    return str((step or {}).get("phase") or "").lower() == "normal"
+
+
 def calculate_metrics(steps):
-    attack_steps = [step for step in steps if step.get("technique_id")]
+    scored_steps = [step for step in steps if not is_normal_step(step)]
+    attack_steps = [step for step in scored_steps if step.get("technique_id")]
     real_attack_steps = [
         step for step in attack_steps
         if step.get("execution_status") not in ("simulated", "failed", "blocked")
     ]
-    executed_steps = [step for step in steps if step.get("execution_status") in ("success", "simulated")]
-    failed_steps = [step for step in steps if step.get("execution_status") == "failed"]
-    blocked_steps = [step for step in steps if step.get("execution_status") == "blocked"]
-    simulated_steps = [step for step in steps if step.get("execution_status") == "simulated"]
+    executed_steps = [step for step in attack_steps if step.get("execution_status") in ("success", "simulated")]
+    failed_steps = [step for step in attack_steps if step.get("execution_status") == "failed"]
+    blocked_steps = [step for step in attack_steps if step.get("execution_status") == "blocked"]
+    simulated_steps = [step for step in attack_steps if step.get("execution_status") == "simulated"]
 
     source_matched = [step for step in real_attack_steps if step.get("source_status") == "matched"]
     alert_matched = [step for step in real_attack_steps if step.get("alert_status") == "matched"]
@@ -917,7 +945,7 @@ def calculate_metrics(steps):
     )
     coverage_score = (weighted_score / weighted_total) if weighted_total else 0
     real_count = len(real_attack_steps)
-    total_count = len(steps)
+    total_count = len(attack_steps)
     operational_score = len(executed_steps) / total_count if total_count else 0
     telemetry_score = len(source_matched) / real_count if real_count else 0
     alert_score = len(alert_matched) / real_count if real_count else 0
@@ -931,6 +959,7 @@ def calculate_metrics(steps):
     return {
         "final_score": round(final_score),
         "total_steps": total_count,
+        "baseline_steps": len(steps) - len(scored_steps),
         "attack_steps": len(attack_steps),
         "real_attack_steps": real_count,
         "executed_steps": len(executed_steps),
@@ -973,6 +1002,8 @@ def generate_backlog(steps):
     backlog = []
 
     for step in steps:
+        if is_normal_step(step):
+            continue
         if not step.get("technique_id"):
             continue
         if step.get("detection_status") == "detected":
@@ -1002,6 +1033,8 @@ def build_recommendations(steps):
     recommendations = []
 
     for step in steps:
+        if is_normal_step(step):
+            continue
         if not step.get("technique_id"):
             continue
         recommendation = step.get("recommendation", {})
@@ -1028,6 +1061,8 @@ def build_mitre_summary(steps):
     }
 
     for step in steps:
+        if is_normal_step(step):
+            continue
         technique_id = step.get("technique_id")
         if not technique_id:
             continue

@@ -925,6 +925,57 @@ export default function App() {
     return selectedIds.map((id) => byId.get(id)).filter(Boolean);
   }, [library, campaign, campaignId, selectedIds]);
 
+  const stepLookup = useMemo(() => {
+    const byId = new Map();
+    const byCampaignOrder = new Map();
+
+    [...library, ...normalizeList(campaign?.flow)].forEach((step) => {
+      const sourceId = getStepSourceId(step, campaignId);
+      const selectionId = getStepSelectionId(step, campaignId);
+      byId.set(selectionId, step);
+      byCampaignOrder.set(`${sourceId}:${step.order}`, step);
+    });
+
+    return { byId, byCampaignOrder };
+  }, [library, campaign, campaignId]);
+
+  const dependencyIdsBySelectedId = useMemo(() => {
+    const map = new Map();
+
+    function collectDependencySteps(step) {
+      const sourceId = getStepSourceId(step, campaignId);
+      const collected = [];
+      const visited = new Set();
+
+      function visit(currentStep) {
+        normalizeList(currentStep?.depends_on_orders).forEach((order) => {
+          const key = `${sourceId}:${order}`;
+          if (visited.has(key)) return;
+          visited.add(key);
+
+          const dependencyStep = stepLookup.byCampaignOrder.get(key);
+          if (!dependencyStep) return;
+
+          visit(dependencyStep);
+          collected.push(dependencyStep);
+        });
+      }
+
+      visit(step);
+      return collected;
+    }
+
+    selectedIds.forEach((selectionId) => {
+      const step = stepLookup.byId.get(selectionId);
+      if (!step) return;
+      collectDependencySteps(step).forEach((dependencyStep) => {
+        map.set(getStepSelectionId(dependencyStep, campaignId), selectionId);
+      });
+    });
+
+    return map;
+  }, [selectedIds, stepLookup, campaignId]);
+
   const campaignOperations = useMemo(() => (
     operations.filter((operation) => !operation.campaign_id || operation.campaign_id === campaignId)
   ), [operations, campaignId]);
@@ -996,12 +1047,14 @@ export default function App() {
   const filteredLibrary = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return library.filter((step) => {
+      const selectionId = getStepSelectionId(step, campaignId);
+      const isSelected = selectedIds.includes(selectionId);
       const sourceId = getStepSourceId(step, campaignId);
       const haystack = `${step.name || ""} ${step.technique_id || ""} ${step.params?.behavior || ""}`.toLowerCase();
       const matchesSource = sourceFilter === "all" || sourceId === sourceFilter;
       const matchesPhase = phaseFilter === "all" || (step.phase || "attack") === phaseFilter;
       const matchesQuery = !normalizedQuery || haystack.includes(normalizedQuery);
-      return matchesSource && matchesPhase && matchesQuery;
+      return isSelected || (matchesSource && matchesPhase && matchesQuery);
     }).sort((left, right) => {
       const leftCompatibility = getStepCompatibility(left, target, campaignId);
       const rightCompatibility = getStepCompatibility(right, target, campaignId);
@@ -1016,7 +1069,7 @@ export default function App() {
       if (leftSource !== rightSource) return leftSource.localeCompare(rightSource);
       return (left.order || 0) - (right.order || 0);
     });
-  }, [library, target, campaignId, query, phaseFilter, sourceFilter]);
+  }, [library, target, campaignId, query, phaseFilter, sourceFilter, selectedIds]);
   const libraryEmptyMessage = error
     ? `Technique 데이터를 불러오지 못했습니다: ${error}`
     : library.length === 0
@@ -1043,6 +1096,45 @@ export default function App() {
     hasSuccessfulStep(operation) || (operation.summary?.success || operation.summary?.completed || 0) > 0
   )), [operations]);
 
+  function getDependencyStepsForStep(step) {
+    const sourceId = getStepSourceId(step, campaignId);
+    const collected = [];
+    const visited = new Set();
+
+    function visit(currentStep) {
+      normalizeList(currentStep?.depends_on_orders).forEach((order) => {
+        const key = `${sourceId}:${order}`;
+        if (visited.has(key)) return;
+        visited.add(key);
+
+        const dependencyStep = stepLookup.byCampaignOrder.get(key);
+        if (!dependencyStep) return;
+
+        visit(dependencyStep);
+        collected.push(dependencyStep);
+      });
+    }
+
+    visit(step);
+    return collected;
+  }
+
+  function expandSelectionIdsWithDependencies(selectionIds) {
+    const expandedIds = [];
+
+    selectionIds.forEach((selectionId) => {
+      const step = stepLookup.byId.get(selectionId);
+      if (!step) return;
+
+      [...getDependencyStepsForStep(step), step].forEach((candidateStep) => {
+        const candidateId = getStepSelectionId(candidateStep, campaignId);
+        if (!expandedIds.includes(candidateId)) expandedIds.push(candidateId);
+      });
+    });
+
+    return expandedIds;
+  }
+
   function toggleStep(step) {
     const compatibility = getStepCompatibility(step, target, campaignId);
     if (!compatibility.compatible) {
@@ -1053,6 +1145,11 @@ export default function App() {
     const selectionId = getStepSelectionId(step, campaignId);
     setSelectedIds((currentIds) => {
       if (currentIds.includes(selectionId)) {
+        if (dependencyIdsBySelectedId.has(selectionId)) {
+          setNotice("다른 선택 항목의 선행 조건입니다. 먼저 해당 공격 Technique을 해제해 주세요.");
+          return currentIds;
+        }
+
         setTechniqueInputs((currentInputs) => {
           const nextInputs = { ...currentInputs };
           delete nextInputs[selectionId];
@@ -1061,14 +1158,29 @@ export default function App() {
         setOpenInputIds((current) => current.filter((id) => id !== selectionId));
         return currentIds.filter((id) => id !== selectionId);
       }
-      return [...currentIds, selectionId];
+
+      const dependencySteps = getDependencyStepsForStep(step).filter((dependencyStep) => (
+        getStepCompatibility(dependencyStep, target, campaignId).compatible
+      ));
+      const nextIds = [...currentIds];
+
+      [...dependencySteps, step].forEach((candidateStep) => {
+        const candidateId = getStepSelectionId(candidateStep, campaignId);
+        if (!nextIds.includes(candidateId)) nextIds.push(candidateId);
+      });
+
+      if (dependencySteps.length > 0) {
+        setNotice(`선행 Technique ${dependencySteps.length}개를 Queue에 함께 추가했습니다.`);
+      }
+
+      return nextIds;
     });
   }
 
   function selectFilteredTechniques() {
     setSelectedIds((currentIds) => {
       const nextIds = [...currentIds];
-      selectableFilteredSelectionIds.forEach((id) => {
+      expandSelectionIdsWithDependencies(selectableFilteredSelectionIds).forEach((id) => {
         if (!nextIds.includes(id)) nextIds.push(id);
       });
       return nextIds;
@@ -1397,6 +1509,7 @@ export default function App() {
             {filteredLibrary.map((step) => {
               const selectionId = getStepSelectionId(step, campaignId);
               const selected = selectedIds.includes(selectionId);
+              const autoIncluded = selected && dependencyIdsBySelectedId.has(selectionId);
               const phase = step.phase || "attack";
               const safety = getSafetyProfile(step);
               const compatibility = getStepCompatibility(step, target, campaignId);
@@ -1404,7 +1517,7 @@ export default function App() {
                 <button
                   key={selectionId}
                   type="button"
-                  className={`technique-card ${phase} ${selected ? "selected" : ""} ${compatibility.compatible ? "" : "unavailable"}`}
+                  className={`technique-card ${phase} ${selected ? "selected" : ""} ${autoIncluded ? "auto-included" : ""} ${compatibility.compatible ? "" : "unavailable"}`}
                   onClick={() => toggleStep(step)}
                   disabled={!compatibility.compatible}
                   title={compatibility.compatible ? "" : compatibility.reason}
@@ -1412,6 +1525,7 @@ export default function App() {
                   <span className="phase-line">
                     <em>{phase === "normal" ? "Normal" : "Attack"}</em>
                     <b>{step.technique_id || "STEP"}</b>
+                    {autoIncluded && <i className="dependency-badge">선행 조건</i>}
                     {!compatibility.compatible && <i className="unavailable-badge">적용 불가</i>}
                     {isSubTechnique(step) && <i className="subtechnique-badge">서브테크닉</i>}
                   </span>
@@ -1475,13 +1589,15 @@ export default function App() {
               const inputDefs = normalizeList(step.inputs);
               const isOpen = openInputIds.includes(selectionId);
               const safety = getSafetyProfile(step);
+              const autoIncluded = dependencyIdsBySelectedId.has(selectionId);
               return (
-                <div key={selectionId} className="queue-card">
+                <div key={selectionId} className={`queue-card ${autoIncluded ? "auto-included" : ""}`}>
                   <div className="queue-card-head">
                     <span>{index + 1}</span>
                     <div>
                       <strong>
                         {getTechniqueLabel(step)}
+                        {autoIncluded && <i className="dependency-badge inline">선행 조건</i>}
                         {isSubTechnique(step) && <i className="subtechnique-badge inline">서브테크닉</i>}
                       </strong>
                       <small>{getStepAssetId(step).toUpperCase()} · {getStepRole(step)}</small>

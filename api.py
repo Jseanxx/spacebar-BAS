@@ -254,6 +254,13 @@ def load_technique_library():
     return techniques
 
 
+def get_step_selection_value(selection, key, default=None):
+    if isinstance(selection, dict):
+        return selection.get(key, default)
+
+    return getattr(selection, key, default)
+
+
 def resolve_selected_steps(selected_steps):
     """
     selected_steps payload를 실제 step 객체 목록으로 변환합니다.
@@ -271,18 +278,21 @@ def resolve_selected_steps(selected_steps):
     invalid_steps = []
 
     for selection in selected_steps:
-        selection_id = f"{selection.campaign_id}:{selection.order}"
+        campaign_id = get_step_selection_value(selection, "campaign_id")
+        order = get_step_selection_value(selection, "order")
+        inputs = get_step_selection_value(selection, "inputs", {}) or {}
+        selection_id = f"{campaign_id}:{order}"
         step = library.get(selection_id)
 
         if not step:
             invalid_steps.append({
-                "campaign_id": selection.campaign_id,
-                "order": selection.order,
+                "campaign_id": campaign_id,
+                "order": order,
             })
             continue
 
         step_copy = dict(step)
-        step_copy["selected_inputs"] = selection.inputs or {}
+        step_copy["selected_inputs"] = inputs
         resolved.append(step_copy)
 
     if invalid_steps:
@@ -295,6 +305,73 @@ def resolve_selected_steps(selected_steps):
         )
 
     return resolved
+
+
+def expand_selected_steps_with_dependencies(selected_steps):
+    selected = resolve_selected_steps(selected_steps)
+    if selected is None:
+        return None, [], []
+
+    selected_by_campaign = {}
+    selected_order = []
+    selected_inputs = {}
+
+    for step in selected:
+        source_campaign_id = step.get("source_campaign_id") or step.get("campaign_id")
+        if source_campaign_id not in selected_by_campaign:
+            selected_by_campaign[source_campaign_id] = []
+            selected_order.append(source_campaign_id)
+
+        order = step.get("order")
+        selected_by_campaign[source_campaign_id].append(order)
+        selected_inputs[(source_campaign_id, order)] = step.get("selected_inputs", {})
+
+    expanded = []
+    auto_included_steps = []
+
+    for source_campaign_id in selected_order:
+        campaign = load_campaign(source_campaign_id)
+        campaign_name = campaign.get("campaign_name")
+        campaign_steps = []
+
+        for step in load_sorted_steps(campaign):
+            step_copy = dict(step)
+            step_copy["source_campaign_id"] = source_campaign_id
+            step_copy["source_campaign_name"] = campaign_name
+            step_copy["selection_id"] = f"{source_campaign_id}:{step.get('order')}"
+            campaign_steps.append(step_copy)
+
+        requested_orders = selected_by_campaign[source_campaign_id]
+        resolved_orders = resolve_dependencies(campaign_steps, requested_orders)
+        requested_order_set = set(requested_orders)
+
+        for step in campaign_steps:
+            order = step.get("order")
+            if order not in resolved_orders:
+                continue
+
+            step_copy = dict(step)
+            step_copy["selected_inputs"] = selected_inputs.get((source_campaign_id, order), {})
+            step_copy["auto_included"] = order not in requested_order_set
+            expanded.append(step_copy)
+
+            if step_copy["auto_included"]:
+                auto_included_steps.append({
+                    "campaign_id": source_campaign_id,
+                    "order": order,
+                    "name": step.get("name"),
+                    "required_by_orders": [
+                        requested_order
+                        for requested_order in requested_orders
+                        if order in resolve_dependencies(campaign_steps, [requested_order])
+                        and order != requested_order
+                    ],
+                })
+
+    return expanded, auto_included_steps, [
+        step.get("order")
+        for step in expanded
+    ]
 
 
 def get_step_behavior(step):
@@ -387,7 +464,7 @@ def build_execution_plan(campaign_id, selected_orders=None, selected_steps=None,
 
     campaign = load_campaign(campaign_id)
 
-    custom_steps = resolve_selected_steps(selected_steps)
+    custom_steps, auto_included_steps, final_custom_orders = expand_selected_steps_with_dependencies(selected_steps)
     if custom_steps is not None:
         return {
             "campaign_id": campaign.get("campaign_id"),
@@ -400,12 +477,14 @@ def build_execution_plan(campaign_id, selected_orders=None, selected_steps=None,
                     "inputs": step.get("selected_inputs", {}),
                 }
                 for step in custom_steps
+                if not step.get("auto_included")
             ],
-            "auto_included_orders": [],
-            "final_orders": [
+            "auto_included_orders": [
                 step.get("order")
-                for step in custom_steps
+                for step in auto_included_steps
             ],
+            "auto_included_steps": auto_included_steps,
+            "final_orders": final_custom_orders,
             "steps": custom_steps,
             "operation_mode": "custom",
         }
@@ -828,9 +907,9 @@ def build_asset_discovery(target_id):
 
 def dump_step_selection(selection):
     return {
-        "campaign_id": selection.campaign_id,
-        "order": selection.order,
-        "inputs": selection.inputs or {},
+        "campaign_id": get_step_selection_value(selection, "campaign_id"),
+        "order": get_step_selection_value(selection, "order"),
+        "inputs": get_step_selection_value(selection, "inputs", {}) or {},
     }
 
 
@@ -1635,6 +1714,7 @@ def create_operation(request: OperationRequest):
             "execution_host": (step.get("params") or {}).get("execution_host"),
             "execution_location": (step.get("params") or {}).get("execution_location"),
             "inputs": step.get("selected_inputs", {}),
+            "auto_included": bool(step.get("auto_included")),
             "status": "pending",
             "agent_id": None,
             "job_id": None,
@@ -1664,6 +1744,8 @@ def create_operation(request: OperationRequest):
         "finished_at": None,
         "requested_orders": plan.get("requested_orders", []),
         "requested_steps": plan.get("requested_steps", []),
+        "auto_included_orders": plan.get("auto_included_orders", []),
+        "auto_included_steps": plan.get("auto_included_steps", []),
         "final_steps": final_steps,
         "sub_jobs": [],
         "blocked_roles": sorted(set(missing_roles)),
@@ -2244,20 +2326,28 @@ def preview_run(request: PreviewRequest):
 def create_run(request: RunRequest):
     try:
         # 실제 실행 전에 selected_orders가 유효한지 먼저 검증합니다.
-        build_execution_plan(
+        plan = build_execution_plan(
             campaign_id=request.campaign_id,
             selected_orders=request.selected_orders,
             selected_steps=request.selected_steps,
             include_normal=request.include_normal,
         )
+        selected_steps = [
+            {
+                "campaign_id": step.get("source_campaign_id") or step.get("campaign_id") or request.campaign_id,
+                "order": step.get("order"),
+                "inputs": step.get("selected_inputs", {}),
+            }
+            for step in plan.get("steps", [])
+        ] if request.selected_steps else [
+            dump_step_selection(selection)
+            for selection in request.selected_steps or []
+        ]
 
         result, output_path = run_campaign(
             campaign_id=request.campaign_id,
             selected_orders=request.selected_orders,
-            selected_steps=[
-                dump_step_selection(selection)
-                for selection in request.selected_steps or []
-            ],
+            selected_steps=selected_steps,
             include_normal=request.include_normal,
         )
 

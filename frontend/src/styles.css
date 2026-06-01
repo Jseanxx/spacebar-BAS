@@ -1493,8 +1493,8 @@ button {
 .asset-node.risk-critical,
 .asset-node.risk-high,
 .asset-node.risk-medium {
-  width: 212px;
-  min-height: 254px;
+  width: 176px;
+  min-height: 218px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1519,23 +1519,23 @@ button {
   position: relative;
   display: grid;
   place-items: center;
-  width: 104px;
-  height: 72px;
+  width: 92px;
+  height: 64px;
   border: 4px solid #334155;
   border-radius: 9px;
   background: #f8fafc;
   color: #334155;
   box-shadow: 0 4px 0 rgba(15, 23, 42, 0.12);
-  margin-bottom: 34px;
+  margin-bottom: 28px;
 }
 
 .topology-device::before {
   content: "";
   position: absolute;
   left: 50%;
-  bottom: -25px;
-  width: 20px;
-  height: 25px;
+  bottom: -22px;
+  width: 18px;
+  height: 22px;
   transform: translateX(-50%);
   border: 0;
   border-radius: 0;
@@ -1546,8 +1546,8 @@ button {
   content: "";
   position: absolute;
   left: 50%;
-  bottom: -37px;
-  width: 70px;
+  bottom: -32px;
+  width: 62px;
   height: 7px;
   transform: translateX(-50%);
   border-radius: 999px;
@@ -1564,29 +1564,29 @@ button {
 
 .os-icon-image {
   display: block !important;
-  width: 54px;
-  height: 54px;
+  width: 48px;
+  height: 48px;
   object-fit: contain;
 }
 
 .os-icon-windows {
+  width: 44px;
+  height: 44px;
+}
+
+.os-icon-linux {
+  width: 54px;
+  height: 54px;
+}
+
+.os-icon-k8s {
   width: 50px;
   height: 50px;
 }
 
-.os-icon-linux {
-  width: 62px;
-  height: 62px;
-}
-
-.os-icon-k8s {
-  width: 58px;
-  height: 58px;
-}
-
 .os-icon-cloud {
-  width: 74px;
-  height: 46px;
+  width: 64px;
+  height: 40px;
   padding: 6px 8px;
   border: 3px solid #f97316;
   border-radius: 999px;
@@ -1594,13 +1594,13 @@ button {
 }
 
 .log-mark {
-  width: 72px;
-  height: 44px;
+  width: 64px;
+  height: 38px;
   border: 3px solid #4f46e5;
   border-radius: 8px;
   background: #eef2ff;
   color: #3730a3;
-  font-size: 20px !important;
+  font-size: 18px !important;
   font-weight: 950;
 }
 
@@ -1636,7 +1636,7 @@ button {
 .asset-node strong {
   position: relative;
   z-index: 3;
-  width: 206px;
+  width: 172px;
   box-sizing: border-box;
   padding: 1px 5px;
   border-radius: 4px;
@@ -1656,7 +1656,7 @@ button {
   position: relative;
   z-index: 3;
   display: block;
-  width: 206px;
+  width: 172px;
   box-sizing: border-box;
   padding: 1px 5px;
   border-radius: 4px;
@@ -1681,10 +1681,10 @@ button {
   position: relative;
   z-index: 3;
   display: grid;
-  width: 206px;
+  width: 172px;
   box-sizing: border-box;
-  gap: 3px;
-  padding: 7px 8px;
+  gap: 2px;
+  padding: 5px 6px;
   border: 1px solid rgba(148, 163, 184, 0.45);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.9);
@@ -1693,13 +1693,13 @@ button {
 
 .asset-facts span {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr);
-  gap: 6px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 5px;
   min-width: 0;
   color: #334155;
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 850;
-  line-height: 1.2;
+  line-height: 1.12;
   text-align: left;
 }
 
@@ -1717,25 +1717,25 @@ button {
   justify-content: center;
   flex-wrap: wrap;
   gap: 5px;
-  width: 206px;
+  width: 172px;
 }
 
 .asset-state-row em {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 24px;
+  min-height: 20px;
   max-width: 100%;
-  padding: 5px 7px;
+  padding: 3px 5px;
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 8.5px;
   line-height: 1;
   white-space: nowrap;
 }
 
 .node-ring {
-  right: 37px;
-  top: 34px;
+  right: 31px;
+  top: 31px;
   z-index: 2;
   width: 14px;
   height: 14px;

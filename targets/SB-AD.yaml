@@ -120,7 +120,7 @@ assets:
     criticality: high
     position:
       left: 61.5
-      top: 74
+      top: 77.5
     controls: [kibana_rules]
 
 security_controls:

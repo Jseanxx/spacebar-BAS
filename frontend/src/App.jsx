@@ -15,11 +15,24 @@ const PANELS = [
 ];
 
 const ASSET_POSITIONS = {
-  attacker: { left: 14, top: 48 },
-  pc01: { left: 33, top: 42 },
+  attacker: { left: 14, top: 50 },
+  pc01: { left: 33, top: 48 },
   fs01: { left: 59, top: 52 },
-  dc01: { left: 80, top: 28 },
-  elk: { left: 82, top: 68 },
+  dc01: { left: 80, top: 34 },
+  elk: { left: 82, top: 76 },
+};
+
+const MAP_POSITION_OVERRIDES = {
+  "SB-AD": {
+    fs01: { left: 61.5, top: 34 },
+    elk: { left: 61.5, top: 77.5 },
+  },
+  "SB-05": {
+    "sb05-kubernetes": { left: 37.5, top: 34 },
+    "prod-platform": { left: 37.5, top: 78 },
+    "sb05-elk": { left: 85.5, top: 34 },
+    "cloudtrail-sqs-pipeline": { left: 85.5, top: 78 },
+  },
 };
 
 const ASSET_FALLBACKS = [
@@ -32,6 +45,12 @@ const ASSET_FALLBACKS = [
 
 function normalizeList(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function getMapPositionOverride(targetId, assetId, fallbackPosition) {
+  const campaignId = String(targetId || "").toUpperCase();
+  const normalizedAssetId = String(assetId || "").toLowerCase();
+  return MAP_POSITION_OVERRIDES[campaignId]?.[normalizedAssetId] || fallbackPosition;
 }
 
 function readDashboardCache() {
@@ -799,18 +818,19 @@ export default function App() {
     return sourceAssets.map((asset, index) => {
       const id = String(asset.asset_id || `asset-${index}`).toLowerCase();
       const agent = agentByAsset.get(id) || agentByAsset.get(String(asset.agent_role || "").toLowerCase()) || asset.agent;
+      const basePosition = asset.position || ASSET_POSITIONS[id] || {
+        left: 12 + (index % 4) * 22,
+        top: 24 + Math.floor(index / 4) * 28,
+      };
       return {
         ...asset,
         asset_id: id,
         agent,
         agentStatus: asset.agent_required ? (agent?.status || "offline") : "observe",
-        position: asset.position || ASSET_POSITIONS[id] || {
-          left: 12 + (index % 4) * 22,
-          top: 24 + Math.floor(index / 4) * 28,
-        },
+        position: getMapPositionOverride(target?.target_id || campaignId, id, basePosition),
       };
     });
-  }, [target, agentByAsset]);
+  }, [target, campaignId, agentByAsset]);
 
   const assetPositionById = useMemo(() => {
     const map = new Map();

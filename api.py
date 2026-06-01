@@ -2115,9 +2115,17 @@ def submit_job_result(agent_id: str, job_id: str, request: JobResultRequest, htt
 @app.get("/campaigns")
 def list_campaigns():
     campaigns = []
+    errors = []
 
-    for path in CAMPAIGNS_DIR.glob("*.yaml"):
-        campaign = load_campaign(path.stem)
+    for path in sorted(CAMPAIGNS_DIR.glob("*.yaml")):
+        try:
+            campaign = load_campaign(path.stem)
+        except Exception as exc:
+            errors.append({
+                "campaign_file": path.name,
+                "error": str(exc),
+            })
+            continue
 
         campaigns.append({
             "campaign_id": campaign.get("campaign_id"),
@@ -2127,7 +2135,8 @@ def list_campaigns():
         })
 
     return {
-        "campaigns": campaigns
+        "campaigns": campaigns,
+        "errors": errors,
     }
 
 

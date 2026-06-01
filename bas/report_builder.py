@@ -37,6 +37,11 @@ RISK_LABELS = {
     "critical": "치명",
 }
 
+DELETE_ACTION_PATTERN = re.compile(
+    r"remove-item|\brm\s+-[a-z]*f|\bdel\s+|kubectl\s+delete|aws\s+s3\s+rm|\brmdir\b|remove-scheduledtask|schtasks\b.*\bdelete\b",
+    re.IGNORECASE,
+)
+
 DETECTION_RESULT_LABELS = {
     "detected": "탐지됨",
     "logged_only": "로그만 확인",
@@ -536,12 +541,58 @@ def expected_log(step):
 
 
 def risk_level(step):
+    delete_impact = delete_action_impact_level(step)
+    if delete_impact:
+        rank = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+        raw_risk = str(step.get("risk") or "medium").lower()
+        return delete_impact if rank.get(delete_impact, 0) > rank.get(raw_risk, 0) else raw_risk
     if step.get("phase") == "normal":
         return "low"
     return str(step.get("risk") or "medium").lower()
 
 
+def step_has_delete_action(step):
+    return bool(delete_action_impact_level(step))
+
+
+def delete_action_impact_level(step):
+    params = get_step_params(step)
+    command_text = json.dumps(
+        [
+            params.get("commands"),
+            params.get("cleanup"),
+            step.get("commands"),
+            step.get("cleanup"),
+            params.get("behavior"),
+            step.get("name"),
+        ],
+        ensure_ascii=False,
+        default=str,
+    ).lower()
+    if not DELETE_ACTION_PATTERN.search(command_text):
+        return None
+
+    source_id = str(step.get("source_campaign_id") or step.get("campaign_id") or step.get("target") or "").upper()
+    order = step.get("order", params.get("scenario_order"))
+    try:
+        order = int(order)
+    except (TypeError, ValueError):
+        pass
+    if source_id == "SB-AD" and order == 17:
+        return "critical"
+    if any(keyword in command_text for keyword in ("lsass", "sam", "credential", "dump", "reg save", "comsvcs")):
+        return "high"
+    return "medium"
+
+
 def system_impact(step):
+    delete_impact = delete_action_impact_level(step)
+    if delete_impact == "critical":
+        return "치명 - 공유 폴더 파일 삭제 가능성, 운영환경 금지"
+    if delete_impact == "high":
+        return "높음 - 민감 임시파일 cleanup, 테스트 환경 권장"
+    if delete_impact == "medium":
+        return "중간 - BAS 임시/마커 파일 cleanup"
     if step.get("phase") == "normal":
         return "낮음 - 정상 기준 로그"
 
@@ -564,7 +615,9 @@ def clamp_percent(value):
 
 
 def estimated_impact(step):
-    if step.get("phase") == "normal":
+    delete_impact = delete_action_impact_level(step)
+
+    if step.get("phase") == "normal" and not delete_impact:
         return {
             "service_impact_percent": 2,
             "network_impact_percent": 1,
@@ -598,6 +651,7 @@ def estimated_impact(step):
         + (12 if credential_dump else 0)
         + (16 if service_execution else 0)
         + (20 if network_heavy else 0)
+        + (45 if delete_impact == "critical" else 24 if delete_impact == "high" else 10 if delete_impact == "medium" else 0)
         + (6 if gate_count > 1 else 0)
     )
     network_percent = clamp_percent(
@@ -608,7 +662,7 @@ def estimated_impact(step):
     return {
         "service_impact_percent": service_percent,
         "network_impact_percent": network_percent,
-        "basis": "risk/behavior/requires/safety_gates 기반 추정",
+        "basis": "삭제 동작 영향도 세분화 / risk/behavior/requires/safety_gates 기반 추정" if delete_impact else "risk/behavior/requires/safety_gates 기반 추정",
     }
 
 

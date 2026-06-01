@@ -438,6 +438,12 @@ function getCoverageFields(step, detectionStatus) {
 }
 
 function getStepRiskLevel(step) {
+  const deleteImpactLevel = getDeleteImpactLevel(step);
+  if (deleteImpactLevel) {
+    const rank = { low: 1, medium: 2, high: 3, critical: 4 };
+    const rawRisk = String(step?.risk || step?.params?.risk || "medium").toLowerCase();
+    return rank[deleteImpactLevel] > rank[rawRisk] ? deleteImpactLevel : rawRisk;
+  }
   if (step?.phase === "normal") return "low";
   return String(step?.risk || step?.params?.risk || "medium").toLowerCase();
 }
@@ -446,12 +452,40 @@ function getSafetyGates(step) {
   return normalizeList(step?.params?.safety_gates || step?.safety_gates);
 }
 
+function stepHasDeleteAction(step) {
+  return Boolean(getDeleteImpactLevel(step));
+}
+
+function getDeleteImpactLevel(step) {
+  const params = step?.params || {};
+  const commandText = JSON.stringify([
+    params.commands,
+    params.cleanup,
+    step?.commands,
+    step?.cleanup,
+    params.behavior,
+    step?.name,
+  ] || []).toLowerCase();
+
+  const hasDeleteCommand = /remove-item|\brm\s+-[a-z]*f|\bdel\s+|kubectl\s+delete|aws\s+s3\s+rm|\brmdir\b|remove-scheduledtask|schtasks\b.*\bdelete\b/.test(commandText);
+  if (!hasDeleteCommand) return null;
+
+  const sourceId = String(step?.source_campaign_id || step?.campaign_id || step?.target || "").toUpperCase();
+  const order = Number(step?.order ?? params.scenario_order);
+  if (sourceId === "SB-AD" && order === 17) return "critical";
+  if (/lsass|sam|credential|dump|reg save|comsvcs/.test(commandText)) return "high";
+  return "medium";
+}
+
 function clampPercent(value) {
   return Math.max(0, Math.min(95, Math.round(value)));
 }
 
 function getSafetyProfile(step) {
-  if (step?.phase === "normal") {
+  const deleteImpactLevel = getDeleteImpactLevel(step);
+  const deleteAction = Boolean(deleteImpactLevel);
+
+  if (step?.phase === "normal" && !deleteAction) {
     return {
       risk: "low",
       impact: "Low",
@@ -480,12 +514,13 @@ function getSafetyProfile(step) {
   const networkHeavy = /dos|scan|sweep|flood|spoof/.test(combined);
   const networkTouch = /network|tcp|c2|exfiltration|tool_transfer|winrm|remote/.test(combined);
 
-  const highImpact = risk === "critical" || domainCompromise || credentialDump || serviceExecution || networkHeavy;
+  const criticalImpact = deleteImpactLevel === "critical";
+  const highImpact = deleteImpactLevel === "high" || risk === "critical" || domainCompromise || credentialDump || serviceExecution || networkHeavy;
   const mediumImpact = risk === "high" || risk === "medium" || gates.length > 0 || networkTouch;
-  const impact = highImpact ? "High" : mediumImpact ? "Medium" : "Low";
-  const failurePossibility = highImpact ? "있음" : mediumImpact ? "낮음" : "없음";
+  const impact = criticalImpact ? "Critical" : highImpact ? "High" : mediumImpact ? "Medium" : "Low";
+  const failurePossibility = criticalImpact || highImpact ? "있음" : mediumImpact ? "낮음" : "없음";
   const networkLoad = networkHeavy ? "높음" : networkTouch ? "낮음" : "없음";
-  const serviceDownPossibility = networkHeavy || serviceExecution || domainCompromise ? "있음" : "N/A";
+  const serviceDownPossibility = networkHeavy || serviceExecution || domainCompromise || deleteImpactLevel === "critical" || deleteImpactLevel === "high" ? "있음" : "N/A";
   const baseRiskPercent = {
     low: 5,
     medium: 15,
@@ -498,19 +533,22 @@ function getSafetyProfile(step) {
     + (credentialDump ? 12 : 0)
     + (serviceExecution ? 16 : 0)
     + (networkHeavy ? 20 : 0)
+    + (deleteImpactLevel === "critical" ? 45 : deleteImpactLevel === "high" ? 24 : deleteImpactLevel === "medium" ? 10 : 0)
     + (gates.length > 1 ? 6 : 0),
   );
   const networkImpactPercent = clampPercent(
     (networkHeavy ? 62 : networkTouch ? 22 : 3)
     + (risk === "critical" ? 8 : risk === "high" ? 5 : 0),
   );
-  const warningRequired = impact === "High" || risk === "high" || risk === "critical" || gates.length > 1 ? "필요" : "불필요";
-  const executionRecommendation = highImpact || networkHeavy
+  const warningRequired = impact === "Critical" || impact === "High" || risk === "high" || risk === "critical" || gates.length > 1 ? "필요" : "불필요";
+  const executionRecommendation = criticalImpact
+    ? "운영환경 금지"
+    : highImpact || networkHeavy
     ? "위험 테크닉"
     : mediumImpact
       ? "테스트환경 권장"
       : "안전";
-  const className = executionRecommendation === "위험 테크닉"
+  const className = executionRecommendation === "운영환경 금지" || executionRecommendation === "위험 테크닉"
     ? "danger"
     : executionRecommendation === "테스트환경 권장"
       ? "warn"
@@ -532,11 +570,12 @@ function getSafetyProfile(step) {
 }
 
 function getImpactLabel(value) {
-  return { High: "높음", Medium: "중간", Low: "낮음" }[value] || value;
+  return { Critical: "치명", High: "높음", Medium: "중간", Low: "낮음" }[value] || value;
 }
 
 function getRecommendationShort(value) {
   return {
+    "운영환경 금지": "금지",
     "위험 테크닉": "위험",
     "테스트환경 권장": "주의",
     "안전": "안전",

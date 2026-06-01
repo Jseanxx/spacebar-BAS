@@ -3,90 +3,97 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>SpaceBar</title>
+    <title>SpaceBar IR</title>
     <style>
       :root {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, sans-serif;
-        background: #f7f8fb;
+        color-scheme: light;
+        font-family: Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f5f7fb;
         color: #111827;
       }
       * { box-sizing: border-box; }
-      body { margin: 0; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+      }
       main {
         width: min(1040px, calc(100% - 32px));
         margin: 0 auto;
-        padding: 64px 0;
+        padding: 56px 0 48px;
       }
       .top {
-        margin-bottom: 28px;
+        max-width: 860px;
       }
       .label {
-        margin: 0 0 12px;
+        margin: 0 0 16px;
         color: #2563eb;
         font-weight: 700;
         font-size: 14px;
       }
       h1 {
         margin: 0;
-        font-size: clamp(32px, 6vw, 54px);
-        line-height: 1.08;
+        font-size: clamp(34px, 5vw, 64px);
+        line-height: 1.05;
         letter-spacing: 0;
       }
       .desc {
-        margin: 18px 0 0;
+        margin: 22px 0 0;
+        max-width: 780px;
         color: #4b5563;
-        font-size: 17px;
+        font-size: 18px;
         line-height: 1.65;
       }
       .links {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 14px;
-        margin-top: 34px;
+        margin-top: 36px;
       }
       .link {
-        display: flex;
+        display: block;
         min-height: 172px;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 16px;
-        padding: 24px 22px;
-        border: 1px solid #d9dee8;
+        padding: 22px;
+        border: 1px solid #d7dde8;
         border-radius: 8px;
-        background: #fff;
+        background: rgba(255, 255, 255, 0.92);
         color: inherit;
         text-decoration: none;
-        text-align: center;
-        box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+        box-shadow: 0 14px 40px rgba(15, 23, 42, 0.08);
+        transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
       }
       .link:hover {
+        transform: translateY(-2px);
         border-color: #2563eb;
+        box-shadow: 0 18px 48px rgba(37, 99, 235, 0.13);
+      }
+      .link small {
+        display: block;
+        margin-bottom: 14px;
+        color: #2563eb;
+        font-size: 13px;
+        font-weight: 700;
       }
       .link strong {
         display: block;
-        margin-bottom: 8px;
-        font-size: 20px;
+        margin-bottom: 12px;
+        font-size: 22px;
       }
       .link span {
-        color: #667085;
-        font-size: 14px;
-        line-height: 1.45;
-      }
-      .arrow {
-        color: #2563eb;
-        font-size: 26px;
-        line-height: 1;
-        flex: 0 0 auto;
+        color: #5b6472;
+        font-size: 15px;
+        line-height: 1.55;
       }
       .foot {
-        margin-top: 30px;
+        margin-top: 34px;
+        padding-top: 20px;
+        border-top: 1px solid #d7dde8;
         color: #6b7280;
-        font-size: 12px;
+        font-size: 13px;
         line-height: 1.6;
       }
       @media (max-width: 760px) {
-        main { padding: 40px 0; }
+        main { width: min(100% - 28px, 1040px); padding-top: 38px; }
         .links { grid-template-columns: 1fr; }
         .link { min-height: auto; }
       }
@@ -96,34 +103,28 @@
     <main>
       <section class="top">
         <p class="label">KISIA Security Academy 7th · SpaceBar</p>
-        <h1>침해사고 대응 체계 구축 프로젝트</h1>
+        <h1>MITRE ATT&amp;CK® 기반 침해사고 대응 체계 구축</h1>
         <p class="desc">
-          기업형 피해 환경을 구축하고 공격 캠페인을 모델링한 뒤, ELK 탐지 체계와 BAS로
-          탐지 가능성과 대응 흐름을 검증했습니다.
+          기업형 피해 환경을 구축하고 공격 캠페인을 모델링한 뒤, ELK 기반 탐지 체계와
+          BAS 검증을 통해 탐지 가능성과 대응 흐름을 점검한 프로젝트입니다.
         </p>
       </section>
 
       <nav class="links" aria-label="산출물 바로가기">
         <a class="link" href="https://spacebar-mitre-attack-campaigns.vercel.app/" target="_blank" rel="noreferrer">
-          <div>
-            <strong>캠페인 페이지</strong>
-            <span>환경별 공격 흐름, Technique 매핑, 로그·탐지 근거</span>
-          </div>
-          <span class="arrow">›</span>
+          <small>Campaign</small>
+          <strong>캠페인 페이지</strong>
+          <span>환경별 공격 흐름, Technique 매핑, 로그·탐지 근거를 확인합니다.</span>
         </a>
         <a class="link" href="/dashboard/?campaign=SB-AD">
-          <div>
-            <strong>BAS 대시보드</strong>
-            <span>공격 검증 실행, Agent 상태, ELK 탐지 결과, BAS 리포트</span>
-          </div>
-          <span class="arrow">›</span>
+          <small>BAS</small>
+          <strong>BAS 대시보드</strong>
+          <span>공격 검증 실행, Agent 상태, ELK 탐지 결과와 리포트를 확인합니다.</span>
         </a>
         <a class="link" href="/reports/">
-          <div>
-            <strong>보고서 바로가기</strong>
-            <span>침해사고 분석 보고서와 탐지·대응 산출물 모음</span>
-          </div>
-          <span class="arrow">›</span>
+          <small>Report</small>
+          <strong>분석 보고서</strong>
+          <span>침해사고 분석, 탐지 공백, 대응 플레이북 산출물을 정리합니다.</span>
         </a>
       </nav>
 

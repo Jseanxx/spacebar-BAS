@@ -3,16 +3,21 @@ set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/spacebar-BAS}"
 WEB_DIR="${WEB_DIR:-/var/www/spacebar-bas}"
+LANDING_DIR="${LANDING_DIR:-/var/www/spacebar-landing}"
+ACME_DIR="${ACME_DIR:-/var/www/letsencrypt}"
 ENV_DIR="${ENV_DIR:-/etc/spacebar-bas}"
 ARCHIVE="${SPACEBAR_BAS_ARCHIVE:-/tmp/spacebar-bas-deploy.tar.gz}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+PUBLIC_DOMAIN="${BAS_PUBLIC_DOMAIN:-kisia.kro.kr}"
+CERT_PATH="/etc/letsencrypt/live/${PUBLIC_DOMAIN}/fullchain.pem"
+CERT_KEY_PATH="/etc/letsencrypt/live/${PUBLIC_DOMAIN}/privkey.pem"
 
 if [[ ! -f "${ARCHIVE}" ]]; then
   echo "Deploy archive not found: ${ARCHIVE}" >&2
   exit 1
 fi
 
-install -d -m 0755 "${APP_DIR}" "${WEB_DIR}" "${ENV_DIR}"
+install -d -m 0755 "${APP_DIR}" "${WEB_DIR}" "${LANDING_DIR}" "${ACME_DIR}" "${ENV_DIR}"
 tar -xzf "${ARCHIVE}" -C "${APP_DIR}"
 
 cd "${APP_DIR}"
@@ -28,6 +33,11 @@ if [[ -d frontend/dist ]]; then
 else
   echo "frontend/dist is missing from deploy archive" >&2
   exit 1
+fi
+
+if [[ -d deploy/aws/landing ]]; then
+  find "${LANDING_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  cp -a deploy/aws/landing/. "${LANDING_DIR}/"
 fi
 
 touch "${ENV_DIR}/spacebar-bas.env"
@@ -55,16 +65,61 @@ fi
 
 if command -v nginx >/dev/null 2>&1; then
   NGINX_SITE="${NGINX_SITE:-/etc/nginx/sites-available/spacebar-bas}"
+  if [[ -f "${CERT_PATH}" && -f "${CERT_KEY_PATH}" ]]; then
   cat > "${NGINX_SITE}" <<'NGINX'
 server {
-    listen 443 default_server;
+    listen 80 default_server;
     server_name _;
-    root /var/www/spacebar-bas;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl default_server;
+    http2 on;
+    server_name _;
+    root /var/www/spacebar-landing;
     index index.html;
     client_max_body_size 20m;
 
+    ssl_certificate /etc/letsencrypt/live/kisia.kro.kr/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/kisia.kro.kr/privkey.pem;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+
+    location = /dashboard {
+        return 301 /dashboard/;
+    }
+
+    location /dashboard/ {
+        auth_basic "Spacebar BAS v2";
+        auth_basic_user_file /etc/spacebar-bas/htpasswd;
+        alias /var/www/spacebar-bas/;
+        try_files $uri $uri/ /dashboard/index.html;
+    }
+
+    location /assets/ {
+        alias /var/www/spacebar-bas/assets/;
+    }
+
+    location = /favicon.svg {
+        alias /var/www/spacebar-bas/favicon.svg;
+    }
+
+    location = /icons.svg {
+        alias /var/www/spacebar-bas/icons.svg;
+    }
+
     location = /api/agents {
-        auth_basic "Spacebar BAS";
+        auth_basic "Spacebar BAS v2";
         auth_basic_user_file /etc/spacebar-bas/htpasswd;
         proxy_pass http://127.0.0.1:8000/agents;
         proxy_http_version 1.1;
@@ -86,7 +141,7 @@ server {
     }
 
     location /api/ {
-        auth_basic "Spacebar BAS";
+        auth_basic "Spacebar BAS v2";
         auth_basic_user_file /etc/spacebar-bas/htpasswd;
         proxy_pass http://127.0.0.1:8000/;
         proxy_http_version 1.1;
@@ -98,12 +153,87 @@ server {
     }
 
     location / {
-        auth_basic "Spacebar BAS";
-        auth_basic_user_file /etc/spacebar-bas/htpasswd;
-        try_files $uri $uri/ /index.html;
+        try_files $uri $uri/ =404;
     }
 }
 NGINX
+  else
+  cat > "${NGINX_SITE}" <<'NGINX'
+server {
+    listen 80 default_server;
+    listen 443 default_server;
+    server_name _;
+    root /var/www/spacebar-landing;
+    index index.html;
+    client_max_body_size 20m;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+
+    location = /dashboard {
+        return 301 /dashboard/;
+    }
+
+    location /dashboard/ {
+        auth_basic "Spacebar BAS v2";
+        auth_basic_user_file /etc/spacebar-bas/htpasswd;
+        alias /var/www/spacebar-bas/;
+        try_files $uri $uri/ /dashboard/index.html;
+    }
+
+    location /assets/ {
+        alias /var/www/spacebar-bas/assets/;
+    }
+
+    location = /favicon.svg {
+        alias /var/www/spacebar-bas/favicon.svg;
+    }
+
+    location = /icons.svg {
+        alias /var/www/spacebar-bas/icons.svg;
+    }
+
+    location = /api/agents {
+        auth_basic "Spacebar BAS v2";
+        auth_basic_user_file /etc/spacebar-bas/htpasswd;
+        proxy_pass http://127.0.0.1:8000/agents;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 180s;
+    }
+
+    location /api/agents {
+        proxy_pass http://127.0.0.1:8000/agents;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 180s;
+    }
+
+    location /api/ {
+        auth_basic "Spacebar BAS v2";
+        auth_basic_user_file /etc/spacebar-bas/htpasswd;
+        proxy_pass http://127.0.0.1:8000/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 180s;
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+NGINX
+  fi
   ln -sf "${NGINX_SITE}" /etc/nginx/sites-enabled/spacebar-bas
   nginx -t
 fi

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SpaceBar IR</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f5f7fb;
+        color: #111827;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+      }
+      main {
+        width: min(1040px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 56px 0 48px;
+      }
+      .eyebrow {
+        color: #2563eb;
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: 0;
+        margin: 0 0 16px;
+      }
+      h1 {
+        margin: 0;
+        max-width: 860px;
+        font-size: clamp(34px, 5vw, 64px);
+        line-height: 1.05;
+        letter-spacing: 0;
+      }
+      .lead {
+        max-width: 780px;
+        margin: 22px 0 0;
+        color: #4b5563;
+        font-size: 18px;
+        line-height: 1.65;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 36px;
+      }
+      a.card {
+        display: block;
+        min-height: 178px;
+        padding: 22px;
+        border: 1px solid #d7dde8;
+        border-radius: 8px;
+        background: #ffffff;
+        color: inherit;
+        text-decoration: none;
+        box-shadow: 0 14px 40px rgba(15, 23, 42, 0.08);
+        transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+      }
+      a.card:hover {
+        transform: translateY(-2px);
+        border-color: #2563eb;
+        box-shadow: 0 18px 48px rgba(37, 99, 235, 0.13);
+      }
+      .card small {
+        display: block;
+        color: #2563eb;
+        font-size: 13px;
+        font-weight: 700;
+        margin-bottom: 14px;
+      }
+      .card strong {
+        display: block;
+        font-size: 22px;
+        margin-bottom: 12px;
+      }
+      .card span {
+        color: #5b6472;
+        font-size: 15px;
+        line-height: 1.55;
+      }
+      .note {
+        margin-top: 34px;
+        padding-top: 20px;
+        border-top: 1px solid #d7dde8;
+        color: #667085;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      @media (max-width: 760px) {
+        main { width: min(100% - 28px, 1040px); padding-top: 38px; }
+        .grid { grid-template-columns: 1fr; }
+        a.card { min-height: auto; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">KISIA Security Academy 7th · SpaceBar</p>
+      <h1>MITRE ATT&amp;CK® 기반 침해사고 대응 체계 구축</h1>
+      <p class="lead">
+        기업형 피해 환경을 구축하고 공격 캠페인을 모델링한 뒤, ELK 기반 탐지 체계와
+        BAS 검증을 통해 탐지 가능성과 대응 흐름을 점검한 프로젝트입니다.
+      </p>
+
+      <section class="grid" aria-label="project links">
+        <a class="card" href="https://spacebar-mitre-attack-campaigns.vercel.app/" target="_blank" rel="noreferrer">
+          <small>Campaign</small>
+          <strong>캠페인 페이지</strong>
+          <span>환경별 공격 흐름, Technique 매핑, 로그/탐지 근거를 확인합니다.</span>
+        </a>
+        <a class="card" href="/dashboard/?campaign=SB-AD">
+          <small>BAS</small>
+          <strong>BAS 대시보드</strong>
+          <span>공격 검증 실행, Agent 상태, ELK 탐지 결과와 리포트를 확인합니다.</span>
+        </a>
+        <a class="card" href="/reports/">
+          <small>Report</small>
+          <strong>분석 보고서</strong>
+          <span>침해사고 분석, 탐지 공백, 대응 플레이북 산출물을 정리합니다.</span>
+        </a>
+      </section>
+
+      <p class="note">
+        MITRE ATT&amp;CK® is a registered trademark of The MITRE Corporation.
+        This project is not affiliated with or endorsed by MITRE.
+      </p>
+    </main>
+  </body>
+</html>

@@ -80,6 +80,7 @@ jobs:
           BAS_AGENT_TOKEN: ${{ secrets.BAS_AGENT_TOKEN }}
           BAS_SBAD_ELK_USERNAME: ${{ secrets.BAS_SBAD_ELK_USERNAME }}
           BAS_SBAD_ELK_PASSWORD: ${{ secrets.BAS_SBAD_ELK_PASSWORD }}
+          BAS_PUBLIC_DOMAIN: ${{ secrets.BAS_PUBLIC_DOMAIN }}
         run: |
           {
             printf 'DASHBOARD_USER=%q\n' "${DASHBOARD_USER:-spacebar}"
@@ -87,6 +88,7 @@ jobs:
             printf 'BAS_AGENT_TOKEN=%q\n' "${BAS_AGENT_TOKEN}"
             printf 'BAS_SBAD_ELK_USERNAME=%q\n' "${BAS_SBAD_ELK_USERNAME:-elastic}"
             printf 'BAS_SBAD_ELK_PASSWORD=%q\n' "${BAS_SBAD_ELK_PASSWORD}"
+            printf 'BAS_PUBLIC_DOMAIN=%q\n' "${BAS_PUBLIC_DOMAIN:-kisia.kro.kr}"
           } > /tmp/spacebar-bas-deploy.env
           scp -i ~/.ssh/spacebar-bas.pem -P "${BAS_AWS_SSH_PORT:-2222}" -o StrictHostKeyChecking=no /tmp/spacebar-bas-deploy.tar.gz "${BAS_AWS_USER:-ubuntu}@${BAS_AWS_HOST}:/tmp/spacebar-bas-deploy.tar.gz"
           scp -i ~/.ssh/spacebar-bas.pem -P "${BAS_AWS_SSH_PORT:-2222}" -o StrictHostKeyChecking=no /tmp/spacebar-bas-deploy.env "${BAS_AWS_USER:-ubuntu}@${BAS_AWS_HOST}:/tmp/spacebar-bas-deploy.env"
@@ -104,10 +106,12 @@ jobs:
       - name: Health check
         env:
           BAS_AWS_HOST: ${{ secrets.BAS_AWS_HOST }}
+          BAS_PUBLIC_DOMAIN: ${{ secrets.BAS_PUBLIC_DOMAIN }}
           DASHBOARD_USER: ${{ secrets.BAS_DASHBOARD_USER }}
           DASHBOARD_PASSWORD: ${{ secrets.BAS_DASHBOARD_PASSWORD }}
         run: |
-          curl --fail -u "${DASHBOARD_USER:-spacebar}:${DASHBOARD_PASSWORD}" "http://${BAS_AWS_HOST}:443/api/health"
+          PUBLIC_HOST="${BAS_PUBLIC_DOMAIN:-kisia.kro.kr}"
+          curl --fail -u "${DASHBOARD_USER:-spacebar}:${DASHBOARD_PASSWORD}" "https://${PUBLIC_HOST}/api/health"
 
       - name: Revoke runner SSH access
         if: always()

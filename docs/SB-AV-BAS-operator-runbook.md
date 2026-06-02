@@ -266,13 +266,72 @@ sbav-dc01-bas-agent online
 | `failed` | 명령 실행 실패. 경로/권한/네트워크/컨텍스트 확인 필요 |
 | `simulation` | 실제 명령과 ELK 조회 없이 미리보기만 수행 |
 
-## 11. 로컬 접근 상태
+## 11. 중앙 Controller ELK 터널 점검
+
+중앙 Controller는 SB-AV ELK를 직접 외부로 열지 않고 SSH tunnel을 통해 조회한다.
+
+| 구분 | 값 |
+|---|---|
+| 중앙 Controller local endpoint | `127.0.0.1:19200` |
+| 원격 SOC endpoint | `hanguel-soc01` `127.0.0.1:9200` |
+| 접속 경로 | 중앙 Controller -> Hanguel Bastion -> SOC01 |
+| systemd unit | `spacebar-sbav-elk-tunnel.service` |
+
+정상 확인:
+
+```bash
+systemctl is-active spacebar-sbav-elk-tunnel.service
+ss -lntp | grep 19200
+curl -sS --max-time 5 http://127.0.0.1:19200/_cluster/health
+```
+
+정상이라면 `127.0.0.1:19200`이 LISTEN 상태이고 Elasticsearch cluster health가 응답한다.
+
+주의:
+
+- Hanguel Bastion public IP가 바뀌면 tunnel이 다시 깨질 수 있다.
+- 이 경우 SB-AV 실행은 성공해도 `elk_check`가 `Connection refused`로 실패한다.
+- 발표 전에는 반드시 `19200` health와 최신 Operation의 `elk_check`를 확인한다.
+- 장기적으로는 Bastion Elastic IP 또는 AWS 조회 기반 tunnel 자동 갱신이 필요하다.
+
+2026-06-02 KST 복구 시 적용한 방식:
+
+```text
+/etc/spacebar-bas/sbav_ssh_config
+```
+
+SSH config에 Bastion과 SOC host를 분리하고, systemd service는 다음 형태로 단순화했다.
+
+```text
+ssh -F /etc/spacebar-bas/sbav_ssh_config \
+  -N \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -L 127.0.0.1:19200:127.0.0.1:9200 \
+  hanguel-soc
+```
+
+검증된 최신 Operation:
+
+| 항목 | 값 |
+|---|---|
+| Operation | `op-20260602-112015-8fce4b` |
+| 실행 결과 | 24/24 success |
+| source log matched | 24/24 |
+| marker matched | 24/24 |
+| alert matched | 18/24 |
+| report score | 88 |
+
+## 12. 로컬 접근 상태
 
 집 네트워크에서는 외부 `22/tcp` 접속이 불안정하므로, Bastion에 기존 SSH `22/tcp`를 유지한 채 `443/tcp`를 추가로 열어 접근한다.
 
-현재 확인된 값:
+현재 확인된 값은 실습 환경 재기동 시 바뀔 수 있다.
 
-- Bastion Public IP: `43.201.29.242`
+2026-06-02 KST 확인값:
+
+- Bastion Public IP: `3.35.149.83`
 - Bastion Private IP: `10.60.0.10`
 - SSH user: `ec2-user`
 - SSH port: `443`
@@ -281,7 +340,7 @@ sbav-dc01-bas-agent online
 접속 예:
 
 ```bash
-ssh -p 443 -i hanguel-ad-lab-key.pem ec2-user@43.201.29.242
+ssh -p 443 -i hanguel-ad-lab-key.pem ec2-user@3.35.149.83
 ```
 
 주의:
@@ -289,3 +348,4 @@ ssh -p 443 -i hanguel-ad-lab-key.pem ec2-user@43.201.29.242
 - 기존 팀원용 `22/tcp` 보안그룹 규칙은 삭제하지 않는다.
 - 접속 경로를 추가할 때도 기존 규칙을 바꾸지 않고 필요한 IP/port만 추가한다.
 - 실환경 배포는 Bastion, PMS, WIN01, DC01 순서로 진행하며, 고위험 gate는 기본적으로 닫아 둔다.
+- Bastion public IP가 바뀌면 이 문서의 예시 IP와 중앙 Controller의 ELK tunnel 설정을 함께 갱신해야 한다.

@@ -1638,6 +1638,21 @@ button {
   background: #fff7ed;
 }
 
+.os-icon-jenkins {
+  width: 50px;
+  height: 50px;
+}
+
+.os-icon-postgresql {
+  width: 48px;
+  height: 48px;
+}
+
+.os-icon-nginx {
+  width: 50px;
+  height: 50px;
+}
+
 .log-mark {
   width: 58px;
   height: 34px;
@@ -1668,6 +1683,21 @@ button {
 
 .asset-node.node-log .topology-device {
   background: #f8fafc;
+}
+
+.asset-node.node-jenkins .topology-device {
+  border-color: #475569;
+  background: #f8fafc;
+}
+
+.asset-node.node-postgresql .topology-device {
+  border-color: #336791;
+  background: #eff6ff;
+}
+
+.asset-node.node-nginx .topology-device {
+  border-color: #159947;
+  background: #f0fdf4;
 }
 
 .asset-node.node-linux .topology-device {

@@ -16,6 +16,142 @@ capabilities:
   - app_staging
   - outbound_https
 
+segments:
+  - segment_id: operator-zone
+    name: BAS OPERATOR ZONE
+    type: external
+    description: BAS 실행자와 공격 시뮬레이션 시작 지점
+  - segment_id: cicd-zone
+    name: CI/CD ZONE
+    type: cicd
+    description: Jenkins Controller와 credential, job 설정이 위치한 구간
+  - segment_id: app-zone
+    name: APP / NGINX ZONE
+    type: application
+    description: 배포 대상 애플리케이션과 Nginx reverse proxy가 위치한 구간
+  - segment_id: data-zone
+    name: DATABASE ZONE
+    type: database
+    description: PostgreSQL 업무 데이터베이스 구간
+  - segment_id: monitoring-zone
+    name: LOG / SIEM ZONE
+    type: monitoring
+    description: Filebeat, ELK 기반 로그 수집과 탐지 검증 구간
+
+assets:
+  - asset_id: bas-operator
+    name: BAS Operator
+    hostname: operator
+    platform: Linux
+    os: Operator
+    role: BAS 실행 지점
+    segment_id: operator-zone
+    agent_required: false
+    criticality: medium
+    log_collection_status: Manual
+    log_collection_detail: BAS 실행 결과와 controller operation 기준 확인
+    controls: [manual_operator, bas_controller]
+    position:
+      left: 10.5
+      top: 50
+  - asset_id: jenkins-controller
+    name: Jenkins Controller
+    hostname: jenkins
+    private_ip: 172.31.13.239
+    platform: Jenkins
+    os: Ubuntu / Jenkins
+    role: CI/CD controller
+    segment_id: cicd-zone
+    agent_role: campaign_agent
+    agent_required: true
+    criticality: critical
+    log_collection_status: Active
+    log_collection_detail: Jenkins access/controller/build log, Filebeat
+    controls: [jenkins_access_log, jenkins_build_log, filebeat]
+    tags: [jenkins_cli, credential_metadata, deploy_key]
+    position:
+      left: 30
+      top: 48
+  - asset_id: nginx-app
+    name: Nginx / App Host
+    hostname: ip-172-31-4-70
+    private_ip: 172.31.4.70
+    platform: Nginx
+    os: Ubuntu / Nginx
+    role: Reverse proxy / application host
+    segment_id: app-zone
+    agent_required: false
+    criticality: high
+    log_collection_status: Active
+    log_collection_detail: auth.log, auditd, app path access, VPC Flow Log
+    controls: [nginx, auditd, auth_log, vpc_flow_log]
+    tags: [deploy_target, app_staging, outbound_https]
+    position:
+      left: 50
+      top: 38
+  - asset_id: postgresql-db
+    name: PostgreSQL DB
+    hostname: db
+    private_ip: db:5432
+    platform: PostgreSQL
+    os: PostgreSQL
+    role: Booking database
+    segment_id: data-zone
+    agent_required: false
+    criticality: critical
+    log_collection_status: Active
+    log_collection_detail: PostgreSQL connection/query log
+    controls: [postgresql_log, filebeat]
+    tags: [spacebar_booking, query_log]
+    position:
+      left: 69
+      top: 58
+  - asset_id: elk-siem
+    name: ELK / SIEM
+    hostname: elk
+    platform: ELK
+    os: Ubuntu / ELK
+    role: Detection backend
+    segment_id: monitoring-zone
+    agent_role: detection_backend
+    agent_required: false
+    criticality: high
+    log_collection_status: Detection Backend
+    log_collection_detail: filebeat-*, sb01-awsl-001-vpc-flowlogs
+    controls: [elasticsearch, kibana, detection_rules]
+    tags: [siem, elk, detection]
+    position:
+      left: 89
+      top: 50
+
+attack_paths:
+  - source_asset_id: bas-operator
+    target_asset_id: jenkins-controller
+    label: Jenkins CLI/API reconnaissance and account usage
+    techniques: [T1592, T1078, T1190]
+  - source_asset_id: jenkins-controller
+    target_asset_id: nginx-app
+    label: Deploy key SSH into App/Nginx host
+    techniques: [T1552.004, T1021.004]
+  - source_asset_id: nginx-app
+    target_asset_id: postgresql-db
+    label: Booking database query from App context
+    techniques: [T1213.006]
+  - source_asset_id: nginx-app
+    target_asset_id: elk-siem
+    label: Linux auditd, auth, and VPC evidence validation
+    techniques: [T1083, T1074.001, T1048.002]
+  - source_asset_id: jenkins-controller
+    target_asset_id: elk-siem
+    label: Jenkins access/build evidence validation
+    map_visible: false
+    techniques: [T1592, T1078, T1190, T1552.001, T1552.004]
+  - source_asset_id: postgresql-db
+    target_asset_id: elk-siem
+    label: PostgreSQL query evidence validation
+    map_visible: false
+    techniques: [T1213.006]
+
 jenkins:
   url: http://127.0.0.1:8080
   home_path: /var/jenkins_home

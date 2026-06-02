@@ -109,6 +109,14 @@ function getStepAssetId(step) {
   const role = getStepRole(step);
   const explicitAssetId = step?.target_asset_id || step?.asset_id || step?.params?.target_asset_id || step?.params?.asset_id;
   const host = String(step?.execution_host || step?.params?.execution_host || "").toLowerCase();
+  const behavior = [
+    step?.name,
+    step?.module,
+    step?.target,
+    step?.params?.behavior,
+    step?.params?.evidence_key,
+    step?.params?.message,
+  ].filter(Boolean).join(" ").toLowerCase();
 
   if (explicitAssetId) return String(explicitAssetId).toLowerCase();
 
@@ -116,15 +124,20 @@ function getStepAssetId(step) {
   if (host.includes("dc01")) return "dc01";
   if (host.includes("pc01")) return "pc01";
   if (host.includes("attacker")) return "attacker";
+  if (behavior.includes("postgresql") || behavior.includes("database") || behavior.includes("db_")) return "postgresql-db";
+  if (behavior.includes("jenkins_to_app") || behavior.includes("app_directory") || behavior.includes("app_local") || behavior.includes("outbound") || behavior.includes("exfiltration")) return "nginx-app";
+  if (behavior.includes("jenkins")) return "jenkins-controller";
   if (role === "pc01") return "pc01";
   if (role === "fs01") return "fs01";
   if (role === "attacker") return "attacker";
   if (role === "log_source") return "dc01";
+  if (String(step?.target || "").toUpperCase() === "SB-01" && role === "campaign_agent") return "jenkins-controller";
   return role;
 }
 
 function inferAgentAssetKey(agent) {
   if (!agent) return "";
+  if (String(agent.campaign_agent_id || "").toUpperCase() === "SB-01") return "jenkins-controller";
   if (agent.asset_id) return String(agent.asset_id).toLowerCase();
   if (agent.agent_role && !["campaign_agent", "log_source", "detection_backend"].includes(agent.agent_role)) {
     return String(agent.agent_role).toLowerCase();
@@ -137,7 +150,7 @@ function inferAgentAssetKey(agent) {
     agent.agent_role,
   ].filter(Boolean).join(" ").toLowerCase();
 
-  return ["attacker", "bastion", "pms", "win01", "pc01", "fs01", "dc01", "soc01", "elk"].find((assetId) => searchable.includes(assetId)) || "";
+  return ["jenkins-controller", "nginx-app", "postgresql-db", "elk-siem", "jenkins", "postgresql", "nginx", "attacker", "bastion", "pms", "win01", "pc01", "fs01", "dc01", "soc01", "elk"].find((assetId) => searchable.includes(assetId)) || "";
 }
 
 function getStepSelectionId(step, fallbackCampaignId) {
@@ -153,7 +166,18 @@ function getAssetDisplayIp(asset) {
 }
 
 function getAssetNodeKind(asset) {
-  const combined = `${asset?.platform || ""} ${asset?.os || ""} ${asset?.role || ""} ${asset?.asset_id || ""}`.toLowerCase();
+  const combined = [
+    asset?.platform,
+    asset?.os,
+    asset?.role,
+    asset?.asset_id,
+    asset?.name,
+    asset?.hostname,
+    ...normalizeList(asset?.tags),
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (combined.includes("jenkins")) return "jenkins";
+  if (combined.includes("postgresql") || combined.includes("postgres") || combined.includes("database")) return "postgresql";
+  if (combined.includes("nginx")) return "nginx";
   if (combined.includes("kubernetes") || combined.includes("k3s") || combined.includes("namespace")) return "k8s";
   if (combined.includes("aws") || combined.includes("s3") || combined.includes("cloudtrail")) return "cloud";
   if (combined.includes("elk") || combined.includes("monitoring") || combined.includes("log")) return "log";
@@ -172,12 +196,18 @@ function renderAssetOsMark(nodeKind) {
     linux: "https://api.iconify.design/devicon/linux.svg",
     k8s: "https://api.iconify.design/devicon/kubernetes.svg",
     cloud: "https://api.iconify.design/devicon/amazonwebservices-wordmark.svg",
+    jenkins: "https://api.iconify.design/devicon/jenkins.svg",
+    postgresql: "https://api.iconify.design/devicon/postgresql.svg",
+    nginx: "https://api.iconify.design/devicon/nginx.svg",
   };
   const labels = {
     windows: "Windows",
     linux: "Linux",
     k8s: "Kubernetes",
     cloud: "AWS",
+    jenkins: "Jenkins",
+    postgresql: "PostgreSQL",
+    nginx: "Nginx",
   };
   const iconUrl = iconUrls[nodeKind];
 

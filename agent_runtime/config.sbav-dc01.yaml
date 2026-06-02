@@ -7,8 +7,8 @@ display_name: SB-AV DC01 BasAgent
 hostname: hanguel-dc01
 platform: windows
 collector_type: hanguel-ad-agent
-controller_url: http://54.116.166.183:443/api
-controller_urls: http://54.116.166.183:443/api,http://10.60.0.10:8000
+controller_url: https://kisia.kro.kr/api
+controller_urls: https://kisia.kro.kr/api,http://10.60.0.10:8000
 interval_seconds: 2
 execution_mode: simulation
 safety_mode: approval_required

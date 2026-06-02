@@ -3,7 +3,7 @@ param(
     [string]$Role = "win01",
     [ValidateSet("simulation", "real")]
     [string]$Mode = "real",
-    [string]$ControllerUrl = "http://54.116.166.183:443/api",
+    [string]$ControllerUrl = "https://kisia.kro.kr/api",
     [string]$ControllerToken = "",
     [string]$LogstashUrl = "http://10.60.40.10:8088",
     [int]$IntervalSeconds = 2,

@@ -126,6 +126,11 @@
         transform-origin: center;
         transition: transform 180ms ease;
       }
+      .preview-image.report-cover-image {
+        object-fit: contain;
+        object-position: center top;
+        background: #eef2f7;
+      }
       .preview-window {
         height: 100%;
         min-height: 242px;
@@ -346,7 +351,7 @@
         <a class="link" href="/reports/">
           <small>Report</small>
           <strong>분석보고서 바로가기</strong>
-          <span>DF팀 침해사고 분석 PDF와 대응 산출물을 웹에서 확인합니다.</span>
+          <span>DF/IR 분석팀의 침해사고 포렌식 보고서를 웹에서 확인합니다.</span>
         </a>
       </nav>
 
@@ -384,24 +389,18 @@
         </article>
 
         <article class="preview-card">
-          <div class="preview-shot" aria-hidden="true">
-            <div class="preview-window">
-              <div class="preview-bar"><i></i><i></i><i></i></div>
-              <div class="preview-body">
-                <div class="preview-title"></div>
-                <div class="preview-line"></div>
-                <div class="report-stack">
-                  <div class="report-page">
-                    <span></span><span></span><span></span><span></span>
-                  </div>
-                  <div class="report-badge"></div>
-                </div>
-              </div>
-            </div>
+          <div class="preview-shot has-image">
+            <img
+              class="preview-image report-cover-image"
+              src="previews/dfir-report-cover.png"
+              alt="침해사고 포렌식 보고서 표지 미리보기"
+              loading="lazy"
+              decoding="async"
+            />
           </div>
           <div class="preview-caption">
             <strong>분석보고서 미리보기</strong>
-            <span>DF 분석 결과와 대응 산출물을 웹에서 열람하는 흐름을 보여줍니다.</span>
+            <span>Kubernetes 기반 클라우드 침해사고 분석 보고서를 웹에서 바로 열람합니다.</span>
           </div>
         </article>
       </section>

@@ -197,6 +197,30 @@ TECHNIQUE_TACTICS = {
     "T1558.001": "persistence",
     "T1078.002": "persistence",
     "T1569.002": "privilege_escalation",
+    "T1133": "initial_access",
+    "T1190": "initial_access",
+    "T1195.002": "initial_access",
+    "T1046": "discovery",
+    "T1082": "discovery",
+    "T1083": "discovery",
+    "T1482": "discovery",
+    "T1059.004": "execution",
+    "T1505.003": "persistence",
+    "T1053.005": "persistence",
+    "T1021.002": "lateral_movement",
+    "T1550.002": "lateral_movement",
+    "T1620": "defense_evasion",
+    "T1592": "discovery",
+    "T1078": "persistence",
+    "T1552.004": "credential_access",
+    "T1213.006": "collection",
+    "T1048.002": "exfiltration",
+    "T1613": "discovery",
+    "T1552.007": "credential_access",
+    "T1609": "collection",
+    "T1610": "execution",
+    "T1098.006": "persistence",
+    "T1567.002": "exfiltration",
 }
 
 
@@ -1411,19 +1435,239 @@ def render_summary_html(report):
             return value
         return estimated_impact(step).get(field, 0)
 
+    def flow_status_key(step):
+        if is_normal_step(step) or step.get("detection_status") == "baseline":
+            return "baseline"
+        status = step.get("detection_status") or "not_checked"
+        if status == "alert_without_source_sample":
+            return "logged_only"
+        if status not in ("detected", "logged_only", "missed", "not_checked", "blocked", "execution_failed"):
+            return "not_checked"
+        return status
+
+    def flow_status_label(step):
+        return DETECTION_RESULT_LABELS.get(flow_status_key(step), "확인 필요")
+
+    def aggregate_status(statuses):
+        status_set = set(statuses)
+        for status in ("detected", "logged_only", "missed", "execution_failed", "blocked", "not_checked"):
+            if status in status_set:
+                return status
+        if "baseline" in status_set:
+            return "baseline"
+        return "not_checked"
+
+    def matrix_status_class(status):
+        return {
+            "detected": "detected",
+            "logged_only": "partial",
+            "alert_without_source_sample": "partial",
+            "missed": "missed",
+            "execution_failed": "missed",
+            "blocked": "blocked",
+            "not_checked": "unchecked",
+            "baseline": "baseline",
+        }.get(status, "unchecked")
+
+    def short_name(step):
+        return step.get("attack_name") or step.get("name") or step.get("technique_id") or "-"
+
+    flow_steps = [
+        step for step in sorted(report.get("steps", []), key=lambda item: item.get("order") or 9999)
+        if step.get("technique_id") or is_normal_step(step)
+    ]
+    repeated_counts = {}
+    for step in flow_steps:
+        key = step.get("technique_id") or step.get("attack_name") or step.get("name")
+        if key:
+            repeated_counts[key] = repeated_counts.get(key, 0) + 1
+    flow_groups = []
+    for step in flow_steps[:18]:
+        group_key = "baseline" if is_normal_step(step) else tactic_key_for_step(step)
+        if not flow_groups or flow_groups[-1]["key"] != group_key:
+            flow_groups.append({
+                "key": group_key,
+                "label": "정상 기준" if group_key == "baseline" else TACTIC_LABELS.get(group_key, group_key),
+                "steps": [],
+            })
+        flow_groups[-1]["steps"].append(step)
+
+    def flow_status_counts(steps):
+        counts = {}
+        for item in steps:
+            status = flow_status_key(item)
+            counts[status] = counts.get(status, 0) + 1
+        return counts
+
+    def flow_status_summary(steps):
+        counts = flow_status_counts(steps)
+        labels = [
+            ("detected", "탐지"),
+            ("logged_only", "부분"),
+            ("missed", "미탐"),
+            ("execution_failed", "실패"),
+            ("blocked", "차단"),
+            ("not_checked", "확인 필요"),
+            ("baseline", "정상"),
+        ]
+        return "\n".join(
+            f"<span class=\"flow-status-pill {matrix_status_class(status)}\">{text(label)} {text(counts[status])}</span>"
+            for status, label in labels
+            if counts.get(status)
+        )
+
+    def flow_asset_chips(steps):
+        assets = []
+        seen = set()
+        for item in steps:
+            asset = item.get("target_asset") or item.get("asset") or item.get("host")
+            if asset and asset not in seen:
+                seen.add(asset)
+                assets.append(asset)
+        if not assets:
+            return "<span>대상 자산 미지정</span>"
+        chips = [f"<span>{text(asset)}</span>" for asset in assets[:3]]
+        if len(assets) > 3:
+            chips.append(f"<span>+{len(assets) - 3}</span>")
+        return "\n".join(chips)
+
+    flow_html = "\n".join(
+        "<section class=\"flow-stage stage-{stage_status} {stage_offset}\">"
+        "<div class=\"flow-step-dot\">{stage_no}</div>"
+        "<div class=\"flow-card\">"
+        "<header><div><strong>{stage_label}</strong><small>Step {order_range} · {step_count}개 이벤트</small></div></header>"
+        "<p class=\"flow-route\">{stage_note}</p>"
+        "<div class=\"flow-assets\">{assets}</div>"
+        "<div class=\"flow-status-strip\">{status_summary}</div>"
+        "<div class=\"technique-chips\"><b>Technique</b>{techniques}</div>"
+        "</div>"
+        "</section>".format(
+            stage_status=matrix_status_class(aggregate_status([flow_status_key(item) for item in group["steps"]])),
+            stage_offset="flow-lower" if index % 2 else "flow-upper",
+            stage_no=text(f"{index + 1:02d}"),
+            stage_label=text(group["label"]),
+            step_count=text(len(group["steps"])),
+            order_range=text(
+                f"{group['steps'][0].get('order') or '-'}~{group['steps'][-1].get('order') or '-'}"
+                if len(group["steps"]) > 1
+                else group["steps"][0].get("order") or "-"
+            ),
+            stage_note=text(
+                "정상 로그 기준선을 먼저 확보합니다."
+                if group["key"] == "baseline"
+                else f"{group['label']} 단계에서 대상 자산으로 검증 흐름이 이동합니다."
+            ),
+            assets=flow_asset_chips(group["steps"]),
+            status_summary=flow_status_summary(group["steps"]),
+            techniques="\n".join(
+                f"<span>{text(step.get('technique_id') or 'Normal')}</span>"
+                for step in group["steps"][:5]
+            ) + (
+                f"<span>+{len(group['steps']) - 5}</span>"
+                if len(group["steps"]) > 5 else ""
+            ),
+        )
+        for index, group in enumerate(flow_groups)
+    )
+    if not flow_html:
+        flow_html = "<p class=\"empty\">표시할 공격 흐름 데이터가 없습니다.</p>"
+
+    flow_legend_html = """
+      <span class="legend-item detected">탐지 성공</span>
+      <span class="legend-item partial">로그만/부분 확인</span>
+      <span class="legend-item missed">미탐 또는 실행 실패</span>
+      <span class="legend-item blocked">차단/게이트</span>
+      <span class="legend-item unchecked">확인 필요</span>
+      <span class="legend-item baseline">정상 기준 로그</span>
+    """
+
+    attack_steps_for_matrix = [
+        step for step in report.get("steps", [])
+        if step.get("technique_id") and not is_normal_step(step)
+    ]
+    technique_summary = {}
+    for step in attack_steps_for_matrix:
+        technique_id = step.get("technique_id")
+        row = technique_summary.setdefault(technique_id, {
+            "technique_id": technique_id,
+            "name": short_name(step),
+            "tactic": tactic_key_for_step(step),
+            "statuses": [],
+            "count": 0,
+        })
+        row["statuses"].append(step.get("detection_status") or "not_checked")
+        row["count"] += 1
+
+    grouped_techniques = {key: [] for key in TACTIC_ORDER}
+    for item in technique_summary.values():
+        item["status"] = aggregate_status(item["statuses"])
+        grouped_techniques.setdefault(item["tactic"], []).append(item)
+
+    mitre_columns = []
+    for tactic in TACTIC_ORDER:
+        items = sorted(grouped_techniques.get(tactic, []), key=lambda item: item["technique_id"])
+        if not items:
+            continue
+        cells = "\n".join(
+            "<span class=\"ttp-cell {status}\" title=\"{title}\">"
+            "<strong>{technique}</strong><small>{count_label}</small>"
+            "</span>".format(
+                status=matrix_status_class(item["status"]),
+                title=text(f"{item['name']} · {DETECTION_RESULT_LABELS.get(item['status'], item['status'])}"),
+                technique=text(item["technique_id"]),
+                count_label=text(f"{item['count']}회" if item["count"] > 1 else DETECTION_RESULT_LABELS.get(item["status"], item["status"])),
+            )
+            for item in items
+        )
+        mitre_columns.append(
+            "<section class=\"mitre-column\">"
+            f"<h3>{text(TACTIC_LABELS.get(tactic, tactic))}</h3>"
+            f"{cells}"
+            "</section>"
+        )
+    mitre_matrix_html = "\n".join(mitre_columns) or "<p class=\"empty\">MITRE ATT&CK 매트릭스 데이터가 없습니다.</p>"
+
+    total_attack_count = summary.get("attack_steps", 0) or len(attack_steps_for_matrix)
+    detected_or_blocked = sum(
+        1 for step in attack_steps_for_matrix
+        if step.get("detection_status") in ("detected", "blocked")
+    )
+    matrix_ratio_html = (
+        "<div class=\"matrix-ratio\">"
+        f"<strong>{text(detected_or_blocked)} / {text(total_attack_count)}</strong>"
+        "<span>전체 공격 Technique 대비 탐지/차단 확인 수</span>"
+        "</div>"
+    )
+
+    explanation_cards_html = "\n".join([
+        "<article><strong>공격 흐름 우선</strong><p>숫자보다 먼저 어떤 Technique이 어떤 순서와 상태로 검증됐는지 보여줍니다.</p></article>",
+        "<article><strong>색상 의미 고정</strong><p>초록은 탐지, 노랑은 부분 확인, 빨강은 미탐/실패, 파랑은 차단, 회색은 확인 필요입니다.</p></article>",
+        "<article><strong>정상/공격 구분</strong><p>Normal 단계는 정상 기준 로그로 분리하고, 공격 커버리지 점수에는 공격 Technique만 반영합니다.</p></article>",
+        "<article><strong>개선 증거</strong><p>로그가 없던 항목은 센서 보강, 알림이 없던 항목은 탐지 룰 튜닝 대상으로 분리합니다.</p></article>",
+    ])
+
+    appendix_rows = "\n".join([
+        f"<tr><td><strong>원본 BAS 실행 결과</strong></td><td>분류 전/후 실행 결과 JSON</td><td><a href=\"/reports/{text(report.get('report_id'))}\">Report JSON</a></td></tr>",
+        "<tr><td><strong>Flow 상세 설명</strong></td><td>Technique별 상세 실행/탐지 근거를 사람이 읽는 Markdown으로 정리</td><td><a href=\"technical.md\">technical.md</a></td></tr>",
+        "<tr><td><strong>커버리지 매핑표</strong></td><td>Technique, 로그, 알림, 개선 계획을 스프레드시트로 분석하기 위한 CSV</td><td><a href=\"coverage.csv\">coverage.csv</a></td></tr>",
+        "<tr><td><strong>탐지 개선 백로그</strong></td><td>미탐/부분탐지 개선 작업 목록을 스프레드시트로 관리하기 위한 CSV</td><td><a href=\"backlog.csv\">backlog.csv</a></td></tr>",
+        "<tr><td><strong>MITRE Navigator Layer</strong></td><td>ATT&CK Navigator에 업로드하는 기계 판독용 JSON</td><td><a href=\"navigator.json\">navigator.json</a></td></tr>",
+    ])
+
     metrics = [
-        ("준비도 점수", f"{score}/100"),
-        ("실행 대상 Technique", summary.get("attack_steps", 0)),
-        ("탐지됨", summary.get("detected_count", 0)),
-        ("로그만 확인", summary.get("logged_only_count", 0)),
-        ("미탐", summary.get("missed_count", 0)),
-        ("확인 필요", summary.get("not_checked_count", 0)),
-        ("로그 커버리지", pct(summary.get("telemetry_coverage"))),
-        ("알림 커버리지", pct(summary.get("alert_coverage"))),
+        ("준비도 점수", f"{score}/100", "score"),
+        ("실행 대상 Technique", summary.get("attack_steps", 0), "total"),
+        ("탐지됨", summary.get("detected_count", 0), "detected"),
+        ("차단/게이트", sum(1 for step in attack_steps_for_matrix if step.get("detection_status") == "blocked"), "blocked"),
+        ("로그만 확인", summary.get("logged_only_count", 0), "partial"),
+        ("미탐", summary.get("missed_count", 0), "missed"),
+        ("확인 필요", summary.get("not_checked_count", 0), "unchecked"),
+        ("로그 커버리지", pct(summary.get("telemetry_coverage")), "log"),
+        ("알림 커버리지", pct(summary.get("alert_coverage")), "alert"),
     ]
     metrics_html = "\n".join(
-        f"<section class=\"metric\"><span>{text(label)}</span><strong>{text(value)}</strong></section>"
-        for label, value in metrics
+        f"<section class=\"metric metric-{class_name}\"><span>{text(label)}</span><strong>{text(value)}</strong></section>"
+        for label, value, class_name in metrics
     )
 
     tactic_rows = build_tactic_coverage(report.get("steps", []))
@@ -1624,12 +1868,16 @@ def render_summary_html(report):
       padding: 15px;
       background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
     }}
-    .metric::before {{ content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: #2563eb; }}
-    .metric:nth-child(3)::before {{ background: #16a34a; }}
-    .metric:nth-child(4)::before,
-    .metric:nth-child(7)::before {{ background: #f97316; }}
-    .metric:nth-child(5)::before,
-    .metric:nth-child(6)::before {{ background: #ef4444; }}
+    .metric::before {{ content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: #64748b; }}
+    .metric-score::before {{ background: #0f172a; }}
+    .metric-total::before {{ background: #64748b; }}
+    .metric-detected::before {{ background: #16a34a; }}
+    .metric-blocked::before {{ background: #2563eb; }}
+    .metric-partial::before,
+    .metric-log::before,
+    .metric-alert::before {{ background: #f59e0b; }}
+    .metric-missed::before {{ background: #dc2626; }}
+    .metric-unchecked::before {{ background: #94a3b8; }}
     .metric span {{ display: block; color: #64748b; font-size: 11px; font-weight: 900; }}
     .metric strong {{ display: block; margin-top: 8px; color: #0f172a; font-size: 25px; line-height: 1; }}
     section.panel {{ margin-top: 18px; padding: 24px; }}
@@ -1652,6 +1900,260 @@ def render_summary_html(report):
       background: #f8fafc;
     }}
     .summary-list li + li {{ margin-top: 8px; }}
+    .flow-layout {{
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+      align-items: start;
+    }}
+    .flow-track {{
+      display: flex;
+      gap: 34px;
+      overflow-x: auto;
+      min-height: 360px;
+      padding: 18px 14px 28px;
+      position: relative;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      background:
+        radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.22) 1px, transparent 0) 0 0/22px 22px,
+        linear-gradient(180deg, #ffffff, #f8fafc);
+    }}
+    .flow-track::before {{
+      content: "";
+      position: absolute;
+      left: 38px;
+      right: 38px;
+      top: 156px;
+      height: 2px;
+      background: linear-gradient(90deg, rgba(37, 99, 235, 0), rgba(37, 99, 235, 0.32), rgba(15, 118, 110, 0.28), rgba(37, 99, 235, 0));
+    }}
+    .flow-stage {{
+      position: relative;
+      z-index: 1;
+      flex: 0 0 292px;
+      padding-top: 30px;
+    }}
+    .flow-stage.flow-lower {{
+      margin-top: 78px;
+    }}
+    .flow-stage:not(:last-child)::after {{
+      content: "";
+      position: absolute;
+      top: 93px;
+      right: -36px;
+      width: 36px;
+      height: 2px;
+      background: rgba(71, 85, 105, 0.42);
+      transform: rotate(18deg);
+      transform-origin: left center;
+    }}
+    .flow-stage.flow-lower:not(:last-child)::after {{
+      top: 54px;
+      transform: rotate(-18deg);
+    }}
+    .flow-stage:not(:last-child)::before {{
+      content: "";
+      position: absolute;
+      top: 100px;
+      right: -38px;
+      width: 0;
+      height: 0;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+      border-left: 8px solid rgba(71, 85, 105, 0.52);
+      transform: rotate(18deg);
+    }}
+    .flow-stage.flow-lower:not(:last-child)::before {{
+      top: 47px;
+      transform: rotate(-18deg);
+    }}
+    .flow-step-dot {{
+      position: absolute;
+      top: 0;
+      left: 18px;
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 999px;
+      background: #0f172a;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 950;
+      box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
+    }}
+    .flow-card {{
+      min-height: 190px;
+      border: 1px solid #dbe4ee;
+      border-top-width: 6px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08);
+      overflow: hidden;
+    }}
+    .flow-stage header {{
+      padding: 17px 18px 12px;
+      border-bottom: 1px solid #e2e8f0;
+    }}
+    .flow-stage header strong,
+    .flow-stage header small {{ display: block; }}
+    .flow-stage header strong {{ color: #0f172a; font-size: 17px; letter-spacing: 0; }}
+    .flow-stage header small {{ margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 900; }}
+    .flow-route {{
+      margin: 0;
+      padding: 13px 18px 0;
+      color: #334155;
+      font-size: 13px;
+      line-height: 1.45;
+      font-weight: 800;
+    }}
+    .flow-assets {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      padding: 12px 18px 0;
+    }}
+    .flow-assets span {{
+      border: 1px solid #dbe4ee;
+      border-radius: 999px;
+      padding: 5px 9px;
+      background: #f8fafc;
+      color: #334155;
+      font-size: 11px;
+      font-weight: 900;
+    }}
+    .flow-status-strip {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      padding: 12px 18px 0;
+    }}
+    .flow-status-pill {{
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 11px;
+      font-weight: 950;
+    }}
+    .technique-chips {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      padding: 12px 18px 18px;
+    }}
+    .technique-chips b {{
+      margin-right: 2px;
+      color: #64748b;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }}
+    .technique-chips span {{
+      border-radius: 7px;
+      padding: 5px 8px;
+      background: #eef2ff;
+      color: #3730a3;
+      font-size: 11px;
+      font-weight: 950;
+    }}
+    .stage-detected .flow-card {{ border-top-color: #16a34a; }}
+    .stage-partial .flow-card {{ border-top-color: #f59e0b; }}
+    .stage-missed .flow-card {{ border-top-color: #dc2626; }}
+    .stage-blocked .flow-card {{ border-top-color: #2563eb; }}
+    .stage-unchecked .flow-card {{ border-top-color: #94a3b8; }}
+    .stage-baseline .flow-card {{ border-top-color: #0f766e; }}
+    .legend-item.detected::before, .ttp-cell.detected, .badge.detected, .flow-status-pill.detected {{ background: #dcfce7; color: #166534; }}
+    .legend-item.partial::before, .ttp-cell.partial, .badge.partial, .flow-status-pill.partial {{ background: #fef3c7; color: #92400e; }}
+    .legend-item.missed::before, .ttp-cell.missed, .badge.missed, .flow-status-pill.missed {{ background: #fee2e2; color: #991b1b; }}
+    .legend-item.blocked::before, .ttp-cell.blocked, .badge.blocked, .flow-status-pill.blocked {{ background: #dbeafe; color: #1d4ed8; }}
+    .legend-item.unchecked::before, .ttp-cell.unchecked, .badge.unchecked, .flow-status-pill.unchecked {{ background: #e2e8f0; color: #334155; }}
+    .legend-item.baseline::before, .badge.baseline, .flow-status-pill.baseline {{ background: #ccfbf1; color: #0f766e; }}
+    .legend-box {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
+      align-items: center;
+      border: 1px solid #dbe4ee;
+      border-radius: 10px;
+      padding: 14px;
+      background: #f8fafc;
+    }}
+    .legend-box strong {{ color: #0f172a; font-size: 13px; margin-right: 6px; }}
+    .legend-item {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 900;
+    }}
+    .legend-item::before {{
+      content: "";
+      width: 13px;
+      height: 13px;
+      border-radius: 4px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+    }}
+    .explain-grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }}
+    .explain-grid article {{
+      border: 1px solid #dbe4ee;
+      border-radius: 10px;
+      padding: 15px;
+      background: #f8fafc;
+    }}
+    .explain-grid strong {{ display: block; color: #0f172a; margin-bottom: 6px; }}
+    .explain-grid p {{ margin: 0; color: #64748b; font-size: 13px; }}
+    .matrix-head {{
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 16px;
+    }}
+    .matrix-ratio {{
+      min-width: 210px;
+      border: 1px solid #dbe4ee;
+      border-radius: 10px;
+      padding: 12px 14px;
+      background: #f8fafc;
+      text-align: right;
+    }}
+    .matrix-ratio strong {{ display: block; color: #0f172a; font-size: 24px; }}
+    .matrix-ratio span {{ display: block; margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 900; }}
+    .mitre-board {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(154px, 1fr));
+      gap: 10px;
+    }}
+    .mitre-column {{
+      border: 1px solid #dbe4ee;
+      border-radius: 10px;
+      background: #fff;
+      overflow: hidden;
+    }}
+    .mitre-column h3 {{
+      margin: 0;
+      padding: 10px 11px;
+      background: #f1f5f9;
+      color: #334155;
+      font-size: 12px;
+      line-height: 1.25;
+    }}
+    .ttp-cell {{
+      display: block;
+      margin: 8px;
+      border-radius: 8px;
+      padding: 9px 10px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+    }}
+    .ttp-cell strong, .ttp-cell small {{ display: block; }}
+    .ttp-cell strong {{ font-size: 13px; }}
+    .ttp-cell small {{ margin-top: 4px; font-size: 10px; font-weight: 900; }}
     .impact-table td:first-child small {{ display: block; margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 800; }}
     .impact-bar {{ display: grid; grid-template-columns: minmax(92px, 1fr) 42px; gap: 9px; align-items: center; min-width: 160px; }}
     .impact-bar i {{ height: 9px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }}
@@ -1775,7 +2277,13 @@ def render_summary_html(report):
     .badge.good {{ color: #166534; background: #dcfce7; }}
     .badge.warn {{ color: #92400e; background: #fef3c7; }}
     .badge.critical {{ color: #991b1b; background: #fee2e2; }}
-    .badge.blocked, .badge.neutral {{ color: #334155; background: #e2e8f0; }}
+    .badge.detected {{ color: #166534; background: #dcfce7; }}
+    .badge.partial {{ color: #92400e; background: #fef3c7; }}
+    .badge.missed {{ color: #991b1b; background: #fee2e2; }}
+    .badge.blocked {{ color: #1d4ed8; background: #dbeafe; }}
+    .badge.baseline {{ color: #0f766e; background: #ccfbf1; }}
+    .badge.unchecked,
+    .badge.neutral {{ color: #334155; background: #e2e8f0; }}
     .empty {{ color: #64748b; text-align: center; }}
     @media (max-width: 820px) {{
       body {{ padding: 16px; }}
@@ -1784,6 +2292,10 @@ def render_summary_html(report):
       .report-shell {{ grid-template-columns: 1fr; }}
       .report-nav {{ position: static; }}
       .grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .flow-layout {{ grid-template-columns: 1fr; }}
+      .explain-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .matrix-head {{ display: grid; }}
+      .matrix-ratio {{ text-align: left; }}
       .chart-body {{ grid-template-columns: 36px minmax(0, 1fr); }}
       .stacked-chart {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     }}
@@ -1793,6 +2305,7 @@ def render_summary_html(report):
       h1 {{ font-size: 26px; line-height: 1.16; }}
       section.panel {{ padding: 18px; }}
       .grid {{ grid-template-columns: 1fr; }}
+      .explain-grid {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -1820,23 +2333,46 @@ def render_summary_html(report):
         <button type="button" class="active" data-target="summary">한눈에 보기</button>
         <button type="button" data-target="detection">탐지 결과</button>
         <button type="button" data-target="improvement">개선 방향</button>
+        <button type="button" data-target="appendix">부록</button>
       </aside>
       <div class="report-content">
         <div class="report-block active" data-section="summary">
+          <section class="panel">
+            <h2>공격 흐름 / Flow</h2>
+            <p class="section-desc">실행 Technique의 흐름을 먼저 보여주고, 색상은 탐지 결과와 실행 상태의 의미에만 사용합니다.</p>
+            <div class="flow-layout">
+              <div class="flow-track">{flow_html}</div>
+              <aside class="legend-box">
+                <strong>색상 의미</strong>
+                {flow_legend_html}
+              </aside>
+            </div>
+          </section>
           <section class="panel">
             <h2>핵심 지표</h2>
             <p class="section-desc">탐지 체계가 실제 로그와 알림까지 이어졌는지 요약한 값입니다.</p>
             <div class="grid">{metrics_html}</div>
           </section>
           <section class="panel">
-            <h2>핵심 요약</h2>
-            <p class="section-desc">BAS 실행 결과를 공격 성공 여부보다 탐지 커버리지, 미탐 원인, 보완 방향 중심으로 정리했습니다.</p>
+            <h2>지표 설명</h2>
+            <p class="section-desc">정상 데이터와 공격 데이터를 분리하고, 로그 수집과 알림 발생을 따로 판단합니다.</p>
+            <div class="explain-grid">{explanation_cards_html}</div>
             <ul class="summary-list">{meaning_html}</ul>
           </section>
           <section class="panel">
-            <h2>전술별 로그/알림 커버리지</h2>
+            <h2>커버리지 결과</h2>
             <p class="section-desc">MITRE tactic 단위로 로그 수집 여부와 실제 알림 발생 여부를 분리해 보여줍니다.</p>
             <div class="tactic-grid">{tactic_chart_html}</div>
+          </section>
+          <section class="panel">
+            <div class="matrix-head">
+              <div>
+                <h2>MITRE ATT&CK / TTP 매트릭스</h2>
+                <p class="section-desc">이번 실행에 포함된 Technique만 tactic별로 묶고, 수행 결과를 색상으로 표시합니다.</p>
+              </div>
+              {matrix_ratio_html}
+            </div>
+            <div class="mitre-board">{mitre_matrix_html}</div>
           </section>
         </div>
         <div class="report-block" data-section="detection">
@@ -1899,6 +2435,24 @@ def render_summary_html(report):
                   </tr>
                 </thead>
                 <tbody>{asset_mapping_rows}</tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+        <div class="report-block" data-section="appendix">
+          <section class="panel">
+            <h2>원본 파일 링크</h2>
+            <p class="section-desc">아래 파일들은 사람이 바로 읽기보다 검증, 재현, 스프레드시트 분석, ATT&CK Navigator 업로드를 위한 원본 자료입니다.</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    {th("자료", "Artifact")}
+                    {th("내용", "Description")}
+                    {th("링크", "Link")}
+                  </tr>
+                </thead>
+                <tbody>{appendix_rows}</tbody>
               </table>
             </div>
           </section>

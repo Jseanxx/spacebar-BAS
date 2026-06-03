@@ -110,6 +110,22 @@
           radial-gradient(circle at 16% 12%, rgba(59, 130, 246, 0.22), transparent 28%),
           linear-gradient(135deg, #111827 0%, #1f2937 46%, #0f766e 100%);
       }
+      .preview-shot.has-image {
+        min-height: 0;
+        padding: 0;
+        overflow: hidden;
+        aspect-ratio: 64 / 45;
+        background: #111827;
+      }
+      .preview-image {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: left top;
+        transform-origin: center;
+        transition: transform 180ms ease;
+      }
       .preview-window {
         height: 100%;
         min-height: 242px;
@@ -126,6 +142,9 @@
         box-shadow: 0 18px 46px rgba(15, 23, 42, 0.12);
       }
       .preview-card:hover .preview-window {
+        transform: scale(1.035);
+      }
+      .preview-card:hover .preview-image {
         transform: scale(1.035);
       }
       .preview-bar {
@@ -289,6 +308,7 @@
         .link { min-height: auto; }
         .previews { grid-template-columns: 1fr; }
         .preview-shot { min-height: 220px; }
+        .preview-shot.has-image { min-height: 0; }
         .preview-window { min-height: 192px; }
         .campaign-matrix span { min-height: 33px; }
         .dashboard-chart { min-height: 118px; }
@@ -332,24 +352,14 @@
 
       <section class="previews" aria-label="산출물 미리보기">
         <article class="preview-card">
-          <div class="preview-shot" aria-hidden="true">
-            <div class="preview-window">
-              <div class="preview-bar"><i></i><i></i><i></i></div>
-              <div class="preview-body">
-                <div class="preview-title"></div>
-                <div class="preview-line"></div>
-                <div class="preview-line short"></div>
-                <div class="campaign-grid">
-                  <div class="campaign-list">
-                    <span></span><span></span><span></span><span></span>
-                  </div>
-                  <div class="campaign-matrix">
-                    <span></span><span></span><span></span>
-                    <span></span><span></span><span></span>
-                  </div>
-                </div>
-              </div>
-            </div>
+          <div class="preview-shot has-image">
+            <img
+              class="preview-image"
+              src="previews/campaign-sb03.png"
+              alt="캠페인 페이지 실제 화면 미리보기"
+              loading="lazy"
+              decoding="async"
+            />
           </div>
           <div class="preview-caption">
             <strong>캠페인 페이지 미리보기</strong>
@@ -358,22 +368,14 @@
         </article>
 
         <article class="preview-card">
-          <div class="preview-shot" aria-hidden="true">
-            <div class="preview-window">
-              <div class="preview-bar"><i></i><i></i><i></i></div>
-              <div class="preview-body">
-                <div class="preview-title"></div>
-                <div class="preview-line"></div>
-                <div class="dashboard-grid">
-                  <div class="dashboard-side">
-                    <span></span><span></span><span></span>
-                  </div>
-                  <div class="dashboard-chart">
-                    <span></span><span></span><span></span><span></span>
-                  </div>
-                </div>
-              </div>
-            </div>
+          <div class="preview-shot has-image">
+            <img
+              class="preview-image"
+              src="previews/bas-dashboard.png"
+              alt="BAS 대시보드 실제 화면 미리보기"
+              loading="lazy"
+              decoding="async"
+            />
           </div>
           <div class="preview-caption">
             <strong>BAS 대시보드 미리보기</strong>

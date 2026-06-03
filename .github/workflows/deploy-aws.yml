@@ -75,16 +75,12 @@ jobs:
           BAS_AWS_HOST: ${{ secrets.BAS_AWS_HOST }}
           BAS_AWS_USER: ${{ secrets.BAS_AWS_USER }}
           BAS_AWS_SSH_PORT: ${{ secrets.BAS_AWS_SSH_PORT }}
-          DASHBOARD_USER: ${{ secrets.BAS_DASHBOARD_USER }}
-          DASHBOARD_PASSWORD: ${{ secrets.BAS_DASHBOARD_PASSWORD }}
           BAS_AGENT_TOKEN: ${{ secrets.BAS_AGENT_TOKEN }}
           BAS_SBAD_ELK_USERNAME: ${{ secrets.BAS_SBAD_ELK_USERNAME }}
           BAS_SBAD_ELK_PASSWORD: ${{ secrets.BAS_SBAD_ELK_PASSWORD }}
           BAS_PUBLIC_DOMAIN: ${{ secrets.BAS_PUBLIC_DOMAIN }}
         run: |
           {
-            printf 'DASHBOARD_USER=%q\n' "${DASHBOARD_USER:-spacebar}"
-            printf 'DASHBOARD_PASSWORD=%q\n' "${DASHBOARD_PASSWORD}"
             printf 'BAS_AGENT_TOKEN=%q\n' "${BAS_AGENT_TOKEN}"
             printf 'BAS_SBAD_ELK_USERNAME=%q\n' "${BAS_SBAD_ELK_USERNAME:-elastic}"
             printf 'BAS_SBAD_ELK_PASSWORD=%q\n' "${BAS_SBAD_ELK_PASSWORD}"
@@ -107,11 +103,9 @@ jobs:
         env:
           BAS_AWS_HOST: ${{ secrets.BAS_AWS_HOST }}
           BAS_PUBLIC_DOMAIN: ${{ secrets.BAS_PUBLIC_DOMAIN }}
-          DASHBOARD_USER: ${{ secrets.BAS_DASHBOARD_USER }}
-          DASHBOARD_PASSWORD: ${{ secrets.BAS_DASHBOARD_PASSWORD }}
         run: |
           PUBLIC_HOST="${BAS_PUBLIC_DOMAIN:-kisia.kro.kr}"
-          curl --fail -u "${DASHBOARD_USER:-spacebar}:${DASHBOARD_PASSWORD}" "https://${PUBLIC_HOST}/api/health"
+          curl --fail --silent --show-error "https://${PUBLIC_HOST}/" >/dev/null
 
       - name: Revoke runner SSH access
         if: always()

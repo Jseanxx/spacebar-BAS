@@ -61,6 +61,11 @@ if [[ -n "${DASHBOARD_USER:-}" && -n "${DASHBOARD_PASSWORD:-}" ]]; then
   printf '%s:%s\n' "${DASHBOARD_USER}" "$(openssl passwd -apr1 "${DASHBOARD_PASSWORD}")" > "${ENV_DIR}/htpasswd"
   chown root:www-data "${ENV_DIR}/htpasswd"
   chmod 0640 "${ENV_DIR}/htpasswd"
+elif [[ ! -s "${ENV_DIR}/htpasswd" ]]; then
+  echo "Dashboard htpasswd is missing. Create ${ENV_DIR}/htpasswd before deploying without dashboard credentials." >&2
+  exit 1
+else
+  echo "Preserving existing dashboard htpasswd."
 fi
 
 if command -v nginx >/dev/null 2>&1; then

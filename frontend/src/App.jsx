@@ -24,69 +24,110 @@ const ASSET_POSITIONS = {
 
 const MAP_POSITION_OVERRIDES = {
   "SB-AD": {
-    attacker: { left: 13.5, top: 52 },
-    pc01: { left: 36.5, top: 46 },
-    fs01: { left: 61.5, top: 36 },
-    dc01: { left: 87, top: 50 },
-    elk: { left: 61.5, top: 73 },
+    attacker: { left: 10, top: 74 },
+    pc01: { left: 38, top: 54 },
+    fs01: { left: 55, top: 76 },
+    dc01: { left: 71, top: 33 },
+    elk: { left: 89, top: 70 },
   },
   "SB-05": {
-    "sb05-attacker": { left: 13.5, top: 52 },
-    "sb05-kubernetes": { left: 37.5, top: 36 },
-    "prod-platform": { left: 37.5, top: 73 },
-    "sb05-k8s-drain": { left: 62.5, top: 49 },
-    "sb05-elk": { left: 85.5, top: 36 },
-    "cloudtrail-sqs-pipeline": { left: 85.5, top: 73 },
+    "sb05-attacker": { left: 10, top: 74 },
+    "sb05-kubernetes": { left: 41, top: 36 },
+    "prod-platform": { left: 51, top: 80 },
+    "sb05-k8s-drain": { left: 67, top: 31 },
+    "sb05-elk": { left: 90, top: 64 },
+    "cloudtrail-sqs-pipeline": { left: 74, top: 72 },
   },
   "SB-01": {
-    "bas-operator": { left: 10.5, top: 50 },
-    "jenkins-controller": { left: 30, top: 39 },
-    "nginx-app": { left: 50, top: 49 },
-    "postgresql-db": { left: 69, top: 58 },
-    "elk-siem": { left: 89, top: 43 },
+    "bas-operator": { left: 10, top: 74 },
+    "jenkins-controller": { left: 38, top: 53 },
+    "nginx-app": { left: 56, top: 33 },
+    "postgresql-db": { left: 63, top: 76 },
+    "elk-siem": { left: 89, top: 66 },
   },
   "SB-AV": {
-    external: { left: 9.5, top: 54 },
-    bastion: { left: 25.5, top: 42 },
-    pms: { left: 41.5, top: 48 },
-    win01: { left: 57.5, top: 39 },
-    dc01: { left: 73.5, top: 51 },
-    soc01: { left: 89.5, top: 44 },
+    external: { left: 8, top: 78 },
+    bastion: { left: 27, top: 57 },
+    pms: { left: 49, top: 40 },
+    win01: { left: 60, top: 74 },
+    dc01: { left: 75, top: 41 },
+    soc01: { left: 91, top: 72 },
   },
+};
+
+const MAP_ZONE_OVERRIDES = {
+  "SB-AD": [
+    { segment_id: "attacker-subnet", name: "INTERNET / ATTACKER", kind: "external", left: 1.5, top: 56, width: 17, height: 36 },
+    { segment_id: "internal-network", name: "CORPORATE INTERNAL NETWORK", kind: "shell", left: 25, top: 15, width: 54, height: 79 },
+    { segment_id: "user-subnet", name: "EMPLOYEE ACCESS SUBNET", kind: "subnet", left: 28.5, top: 36, width: 19, height: 36 },
+    { segment_id: "server-subnet", name: "FILE SERVER SUBNET", kind: "subnet", left: 45.5, top: 58, width: 19, height: 36 },
+    { segment_id: "domain-subnet", name: "DOMAIN CORE", kind: "critical", left: 61.5, top: 15, width: 19, height: 36 },
+    { segment_id: "monitoring-zone", name: "SOC / SIEM", kind: "soc", left: 81, top: 52, width: 16, height: 36 },
+  ],
+  "SB-05": [
+    { segment_id: "compromised-zone", name: "COMPROMISED DEPLOY HOST", kind: "external", left: 1.5, top: 56, width: 17, height: 36 },
+    { segment_id: "cluster-network", name: "K8S VPC / CLUSTER NETWORK", kind: "shell", left: 29, top: 18, width: 31, height: 76 },
+    { segment_id: "kubernetes-zone", name: "KUBERNETES CONTROL PLANE", kind: "subnet", left: 31.5, top: 18, width: 19, height: 36 },
+    { segment_id: "workload-zone", name: "BUSINESS WORKLOAD", kind: "subnet", left: 41.5, top: 62, width: 19, height: 32 },
+    { segment_id: "cloud-services", name: "AWS CLOUD SERVICES", kind: "shell", left: 57.5, top: 13, width: 30, height: 77 },
+    { segment_id: "cloud-storage-zone", name: "S3 EXFIL BUCKET", kind: "cloud", left: 57.5, top: 13, width: 19, height: 36 },
+    { segment_id: "log-pipeline-zone", name: "CLOUDTRAIL / SQS", kind: "cloud", left: 64.5, top: 50, width: 19, height: 36, labelLeft: 130 },
+    { segment_id: "monitoring-zone", name: "ELK MONITORING", kind: "soc", left: 82, top: 46, width: 16, height: 36 },
+  ],
+  "SB-01": [
+    { segment_id: "operator-zone", name: "OPERATOR / INTERNET", kind: "external", left: 1.5, top: 56, width: 17, height: 36 },
+    { segment_id: "internal-network", name: "APPLICATION DELIVERY NETWORK", kind: "shell", left: 25, top: 15, width: 53, height: 79 },
+    { segment_id: "cicd-zone", name: "CI/CD CONTROL PLANE", kind: "subnet", left: 28.5, top: 35, width: 19, height: 36 },
+    { segment_id: "app-zone", name: "APP SERVICE SUBNET", kind: "subnet", left: 46.5, top: 15, width: 19, height: 36 },
+    { segment_id: "data-zone", name: "DATA SUBNET", kind: "critical", left: 53.5, top: 58, width: 19, height: 36 },
+    { segment_id: "monitoring-zone", name: "LOG / SIEM", kind: "soc", left: 81, top: 48, width: 16, height: 36 },
+  ],
+  "SB-AV": [
+    { segment_id: "external-zone", name: "EXTERNAL OPERATOR", kind: "external", left: 0, top: 60, width: 16, height: 36 },
+    { segment_id: "internal-network", name: "HANGUEL INTERNAL NETWORK", kind: "shell", left: 22, top: 15, width: 59, height: 79 },
+    { segment_id: "bastion-zone", name: "BASTION / DMZ", kind: "subnet", left: 17.5, top: 39, width: 19, height: 36 },
+    { segment_id: "pms-zone", name: "PMS UPDATE SERVER HUB", kind: "subnet", left: 39.5, top: 22, width: 19, height: 35 },
+    { segment_id: "endpoint-zone", name: "WINDOWS ENDPOINT SUBNET", kind: "subnet", left: 50.5, top: 56, width: 19, height: 38, labelLeft: 80 },
+    { segment_id: "domain-zone", name: "AD DOMAIN CORE", kind: "critical", left: 65.5, top: 23, width: 19, height: 35 },
+    { segment_id: "soc-zone", name: "SOC / ELK", kind: "soc", left: 83, top: 54, width: 16, height: 38 },
+  ],
 };
 
 const MAP_LINK_OVERRIDES = {
   "SB-AD": [
-    { source_asset_id: "attacker", target_asset_id: "pc01", label: "초기 실행 지점", tone: "red" },
-    { source_asset_id: "pc01", target_asset_id: "fs01", label: "파일 서버 접근", tone: "red" },
-    { source_asset_id: "pc01", target_asset_id: "dc01", label: "AD 조회 / 인증 이벤트", tone: "amber" },
-    { source_asset_id: "fs01", target_asset_id: "elk", label: "서버 로그 수집", tone: "blue" },
-    { source_asset_id: "dc01", target_asset_id: "elk", label: "도메인 로그 수집", tone: "blue" },
+    { source_asset_id: "attacker", target_asset_id: "pc01", label: "Initial execution", tone: "red", sourceAnchor: "right", targetAnchor: "left", waypoints: [{ left: 25, top: 63 }] },
+    { source_asset_id: "pc01", target_asset_id: "fs01", label: "WinRM lateral movement", tone: "red", sourceAnchor: "bottom-right", targetAnchor: "top-left", waypoints: [{ left: 46, top: 68 }] },
+    { source_asset_id: "pc01", target_asset_id: "dc01", label: "AD discovery / Kerberos", tone: "amber", sourceAnchor: "top-right", targetAnchor: "left", waypoints: [{ left: 55, top: 42 }] },
+    { source_asset_id: "fs01", target_asset_id: "attacker", label: "Staging / exfiltration", tone: "amber", sourceAnchor: "left", targetAnchor: "right", waypoints: [{ left: 34, top: 88 }] },
+    { source_asset_id: "pc01", target_asset_id: "elk", label: "Endpoint telemetry", tone: "blue", sourceAnchor: "right", targetAnchor: "left", waypoints: [{ left: 66, top: 54 }, { left: 66, top: 70 }] },
+    { source_asset_id: "fs01", target_asset_id: "elk", label: "File server telemetry", tone: "blue", sourceAnchor: "right", targetAnchor: "left", waypoints: [{ left: 73, top: 76 }, { left: 73, top: 70 }] },
+    { source_asset_id: "dc01", target_asset_id: "elk", label: "Domain telemetry", tone: "blue", sourceAnchor: "bottom-right", targetAnchor: "top-left", waypoints: [{ left: 80, top: 47 }, { left: 84, top: 47 }] },
   ],
   "SB-05": [
-    { source_asset_id: "sb05-attacker", target_asset_id: "sb05-kubernetes", label: "kubeconfig 기반 API 접근", tone: "red" },
-    { source_asset_id: "sb05-kubernetes", target_asset_id: "prod-platform", label: "업무 namespace 검증", tone: "red" },
-    { source_asset_id: "sb05-attacker", target_asset_id: "sb05-k8s-drain", label: "수집 archive 업로드", tone: "amber" },
-    { source_asset_id: "sb05-kubernetes", target_asset_id: "sb05-elk", label: "Kubernetes audit log", tone: "blue" },
-    { source_asset_id: "sb05-k8s-drain", target_asset_id: "cloudtrail-sqs-pipeline", label: "CloudTrail data event", tone: "amber" },
-    { source_asset_id: "cloudtrail-sqs-pipeline", target_asset_id: "sb05-elk", label: "AWS 로그 전달", tone: "blue" },
+    { source_asset_id: "sb05-attacker", target_asset_id: "sb05-kubernetes", label: "Kubeconfig API access", tone: "red", sourceAnchor: "top-right", targetAnchor: "left", waypoints: [{ left: 25, top: 56 }] },
+    { source_asset_id: "sb05-kubernetes", target_asset_id: "prod-platform", label: "Namespace activity", tone: "red", sourceAnchor: "bottom-right", targetAnchor: "top-left", waypoints: [{ left: 47, top: 58 }] },
+    { source_asset_id: "sb05-attacker", target_asset_id: "sb05-k8s-drain", label: "Archive upload", tone: "amber", sourceAnchor: "top-right", targetAnchor: "left", waypoints: [{ left: 38, top: 52 }] },
+    { source_asset_id: "sb05-k8s-drain", target_asset_id: "cloudtrail-sqs-pipeline", label: "CloudTrail data event", tone: "amber", sourceAnchor: "bottom-right", targetAnchor: "top-left", waypoints: [{ left: 72, top: 50 }, { left: 72, top: 62 }] },
+    { source_asset_id: "cloudtrail-sqs-pipeline", target_asset_id: "sb05-elk", label: "AWS evidence to ELK", tone: "blue", sourceAnchor: "top-right", targetAnchor: "bottom-left", waypoints: [{ left: 84, top: 68 }] },
+    { source_asset_id: "sb05-kubernetes", target_asset_id: "sb05-elk", label: "Kubernetes audit log", tone: "blue", sourceAnchor: "right", targetAnchor: "top-left", waypoints: [{ left: 66, top: 30 }] },
+    { source_asset_id: "sb05-attacker", target_asset_id: "sb05-elk", label: "Linux auditd evidence", tone: "blue", sourceAnchor: "bottom-right", targetAnchor: "bottom-left", waypoints: [{ left: 47, top: 88 }] },
   ],
   "SB-01": [
-    { source_asset_id: "bas-operator", target_asset_id: "jenkins-controller", label: "Jenkins 접근 검증", tone: "red" },
-    { source_asset_id: "jenkins-controller", target_asset_id: "nginx-app", label: "배포 키 기반 App 접근", tone: "red" },
-    { source_asset_id: "nginx-app", target_asset_id: "postgresql-db", label: "업무 DB 조회", tone: "amber" },
-    { source_asset_id: "jenkins-controller", target_asset_id: "elk-siem", label: "Jenkins 로그 수집", tone: "blue" },
-    { source_asset_id: "nginx-app", target_asset_id: "elk-siem", label: "App / audit 로그 수집", tone: "blue" },
-    { source_asset_id: "postgresql-db", target_asset_id: "elk-siem", label: "DB 로그 수집", tone: "blue" },
+    { source_asset_id: "bas-operator", target_asset_id: "jenkins-controller", label: "Jenkins access", tone: "red", sourceAnchor: "right", targetAnchor: "left", waypoints: [{ left: 24, top: 74 }, { left: 24, top: 53 }] },
+    { source_asset_id: "jenkins-controller", target_asset_id: "nginx-app", label: "Deploy key SSH", tone: "red", sourceAnchor: "top-right", targetAnchor: "left", waypoints: [{ left: 48, top: 42 }, { left: 48, top: 33 }] },
+    { source_asset_id: "nginx-app", target_asset_id: "postgresql-db", label: "Business DB query", tone: "amber", sourceAnchor: "bottom-right", targetAnchor: "top-left", waypoints: [{ left: 61, top: 50 }, { left: 61, top: 60 }] },
+    { source_asset_id: "jenkins-controller", target_asset_id: "elk-siem", label: "Jenkins evidence", tone: "blue", sourceAnchor: "right", targetAnchor: "left", waypoints: [{ left: 76, top: 53 }, { left: 76, top: 66 }] },
+    { source_asset_id: "nginx-app", target_asset_id: "elk-siem", label: "App / audit evidence", tone: "blue", sourceAnchor: "right", targetAnchor: "top-left", waypoints: [{ left: 72, top: 33 }, { left: 72, top: 50 }, { left: 83, top: 50 }] },
+    { source_asset_id: "postgresql-db", target_asset_id: "elk-siem", label: "DB evidence", tone: "blue", sourceAnchor: "right", targetAnchor: "left", waypoints: [{ left: 77, top: 76 }, { left: 77, top: 66 }] },
   ],
   "SB-AV": [
-    { source_asset_id: "external", target_asset_id: "bastion", label: "외부 진입", tone: "red" },
-    { source_asset_id: "bastion", target_asset_id: "pms", label: "PMS 접근", tone: "red" },
-    { source_asset_id: "pms", target_asset_id: "win01", label: "PMS Agent 업데이트 체인", tone: "red" },
-    { source_asset_id: "win01", target_asset_id: "dc01", label: "AD / DC 접근", tone: "amber" },
-    { source_asset_id: "pms", target_asset_id: "soc01", label: "PMS 로그 수집", tone: "blue" },
-    { source_asset_id: "win01", target_asset_id: "soc01", label: "Endpoint 로그 수집", tone: "blue" },
-    { source_asset_id: "dc01", target_asset_id: "soc01", label: "DC 로그 수집", tone: "blue" },
+    { source_asset_id: "external", target_asset_id: "bastion", label: "External SSH entry", tone: "red", sourceAnchor: "top-right", targetAnchor: "bottom-left", waypoints: [{ left: 19, top: 69 }] },
+    { source_asset_id: "bastion", target_asset_id: "pms", label: "PMS reconnaissance", tone: "red", sourceAnchor: "top-right", targetAnchor: "left", waypoints: [{ left: 38, top: 44 }] },
+    { source_asset_id: "pms", target_asset_id: "win01", label: "PMS agent chain", tone: "red", sourceAnchor: "bottom-right", targetAnchor: "top-left", waypoints: [{ left: 55, top: 58 }] },
+    { source_asset_id: "win01", target_asset_id: "dc01", label: "AD / DC access", tone: "amber", sourceAnchor: "top-right", targetAnchor: "bottom-left", waypoints: [{ left: 68, top: 54 }] },
+    { source_asset_id: "pms", target_asset_id: "soc01", label: "PMS telemetry", tone: "blue", sourceAnchor: "bottom-right", targetAnchor: "top-left", waypoints: [{ left: 74, top: 69 }], curveRatio: 0.18 },
+    { source_asset_id: "win01", target_asset_id: "soc01", label: "Endpoint telemetry", tone: "blue", sourceAnchor: "right", targetAnchor: "left", waypoints: [{ left: 77, top: 76 }] },
+    { source_asset_id: "dc01", target_asset_id: "soc01", label: "DC telemetry", tone: "blue", sourceAnchor: "bottom-right", targetAnchor: "top-left", waypoints: [{ left: 83, top: 51 }] },
   ],
 };
 
@@ -111,6 +152,73 @@ function getMapPositionOverride(targetId, assetId, fallbackPosition) {
 function getMapLinkOverrides(targetId) {
   const campaignId = String(targetId || "").toUpperCase();
   return MAP_LINK_OVERRIDES[campaignId] || null;
+}
+
+function getMapZoneOverrides(targetId) {
+  const campaignId = String(targetId || "").toUpperCase();
+  return MAP_ZONE_OVERRIDES[campaignId] || null;
+}
+
+const MAP_DEVICE_ANCHORS = {
+  center: { left: 0, top: -13.1 },
+  left: { left: -3.15, top: -13.1 },
+  right: { left: 3.15, top: -13.1 },
+  top: { left: 0, top: -17.6 },
+  bottom: { left: 0, top: -8.6 },
+  "top-left": { left: -3.15, top: -17.0 },
+  "top-right": { left: 3.15, top: -17.0 },
+  "bottom-left": { left: -3.15, top: -9.2 },
+  "bottom-right": { left: 3.15, top: -9.2 },
+};
+
+function normalizeMapPoint(point) {
+  if (Array.isArray(point)) {
+    return { left: Number(point[0] || 0), top: Number(point[1] || 0) };
+  }
+  return { left: Number(point?.left || 0), top: Number(point?.top || 0) };
+}
+
+function getMapAnchorPoint(position, anchorName = "center") {
+  const offset = MAP_DEVICE_ANCHORS[anchorName] || MAP_DEVICE_ANCHORS.center;
+  return {
+    left: Number(position?.left || 0) + offset.left,
+    top: Number(position?.top || 0) + offset.top,
+  };
+}
+
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function buildRestrainedMapArc(sourcePoint, destinationPoint, options = {}) {
+  const start = normalizeMapPoint(sourcePoint);
+  const end = normalizeMapPoint(destinationPoint);
+  const deltaX = end.left - start.left;
+  const deltaY = end.top - start.top;
+  const distance = Math.max(1, Math.hypot(deltaX, deltaY));
+  const midpoint = {
+    left: (start.left + end.left) / 2,
+    top: (start.top + end.top) / 2,
+  };
+  const perpendicular = {
+    left: -deltaY / distance,
+    top: deltaX / distance,
+  };
+  const hintPoints = normalizeList(options.hints).map(normalizeMapPoint);
+  const hint = hintPoints.length > 0 ? hintPoints[Math.floor((hintPoints.length - 1) / 2)] : null;
+  const hintDirection = hint
+    ? Math.sign(((hint.left - midpoint.left) * perpendicular.left) + ((hint.top - midpoint.top) * perpendicular.top))
+    : 0;
+  const fallbackDirection = options.tone === "blue" ? -1 : 1;
+  const direction = hintDirection || Number(options.curveDirection) || fallbackDirection;
+  const curveRatio = clampNumber(Number(options.curveRatio || (options.tone === "blue" ? 0.1 : 0.14)), 0.08, 0.18);
+  const curveAmount = clampNumber(distance * curveRatio, 2.2, 8.5) * Math.sign(direction || 1);
+  const control = {
+    left: midpoint.left + perpendicular.left * curveAmount,
+    top: midpoint.top + perpendicular.top * curveAmount,
+  };
+
+  return `M ${start.left.toFixed(2)} ${start.top.toFixed(2)} Q ${control.left.toFixed(2)} ${control.top.toFixed(2)} ${end.left.toFixed(2)} ${end.top.toFixed(2)}`;
 }
 
 function isTelemetryAsset(asset) {
@@ -1055,11 +1163,7 @@ export default function App() {
   const assetPositionById = useMemo(() => {
     const map = new Map();
     assets.forEach((asset) => {
-      const position = asset.position;
-      map.set(asset.asset_id, {
-        ...position,
-        top: Math.max(8, Number(position?.top || 0) - 7),
-      });
+      map.set(asset.asset_id, asset.position);
     });
     return map;
   }, [assets]);
@@ -1079,50 +1183,54 @@ export default function App() {
 
       if (!source || !destination) return null;
 
+      const sourceAnchor = getMapAnchorPoint(source, path.sourceAnchor || "center");
+      const destinationAnchor = getMapAnchorPoint(destination, path.targetAnchor || "center");
+      const waypoints = normalizeList(path.waypoints).map(normalizeMapPoint);
+
       if (sourceId === targetId) {
-        const x = source.left;
-        const y = source.top;
+        const x = sourceAnchor.left;
+        const y = sourceAnchor.top;
         return {
           id: `${sourceId}-${targetId}-${index}`,
           sourceId,
           targetId,
           label: path.label,
           tone: path.tone || ["red", "blue", "amber"][index % 3],
-          d: `M ${x} ${y} C ${x + 6} ${y - 12}, ${x + 18} ${y - 10}, ${x + 14} ${y + 2}`,
+          d: buildRestrainedMapArc(
+            sourceAnchor,
+            { left: x + 10, top: y + 3 },
+            { hints: waypoints, tone: path.tone, curveDirection: 1, curveRatio: 0.16 },
+          ),
         };
       }
 
-      const deltaX = destination.left - source.left;
-      const directionX = deltaX >= 0 ? 1 : -1;
-      const edgeOffset = Math.min(8, Math.max(4, Math.abs(deltaX) * 0.28));
-      const start = {
-        left: source.left + directionX * edgeOffset,
-        top: source.top - 3.5,
-      };
-      const end = {
-        left: destination.left - directionX * edgeOffset,
-        top: destination.top - 3.5,
-      };
-      const laneTop = Math.max(9, Math.min(start.top, end.top) - 10 - (index % 2) * 4);
       return {
         id: `${sourceId}-${targetId}-${index}`,
         sourceId,
         targetId,
         label: path.label,
         tone: path.tone || ["red", "blue", "amber"][index % 3],
-        d: `M ${start.left} ${start.top} C ${start.left} ${laneTop}, ${end.left} ${laneTop}, ${end.left} ${end.top}`,
+        d: buildRestrainedMapArc(sourceAnchor, destinationAnchor, {
+          hints: waypoints,
+          tone: path.tone,
+          curveDirection: path.curveDirection,
+          curveRatio: path.curveRatio,
+        }),
       };
     }).filter(Boolean);
   }, [target, assets, assetPositionById]);
 
   const mapZones = useMemo(() => {
+    const overrideZones = getMapZoneOverrides(target?.target_id || campaignId);
+    if (overrideZones) return overrideZones;
+
     const segments = normalizeList(target?.segments);
     if (segments.length === 0) {
       return [
-        { segment_id: "attacker-zone", name: "Attacker", left: 2, width: 20 },
-        { segment_id: "user-zone", name: "User", left: 24, width: 22 },
-        { segment_id: "server-zone", name: "Server", left: 49, width: 22 },
-        { segment_id: "domain-zone", name: "Domain", left: 74, width: 22 },
+        { segment_id: "attacker-zone", name: "Attacker", left: 4, top: 32, width: 22, height: 48 },
+        { segment_id: "user-zone", name: "User", left: 28, top: 20, width: 24, height: 50 },
+        { segment_id: "server-zone", name: "Server", left: 52, top: 18, width: 24, height: 68 },
+        { segment_id: "domain-zone", name: "Domain", left: 72, top: 36, width: 24, height: 48 },
       ];
     }
 
@@ -1131,9 +1239,11 @@ export default function App() {
       segment_id: segment.segment_id || `segment-${index}`,
       name: segment.name || segment.segment_id || `Segment ${index + 1}`,
       left: 2 + index * width,
+      top: 14 + (index % 2) * 14,
       width: Math.max(12, width - 1),
+      height: 58 - (index % 2) * 8,
     }));
-  }, [target]);
+  }, [target, campaignId]);
 
   const selectedSteps = useMemo(() => {
     const byId = new Map();
@@ -1828,9 +1938,9 @@ export default function App() {
                 <span>실행 전 안전성</span>
                 <strong>{safetySummary.highest?.executionRecommendation || "안전"}</strong>
               </div>
-              <div className="safety-percent-summary">
-                <span>추정 장애 {safetySummary.maxServiceImpactPercent}%</span>
-                <span>추정 지연 {safetySummary.maxNetworkImpactPercent}%</span>
+              <div className="safety-qualitative-summary">
+                <span>장애 가능성 {safetySummary.highest?.failurePossibility || "없음"}</span>
+                <span>네트워크 부하 {safetySummary.highest?.networkLoad || "없음"}</span>
               </div>
               <div className="safety-counts">
                 <b className="danger">위험 {safetySummary.danger}</b>
@@ -1861,21 +1971,9 @@ export default function App() {
                   </div>
                   <div className={`safety-strip ${safety.className}`}>
                     <span><small>영향</small><strong>{getImpactLabel(safety.impact)}</strong></span>
-                    <span><small>장애</small><strong>{safety.serviceImpactPercent}%</strong></span>
-                    <span><small>지연</small><strong>{safety.networkImpactPercent}%</strong></span>
+                    <span><small>장애 가능성</small><strong>{safety.failurePossibility}</strong></span>
+                    <span><small>네트워크 부하</small><strong>{safety.networkLoad}</strong></span>
                     <b>{getRecommendationShort(safety.executionRecommendation)}</b>
-                  </div>
-                  <div className="safety-risk-bars" aria-label="추정 영향도">
-                    <span>
-                      <small>서비스 장애/다운 추정</small>
-                      <i><b style={{ width: `${safety.serviceImpactPercent}%` }} /></i>
-                      <strong>{safety.serviceImpactPercent}%</strong>
-                    </span>
-                    <span>
-                      <small>네트워크 지연 추정</small>
-                      <i><b style={{ width: `${safety.networkImpactPercent}%` }} /></i>
-                      <strong>{safety.networkImpactPercent}%</strong>
-                    </span>
                   </div>
                   <details className="safety-details">
                     <summary>세부 안전성</summary>
@@ -1884,8 +1982,6 @@ export default function App() {
                       <div><span>장애 가능성</span><strong>{safety.failurePossibility}</strong></div>
                       <div><span>네트워크 부하</span><strong>{safety.networkLoad}</strong></div>
                       <div><span>서비스 다운</span><strong>{safety.serviceDownPossibility}</strong></div>
-                      <div><span>장애/다운 추정</span><strong>{safety.serviceImpactPercent}%</strong></div>
-                      <div><span>네트워크 지연 추정</span><strong>{safety.networkImpactPercent}%</strong></div>
                       <div><span>사전 경고</span><strong>{safety.warningRequired}</strong></div>
                       <div><span>실행 권장</span><strong>{safety.executionRecommendation}</strong></div>
                     </div>
@@ -2141,6 +2237,11 @@ export default function App() {
           </div>
 
           <div className={`asset-map ${isRunning ? "running" : ""}`}>
+            <div className="map-legend" aria-label="Attack map line legend">
+              <span><i className="legend-red" />공격/실행</span>
+              <span><i className="legend-amber" />탐색/데이터 이동</span>
+              <span><i className="legend-blue" />로그/탐지 수집</span>
+            </div>
             <svg className="map-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
               <defs>
                 <marker
@@ -2177,10 +2278,18 @@ export default function App() {
             {mapZones.map((zone) => (
               <div
                 key={zone.segment_id}
-                className="map-zone"
-                style={{ left: `${zone.left}%`, width: `${zone.width}%` }}
+                className={`map-zone ${zone.kind ? `zone-${zone.kind}` : ""}`}
+                style={{
+                  left: `${zone.left}%`,
+                  top: `${zone.top ?? 14}%`,
+                  width: `${zone.width}%`,
+                  height: `${zone.height ?? 58}%`,
+                  bottom: "auto",
+                  "--zone-label-left": zone.labelLeft ? `${zone.labelLeft}px` : undefined,
+                  "--zone-label-top": zone.labelTop ? `${zone.labelTop}px` : undefined,
+                }}
               >
-                {zone.name}
+                <span className="map-zone-label">{zone.name}</span>
               </div>
             ))}
 
@@ -2211,9 +2320,9 @@ export default function App() {
                   <strong>{asset.name || asset.asset_id}</strong>
                   <small className="asset-ip-label">{getAssetDisplayIp(asset)}</small>
                   <div className="asset-facts">
-                    <span><b>IP</b>{getAssetDisplayIp(asset)}</span>
-                    <span><b>OS</b>{asset.os || asset.platform || "N/A"}</span>
-                    <span><b>Type</b>{asset.role || asset.segment_id || "N/A"}</span>
+                    <span><b>IP</b><i>{getAssetDisplayIp(asset)}</i></span>
+                    <span><b>OS</b><i>{asset.os || asset.platform || "N/A"}</i></span>
+                    <span><b>Type</b><i>{asset.role || asset.segment_id || "N/A"}</i></span>
                   </div>
                   {normalizeList(asset.tags).length > 0 && (
                     <div className="asset-tags">

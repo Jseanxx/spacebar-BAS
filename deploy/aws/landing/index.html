@@ -23,7 +23,7 @@
         padding: 56px 0 48px;
       }
       .top {
-        max-width: 860px;
+        max-width: 1040px;
       }
       .label {
         margin: 0 0 16px;
@@ -36,6 +36,10 @@
         font-size: clamp(34px, 5vw, 64px);
         line-height: 1.05;
         letter-spacing: 0;
+        word-break: keep-all;
+      }
+      .nowrap {
+        white-space: nowrap;
       }
       .desc {
         margin: 22px 0 0;
@@ -43,6 +47,7 @@
         color: #4b5563;
         font-size: 18px;
         line-height: 1.65;
+        word-break: keep-all;
       }
       .links {
         display: grid;
@@ -300,7 +305,7 @@
     <main>
       <section class="top">
         <p class="label">KISIA Security Academy 7th · SpaceBar BAS</p>
-        <h1>SpaceBar 팀 침해사고 탐지·대응 체계 산출물</h1>
+        <h1>SpaceBar 팀 침해사고 탐지·대응 <span class="nowrap">체계 산출물</span></h1>
         <p class="desc">
           기업형 피해 환경과 공격 시나리오를 모델링하고, ELK 탐지 룰·BAS 검증·분석 보고서를
           연결해 공격 흐름과 탐지 근거, 대응 절차를 한 번에 점검한 프로젝트입니다.

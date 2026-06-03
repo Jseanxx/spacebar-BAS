@@ -36,8 +36,17 @@ else
 fi
 
 if [[ -d deploy/aws/landing ]]; then
+  LANDING_PREVIEWS_BACKUP=""
+  if [[ -d "${LANDING_DIR}/previews" && ! -d deploy/aws/landing/previews ]]; then
+    LANDING_PREVIEWS_BACKUP="$(mktemp -d)"
+    cp -a "${LANDING_DIR}/previews" "${LANDING_PREVIEWS_BACKUP}/"
+  fi
   find "${LANDING_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   cp -a deploy/aws/landing/. "${LANDING_DIR}/"
+  if [[ -n "${LANDING_PREVIEWS_BACKUP}" && -d "${LANDING_PREVIEWS_BACKUP}/previews" && ! -d "${LANDING_DIR}/previews" ]]; then
+    cp -a "${LANDING_PREVIEWS_BACKUP}/previews" "${LANDING_DIR}/previews"
+  fi
+  [[ -n "${LANDING_PREVIEWS_BACKUP}" ]] && rm -rf "${LANDING_PREVIEWS_BACKUP}"
 fi
 
 touch "${ENV_DIR}/spacebar-bas.env"

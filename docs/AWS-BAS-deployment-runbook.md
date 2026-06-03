@@ -19,11 +19,31 @@
 - `BAS_AWS_USER`
 - `BAS_AWS_SSH_PORT`
 - `BAS_AWS_SSH_KEY`
-- `BAS_DASHBOARD_USER`
-- `BAS_DASHBOARD_PASSWORD`
 - `BAS_AGENT_TOKEN`
 - `BAS_SBAD_ELK_USERNAME`
 - `BAS_SBAD_ELK_PASSWORD`
+
+Dashboard Basic Auth 기준값:
+
+- Username: `bas`
+- Password: 운영자가 EC2의 `/etc/spacebar-bas/htpasswd`에 설정한 값
+
+운영 원칙:
+
+- Dashboard Basic Auth는 GitHub Actions Secret이 아니라 EC2의 `/etc/spacebar-bas/htpasswd`를 기준으로 유지한다.
+- `main` 브랜치에 push되더라도 GitHub Actions는 dashboard user/password를 배포 env로 넘기지 않는다.
+- 따라서 배포 스크립트는 기존 `/etc/spacebar-bas/htpasswd`를 보존한다.
+- 비밀번호를 변경해야 할 때만 EC2에서 아래 방식으로 수동 갱신한다.
+
+```text
+sudo bash -lc 'python3 - <<'"'"'PY'"'"' > /etc/spacebar-bas/htpasswd
+import crypt
+print("bas:" + crypt.crypt("<new password>", "ba"))
+PY'
+sudo chown root:www-data /etc/spacebar-bas/htpasswd
+sudo chmod 0640 /etc/spacebar-bas/htpasswd
+sudo systemctl reload nginx
+```
 
 ## Agent Endpoint
 

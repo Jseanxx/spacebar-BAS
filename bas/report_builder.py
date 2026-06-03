@@ -2201,10 +2201,10 @@ def render_summary_html(report):
       .matrix-stats span.executed {{ border-color: #f0b8b2; background: #fff7f6; }}
       .matrix-stats b {{ display: block; color: var(--ink); font-size: 18px; line-height: 1; }}
       .matrix-stats small {{ display: block; margin-top: 5px; color: var(--muted); font-size: 10px; font-weight: 900; }}
-      .matrix-scroll {{ max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-strong); -webkit-overflow-scrolling: touch; }}
+      .matrix-scroll {{ max-width: 100%; max-height: min(620px, 62vh); overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-strong); -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; }}
       .mitre-board {{ min-width: 2240px; display: grid; grid-template-columns: repeat(14, minmax(150px, 1fr)); gap: 1px; background: var(--line); }}
       .mitre-column {{ min-height: 390px; display: flex; flex-direction: column; background: #fff; }}
-      .mitre-column h3 {{ min-height: 64px; display: flex; align-items: center; justify-content: center; margin: 0; padding: 12px; border-bottom: 1px solid var(--line); background: var(--panel-strong); color: #222831; font-size: 12px; font-weight: 800; line-height: 1.25; text-align: center; overflow-wrap: anywhere; word-break: keep-all; }}
+      .mitre-column h3 {{ position: sticky; top: 0; z-index: 2; min-height: 64px; display: flex; align-items: center; justify-content: center; margin: 0; padding: 12px; border-bottom: 1px solid var(--line); background: var(--panel-strong); color: #222831; font-size: 12px; font-weight: 800; line-height: 1.25; text-align: center; overflow-wrap: anywhere; word-break: keep-all; box-shadow: 0 1px 0 var(--line); }}
       .ttp-cell {{ display: block; min-height: 82px; margin: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--muted); }}
       .ttp-cell strong, .ttp-cell small {{ display: block; }}
       .ttp-cell strong {{ color: #222831; font-size: 13px; line-height: 1.35; font-weight: 850; }}
@@ -2272,6 +2272,7 @@ def render_summary_html(report):
         .split {{ grid-template-columns: 1fr; }}
         .matrix-stats {{ grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; width: 100%; }}
         .matrix-stats span {{ text-align: left; }}
+        .matrix-scroll {{ max-height: 520px; }}
       }}
     </style>
   </head>

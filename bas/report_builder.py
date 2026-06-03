@@ -15,6 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 RUNS_DIR = BASE_DIR / "outputs" / "runs"
 OPERATIONS_DIR = BASE_DIR / "outputs" / "operations"
 REPORTS_DIR = BASE_DIR / "outputs" / "reports"
+CAMPAIGNS_DIR = BASE_DIR / "campaigns"
 KST = timezone(timedelta(hours=9))
 
 FINAL_STATUSES = {"completed", "success"}
@@ -136,33 +137,74 @@ ACTION_REASONS_KO = {
 }
 
 TACTIC_ORDER = [
+    "reconnaissance",
+    "resource_development",
     "initial_access",
     "execution",
-    "command_and_control",
-    "discovery",
-    "credential_access",
-    "lateral_movement",
-    "collection",
-    "exfiltration",
-    "defense_evasion",
     "persistence",
     "privilege_escalation",
+    "defense_evasion",
+    "credential_access",
+    "discovery",
+    "lateral_movement",
+    "collection",
+    "command_and_control",
+    "exfiltration",
+    "impact",
     "other",
 ]
 
+MATRIX_TACTIC_ORDER = [
+    "reconnaissance",
+    "resource_development",
+    "initial_access",
+    "execution",
+    "persistence",
+    "privilege_escalation",
+    "defense_evasion",
+    "credential_access",
+    "discovery",
+    "lateral_movement",
+    "collection",
+    "command_and_control",
+    "exfiltration",
+    "impact",
+]
+
 TACTIC_LABELS = {
+    "reconnaissance": "정찰",
+    "resource_development": "자원 개발",
     "initial_access": "초기 침투",
     "execution": "실행",
-    "command_and_control": "C2",
-    "discovery": "탐색",
-    "credential_access": "자격 증명 접근",
-    "lateral_movement": "측면 이동",
-    "collection": "수집",
-    "exfiltration": "유출",
-    "defense_evasion": "방어 회피",
     "persistence": "지속성",
     "privilege_escalation": "권한 상승",
+    "defense_evasion": "방어 회피",
+    "credential_access": "자격 증명 접근",
+    "discovery": "탐색",
+    "lateral_movement": "측면 이동",
+    "collection": "수집",
+    "command_and_control": "C2",
+    "exfiltration": "유출",
+    "impact": "영향",
     "other": "기타",
+}
+
+MATRIX_TACTIC_LABELS = {
+    "reconnaissance": "Reconnaissance",
+    "resource_development": "Resource Development",
+    "initial_access": "Initial Access",
+    "execution": "Execution",
+    "persistence": "Persistence",
+    "privilege_escalation": "Privilege Escalation",
+    "defense_evasion": "Defense Evasion",
+    "credential_access": "Credential Access",
+    "discovery": "Discovery",
+    "lateral_movement": "Lateral Movement",
+    "collection": "Collection",
+    "command_and_control": "Command and Control",
+    "exfiltration": "Exfiltration",
+    "impact": "Impact",
+    "other": "Other",
 }
 
 TECHNIQUE_TACTICS = {
@@ -200,6 +242,7 @@ TECHNIQUE_TACTICS = {
     "T1133": "initial_access",
     "T1190": "initial_access",
     "T1195.002": "initial_access",
+    "T1592": "reconnaissance",
     "T1046": "discovery",
     "T1082": "discovery",
     "T1083": "discovery",
@@ -210,15 +253,15 @@ TECHNIQUE_TACTICS = {
     "T1021.002": "lateral_movement",
     "T1550.002": "lateral_movement",
     "T1620": "defense_evasion",
-    "T1592": "discovery",
     "T1078": "persistence",
     "T1552.004": "credential_access",
+    "T1213": "collection",
     "T1213.006": "collection",
     "T1048.002": "exfiltration",
     "T1613": "discovery",
     "T1552.007": "credential_access",
-    "T1609": "collection",
-    "T1610": "execution",
+    "T1609": "discovery",
+    "T1610": "defense_evasion",
     "T1098.006": "persistence",
     "T1567.002": "exfiltration",
 }
@@ -524,6 +567,72 @@ def normalize_list(value):
 def get_step_params(step):
     params = step.get("params") or {}
     return params if isinstance(params, dict) else {}
+
+
+def technique_id_for_step(step):
+    if not isinstance(step, dict):
+        return ""
+    value = step.get("technique_id") or get_step_params(step).get("technique_id")
+    return str(value).strip() if value else ""
+
+
+def technique_name_for_step(step):
+    technique_id = technique_id_for_step(step)
+    raw_name = step.get("attack_name") or step.get("name") or technique_id
+    name = re.sub(r"^\s*\d+\.\s*", "", str(raw_name or "")).strip()
+    return name or technique_id or "-"
+
+
+def tactic_key_for_technique(technique_id):
+    return TECHNIQUE_TACTICS.get(str(technique_id or "").strip(), "other")
+
+
+def build_bas_technique_library(current_campaign_id=None, report_steps=None):
+    current_campaign_id = str(current_campaign_id or "").strip()
+    library = {}
+
+    def ensure_row(technique_id, name=None, campaign_id=None):
+        row = library.setdefault(technique_id, {
+            "technique_id": technique_id,
+            "name": name or technique_id,
+            "tactic": tactic_key_for_technique(technique_id),
+            "campaigns": set(),
+            "campaign_scope": False,
+            "executed": False,
+            "count": 0,
+            "status": "not_checked",
+        })
+        if name and row["name"] == technique_id:
+            row["name"] = name
+        if campaign_id:
+            row["campaigns"].add(campaign_id)
+            if current_campaign_id and campaign_id == current_campaign_id:
+                row["campaign_scope"] = True
+        return row
+
+    for path in sorted(CAMPAIGNS_DIR.glob("*.yaml")):
+        if path.name.startswith("._"):
+            continue
+        campaign = safe_load_campaign(path.stem)
+        campaign_id = campaign.get("campaign_id") or path.stem
+        for step in normalize_list(campaign.get("flow")):
+            if not isinstance(step, dict) or step.get("phase") == "normal":
+                continue
+            technique_id = technique_id_for_step(step)
+            if not technique_id:
+                continue
+            ensure_row(technique_id, technique_name_for_step(step), campaign_id)
+
+    for step in report_steps or []:
+        if not isinstance(step, dict) or is_normal_step(step):
+            continue
+        technique_id = technique_id_for_step(step)
+        if not technique_id:
+            continue
+        row = ensure_row(technique_id, technique_name_for_step(step), current_campaign_id)
+        row["campaign_scope"] = True
+
+    return library
 
 
 def step_behavior(step):
@@ -1234,8 +1343,7 @@ def render_summary_markdown(report):
 
 
 def tactic_key_for_step(step):
-    technique_id = str(step.get("technique_id") or "").strip()
-    return TECHNIQUE_TACTICS.get(technique_id, "other")
+    return tactic_key_for_technique(technique_id_for_step(step))
 
 
 def build_tactic_coverage(steps):
@@ -1472,6 +1580,17 @@ def render_summary_html(report):
     def short_name(step):
         return step.get("attack_name") or step.get("name") or step.get("technique_id") or "-"
 
+    def matrix_step_executed(step):
+        execution_status = step.get("execution_status") or canonical_execution_status(step)
+        if execution_status in ("success", "simulated"):
+            return True
+        return step.get("detection_status") in (
+            "detected",
+            "logged_only",
+            "alert_without_source_sample",
+            "missed",
+        )
+
     flow_steps = [
         step for step in sorted(report.get("steps", []), key=lambda item: item.get("order") or 9999)
         if step.get("technique_id") or is_normal_step(step)
@@ -1583,11 +1702,15 @@ def render_summary_html(report):
 
     attack_steps_for_matrix = [
         step for step in report.get("steps", [])
-        if step.get("technique_id") and not is_normal_step(step)
+        if technique_id_for_step(step) and not is_normal_step(step)
+    ]
+    executed_steps_for_matrix = [
+        step for step in attack_steps_for_matrix
+        if matrix_step_executed(step)
     ]
     technique_summary = {}
-    for step in attack_steps_for_matrix:
-        technique_id = step.get("technique_id")
+    for step in executed_steps_for_matrix:
+        technique_id = technique_id_for_step(step)
         row = technique_summary.setdefault(technique_id, {
             "technique_id": technique_id,
             "name": short_name(step),
@@ -1598,44 +1721,99 @@ def render_summary_html(report):
         row["statuses"].append(step.get("detection_status") or "not_checked")
         row["count"] += 1
 
-    grouped_techniques = {key: [] for key in TACTIC_ORDER}
+    bas_library = build_bas_technique_library(report.get("campaign_id"), report.get("steps", []))
     for item in technique_summary.values():
         item["status"] = aggregate_status(item["statuses"])
+        row = bas_library.setdefault(item["technique_id"], {
+            "technique_id": item["technique_id"],
+            "name": item["name"],
+            "tactic": item["tactic"],
+            "campaigns": set(),
+            "campaign_scope": True,
+            "executed": False,
+            "count": 0,
+            "status": "not_checked",
+        })
+        row["name"] = item["name"] or row["name"]
+        row["tactic"] = item["tactic"]
+        row["campaign_scope"] = True
+        row["executed"] = True
+        row["count"] = item["count"]
+        row["status"] = item["status"]
+
+    library_items = list(bas_library.values())
+    grouped_techniques = {key: [] for key in MATRIX_TACTIC_ORDER}
+    grouped_techniques["other"] = []
+    for item in library_items:
         grouped_techniques.setdefault(item["tactic"], []).append(item)
 
+    def matrix_item_class(item):
+        if item.get("executed"):
+            return "executed"
+        if item.get("campaign_scope"):
+            return "scope"
+        return "library"
+
+    def matrix_item_subtitle(item):
+        if item.get("executed"):
+            status = DETECTION_RESULT_LABELS.get(item.get("status"), item.get("status") or "실행")
+            return f"실행 {item.get('count') or 1}회 · {status}"
+        if item.get("campaign_scope"):
+            return "Campaign Scope · 이번 실행 미포함"
+        campaigns = sorted(item.get("campaigns") or [])
+        if not campaigns:
+            return "BAS Library"
+        visible = ", ".join(campaigns[:2])
+        if len(campaigns) > 2:
+            visible += f" +{len(campaigns) - 2}"
+        return f"BAS Library · {visible}"
+
     mitre_columns = []
-    for tactic in TACTIC_ORDER:
+    matrix_order = list(MATRIX_TACTIC_ORDER)
+    if grouped_techniques.get("other"):
+        matrix_order.append("other")
+
+    for tactic in matrix_order:
         items = sorted(grouped_techniques.get(tactic, []), key=lambda item: item["technique_id"])
-        if not items:
-            continue
-        cells = "\n".join(
-            "<span class=\"ttp-cell {status}\" title=\"{title}\">"
-            "<strong>{technique}</strong><small>{count_label}</small>"
-            "</span>".format(
-                status=matrix_status_class(item["status"]),
-                title=text(f"{item['name']} · {DETECTION_RESULT_LABELS.get(item['status'], item['status'])}"),
-                technique=text(item["technique_id"]),
-                count_label=text(f"{item['count']}회" if item["count"] > 1 else DETECTION_RESULT_LABELS.get(item["status"], item["status"])),
+        if items:
+            cells = "\n".join(
+                "<span class=\"ttp-cell {status}\" title=\"{title}\">"
+                "<strong><code>{technique}</code> {name}</strong><small>{count_label}</small>"
+                "</span>".format(
+                    status=matrix_item_class(item),
+                    title=text(f"{item['technique_id']} {item['name']} · {matrix_item_subtitle(item)}"),
+                    technique=text(item["technique_id"]),
+                    name=text(item["name"]),
+                    count_label=text(matrix_item_subtitle(item)),
+                )
+                for item in items
             )
-            for item in items
-        )
+        else:
+            cells = (
+                "<span class=\"ttp-cell empty-cell\">"
+                "<strong>No BAS Technique</strong><small>현재 BAS Library에 매핑된 Technique 없음</small>"
+                "</span>"
+            )
         mitre_columns.append(
             "<section class=\"mitre-column\">"
-            f"<h3>{text(TACTIC_LABELS.get(tactic, tactic))}</h3>"
+            f"<h3>{text(MATRIX_TACTIC_LABELS.get(tactic, tactic))}</h3>"
             f"{cells}"
             "</section>"
         )
     mitre_matrix_html = "\n".join(mitre_columns) or "<p class=\"empty\">MITRE ATT&CK 매트릭스 데이터가 없습니다.</p>"
 
-    total_attack_count = summary.get("attack_steps", 0) or len(attack_steps_for_matrix)
-    detected_or_blocked = sum(
-        1 for step in attack_steps_for_matrix
-        if step.get("detection_status") in ("detected", "blocked")
-    )
+    library_count = len(library_items)
+    campaign_scope_count = sum(1 for item in library_items if item.get("campaign_scope"))
+    executed_count = sum(1 for item in library_items if item.get("executed"))
+    scope_not_executed_count = max(0, campaign_scope_count - executed_count)
+    alerted_count = sum(1 for item in library_items if item.get("status") == "detected")
     matrix_ratio_html = (
-        "<div class=\"matrix-ratio\">"
-        f"<strong>{text(detected_or_blocked)} / {text(total_attack_count)}</strong>"
-        "<span>전체 공격 Technique 대비 탐지/차단 확인 수</span>"
+        "<div class=\"matrix-stats\">"
+        f"<span><b>{text(library_count)}</b><small>BAS Library</small></span>"
+        f"<span><b>{text(campaign_scope_count)}</b><small>Campaign Scope</small></span>"
+        f"<span class=\"executed\"><b>{text(executed_count)}</b><small>Executed</small></span>"
+        f"<span><b>{text(scope_not_executed_count)}</b><small>Not Executed</small></span>"
+        f"<span><b>{text(alerted_count)}</b><small>Alerted</small></span>"
         "</div>"
     )
 
@@ -2112,48 +2290,126 @@ def render_summary_html(report):
       display: flex;
       justify-content: space-between;
       gap: 16px;
-      align-items: end;
+      align-items: start;
       margin-bottom: 16px;
     }}
-    .matrix-ratio {{
-      min-width: 210px;
+    .matrix-stats {{
+      display: grid;
+      grid-template-columns: repeat(5, minmax(78px, 1fr));
+      gap: 8px;
+      min-width: 500px;
+    }}
+    .matrix-stats span {{
       border: 1px solid #dbe4ee;
-      border-radius: 10px;
-      padding: 12px 14px;
+      border-radius: 8px;
+      padding: 9px 10px;
       background: #f8fafc;
       text-align: right;
     }}
-    .matrix-ratio strong {{ display: block; color: #0f172a; font-size: 24px; }}
-    .matrix-ratio span {{ display: block; margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 900; }}
+    .matrix-stats span.executed {{ border-color: #f0b8b2; background: #fff7f6; }}
+    .matrix-stats b {{ display: block; color: #0f172a; font-size: 18px; line-height: 1; }}
+    .matrix-stats small {{ display: block; margin-top: 5px; color: #64748b; font-size: 10px; font-weight: 900; }}
+    .matrix-scroll {{
+      max-width: 100%;
+      overflow-x: auto;
+      border: 1px solid #dbe4ee;
+      border-radius: 4px;
+      background: #f8fafc;
+      -webkit-overflow-scrolling: touch;
+    }}
     .mitre-board {{
+      min-width: 2240px;
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(154px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(14, minmax(150px, 1fr));
+      gap: 1px;
+      background: #dbe4ee;
     }}
     .mitre-column {{
-      border: 1px solid #dbe4ee;
-      border-radius: 10px;
+      min-height: 390px;
+      border: 0;
+      border-radius: 0;
       background: #fff;
       overflow: hidden;
     }}
     .mitre-column h3 {{
       margin: 0;
-      padding: 10px 11px;
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      border-bottom: 1px solid #dbe4ee;
       background: #f1f5f9;
-      color: #334155;
+      color: #222831;
       font-size: 12px;
+      font-weight: 800;
       line-height: 1.25;
+      text-align: center;
+      overflow-wrap: anywhere;
+      word-break: keep-all;
     }}
     .ttp-cell {{
       display: block;
       margin: 8px;
-      border-radius: 8px;
-      padding: 9px 10px;
-      border: 1px solid rgba(15, 23, 42, 0.08);
+      min-height: 82px;
+      border-radius: 4px;
+      padding: 10px;
+      border: 1px solid #dbe4ee;
+      background: #fff;
+      color: #64748b;
     }}
     .ttp-cell strong, .ttp-cell small {{ display: block; }}
-    .ttp-cell strong {{ font-size: 13px; }}
-    .ttp-cell small {{ margin-top: 4px; font-size: 10px; font-weight: 900; }}
+    .ttp-cell strong {{ color: #222831; font-size: 13px; line-height: 1.35; font-weight: 850; }}
+    .ttp-cell code {{ color: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; font-weight: 850; }}
+    .ttp-cell small {{ margin-top: 6px; color: inherit; font-size: 11px; line-height: 1.35; font-weight: 800; }}
+    .ttp-cell.executed {{
+      border-color: #b42318;
+      background: #fff;
+      color: #b42318;
+      box-shadow: inset 4px 0 0 #b42318;
+    }}
+    .ttp-cell.executed strong {{ color: #b42318; }}
+    .ttp-cell.scope {{
+      border-color: #606975;
+      background: #f8fafc;
+      color: #475569;
+      box-shadow: inset 4px 0 0 #606975;
+    }}
+    .ttp-cell.library {{
+      border-color: #e2e8f0;
+      background: #fff;
+      color: #94a3b8;
+    }}
+    .ttp-cell.library strong {{ color: #64748b; }}
+    .ttp-cell.empty-cell {{
+      border-style: dashed;
+      background: #f8fafc;
+      color: #94a3b8;
+    }}
+    .matrix-legend {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 900;
+    }}
+    .matrix-legend span {{
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }}
+    .matrix-legend i {{
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      border: 1px solid #dbe4ee;
+      background: #fff;
+    }}
+    .matrix-legend .executed i {{ border-color: #b42318; background: #fff7f6; }}
+    .matrix-legend .scope i {{ border-color: #606975; background: #f8fafc; }}
+    .matrix-legend .library i {{ background: #fff; }}
     .impact-table td:first-child small {{ display: block; margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 800; }}
     .impact-bar {{ display: grid; grid-template-columns: minmax(92px, 1fr) 42px; gap: 9px; align-items: center; min-width: 160px; }}
     .impact-bar i {{ height: 9px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }}
@@ -2295,7 +2551,8 @@ def render_summary_html(report):
       .flow-layout {{ grid-template-columns: 1fr; }}
       .explain-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .matrix-head {{ display: grid; }}
-      .matrix-ratio {{ text-align: left; }}
+      .matrix-stats {{ grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; }}
+      .matrix-stats span {{ text-align: left; }}
       .chart-body {{ grid-template-columns: 36px minmax(0, 1fr); }}
       .stacked-chart {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     }}
@@ -2338,8 +2595,30 @@ def render_summary_html(report):
       <div class="report-content">
         <div class="report-block active" data-section="summary">
           <section class="panel">
+            <h2>핵심 지표</h2>
+            <p class="section-desc">탐지 체계가 실제 로그와 알림까지 이어졌는지 요약한 값입니다.</p>
+            <div class="grid">{metrics_html}</div>
+          </section>
+          <section class="panel">
+            <div class="matrix-head">
+              <div>
+                <h2>TTPs Matrix View</h2>
+                <p class="section-desc">BAS Library 전체 Technique 중 현재 캠페인 범위와 실제 실행 Technique을 구분해 보여줍니다.</p>
+              </div>
+              {matrix_ratio_html}
+            </div>
+            <div class="matrix-scroll">
+              <div class="mitre-board">{mitre_matrix_html}</div>
+            </div>
+            <div class="matrix-legend" aria-label="TTP matrix legend">
+              <span class="executed"><i></i>이번 BAS 실행 Technique</span>
+              <span class="scope"><i></i>현재 캠페인 Scope이나 이번 실행 미포함</span>
+              <span class="library"><i></i>BAS Library에 등록된 다른 캠페인 Technique</span>
+            </div>
+          </section>
+          <section class="panel">
             <h2>공격 흐름 / Flow</h2>
-            <p class="section-desc">실행 Technique의 흐름을 먼저 보여주고, 색상은 탐지 결과와 실행 상태의 의미에만 사용합니다.</p>
+            <p class="section-desc">실행 Technique의 흐름을 보여주고, 색상은 탐지 결과와 실행 상태의 의미에만 사용합니다.</p>
             <div class="flow-layout">
               <div class="flow-track">{flow_html}</div>
               <aside class="legend-box">
@@ -2347,11 +2626,6 @@ def render_summary_html(report):
                 {flow_legend_html}
               </aside>
             </div>
-          </section>
-          <section class="panel">
-            <h2>핵심 지표</h2>
-            <p class="section-desc">탐지 체계가 실제 로그와 알림까지 이어졌는지 요약한 값입니다.</p>
-            <div class="grid">{metrics_html}</div>
           </section>
           <section class="panel">
             <h2>지표 설명</h2>
@@ -2363,16 +2637,6 @@ def render_summary_html(report):
             <h2>커버리지 결과</h2>
             <p class="section-desc">MITRE tactic 단위로 로그 수집 여부와 실제 알림 발생 여부를 분리해 보여줍니다.</p>
             <div class="tactic-grid">{tactic_chart_html}</div>
-          </section>
-          <section class="panel">
-            <div class="matrix-head">
-              <div>
-                <h2>MITRE ATT&CK / TTP 매트릭스</h2>
-                <p class="section-desc">이번 실행에 포함된 Technique만 tactic별로 묶고, 수행 결과를 색상으로 표시합니다.</p>
-              </div>
-              {matrix_ratio_html}
-            </div>
-            <div class="mitre-board">{mitre_matrix_html}</div>
           </section>
         </div>
         <div class="report-block" data-section="detection">

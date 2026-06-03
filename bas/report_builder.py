@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import json
@@ -1975,767 +1975,405 @@ def render_summary_html(report):
     if not asset_mapping_rows:
         asset_mapping_rows = "<tr><td colspan=\"4\" class=\"empty\">자산/보안 솔루션 매핑 정보가 없습니다.</td></tr>"
 
+    log_matched_count = sum(
+        1 for step in attack_steps_for_matrix
+        if step.get("source_status") == "matched"
+    )
+    alert_matched_count = sum(
+        1 for step in attack_steps_for_matrix
+        if step.get("alert_status") == "matched"
+    )
+    attack_total = summary.get("attack_steps", 0) or executed_count or len(attack_steps_for_matrix)
+    backlog_total = len(backlog) or summary.get("logged_only_count", 0) + summary.get("missed_count", 0) + summary.get("not_checked_count", 0)
+    report_title = report.get("campaign_name") or report.get("campaign_id") or "BAS"
+    subtitle = f"{text(report.get('campaign_id'))} 기업형 피해 환경 기반 침해사고 탐지 커버리지 검증"
+
+    def percent_label(numerator, denominator):
+        denominator = denominator or 0
+        if not denominator:
+            return "0%"
+        return f"{round((numerator / denominator) * 100):.0f}%"
+
+    def kpi_card(label, value, note, tone, icon_path):
+        return (
+            "<div class=\"kpi-card\">"
+            f"<div class=\"icon-box {tone}\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\">{icon_path}</svg></div>"
+            "<div>"
+            f"<span>{text(label)}</span>"
+            f"<strong>{text(value)}</strong>"
+            f"<small>{text(note)}</small>"
+            "</div>"
+            "</div>"
+        )
+
+    kpi_cards_html = "\n".join([
+        kpi_card(
+            "실행 성공",
+            f"{executed_count} / {attack_total}",
+            f"Technique 실행 성공률 {percent_label(executed_count, attack_total)}",
+            "good",
+            "<path d=\"M20 6 9 17l-5-5\" />",
+        ),
+        kpi_card(
+            "원천 로그 수집",
+            percent_label(log_matched_count, attack_total),
+            f"Source telemetry {log_matched_count}/{attack_total}",
+            "good",
+            "<path d=\"M6 3h12v18H6z\" /><path d=\"M9 7h6M9 11h6M9 15h3\" />",
+        ),
+        kpi_card(
+            "Kibana Alert 탐지",
+            percent_label(alert_matched_count, attack_total),
+            f"Actionable alert {alert_matched_count}/{attack_total}",
+            "bad",
+            "<path d=\"M12 3 22 20H2L12 3Z\" /><path d=\"M12 9v5M12 17h.01\" />",
+        ),
+        kpi_card(
+            "개선 백로그",
+            backlog_total,
+            "탐지 룰 튜닝 및 신규 생성",
+            "warn",
+            "<path d=\"M8 6h13v15H8z\" /><path d=\"M3 3h13v15\" /><path d=\"M11 11h6M11 15h5\" />",
+        ),
+    ])
+
+    status_chip = {
+        "detected": ("good", "탐지"),
+        "logged_only": ("warn", "로그만 확인"),
+        "alert_without_source_sample": ("warn", "부분 확인"),
+        "missed": ("bad", "미탐"),
+        "execution_failed": ("bad", "실패"),
+        "blocked": ("info", "차단"),
+        "not_checked": ("neutral", "확인 필요"),
+        "baseline": ("good", "정상 기준"),
+    }
+
+    timeline_groups = flow_groups[:5] or [{
+        "key": "not_checked",
+        "label": "실행 흐름",
+        "steps": attack_steps_for_matrix[:1],
+    }]
+    path_nodes_html = "\n".join(
+        "<div class=\"path-node\">"
+        f"<strong>{text(group['label'])}</strong>"
+        f"<small>{text(' · '.join(step.get('technique_id') or 'Normal' for step in group['steps'][:3]))}</small>"
+        f"<span class=\"chip {status_chip.get(aggregate_status([flow_status_key(item) for item in group['steps']]), ('neutral', '확인 필요'))[0]}\">"
+        f"{text(status_chip.get(aggregate_status([flow_status_key(item) for item in group['steps']]), ('neutral', '확인 필요'))[1])}"
+        "</span>"
+        "</div>"
+        for group in timeline_groups
+    )
+
+    environment_rows = []
+    seen_assets = set()
+    for row in asset_mapping:
+        asset = row.get("asset")
+        if not asset or asset in seen_assets:
+            continue
+        seen_assets.add(asset)
+        environment_rows.append({
+            "name": asset,
+            "detail": row.get("log_source") or row.get("role") or "-",
+            "status": row.get("coverage") or "검증 필요",
+        })
+    if not environment_rows:
+        for step in attack_steps_for_matrix:
+            asset = step.get("target_asset") or step.get("execution_host") or step.get("agent_role")
+            if not asset or asset in seen_assets:
+                continue
+            seen_assets.add(asset)
+            environment_rows.append({
+                "name": asset,
+                "detail": step.get("expected_log") or step.get("recommended_sensor") or "-",
+                "status": report_detection_result(step),
+            })
+            if len(environment_rows) >= 5:
+                break
+    environment_html = "\n".join(
+        "<div class=\"asset\">"
+        "<div class=\"asset-head\">"
+        "<svg class=\"tiny-icon\" viewBox=\"0 0 24 24\"><path d=\"M4 5h16v11H4z\" /><path d=\"M8 21h8M12 16v5\" /></svg>"
+        f"<strong>{text(row.get('name'))}</strong>"
+        "</div>"
+        f"<p>{text(row.get('detail'))}</p>"
+        f"<span class=\"status\"><i class=\"dot\"></i>{text(row.get('status'))}</span>"
+        "</div>"
+        for row in environment_rows[:5]
+    ) or "<p class=\"empty\">자산 요약 정보가 없습니다.</p>"
+
+    tactic_summary_rows = "\n".join(
+        "<tr>"
+        f"<td>{text(row.get('label'))}</td>"
+        f"<td>{text(row.get('total'))}</td>"
+        f"<td class=\"num good\">{text(row.get('log_matched'))} ({text(percent_label(row.get('log_matched') or 0, row.get('total') or 0))})</td>"
+        f"<td class=\"num bad\">{text(row.get('alert_matched'))} ({text(percent_label(row.get('alert_matched') or 0, row.get('total') or 0))})</td>"
+        f"<td><div class=\"progress\"><i class=\"track\"><i class=\"fill zero\"></i></i><strong>{text(percent_label(row.get('alert_matched') or 0, row.get('total') or 0))}</strong></div></td>"
+        "</tr>"
+        for row in tactic_rows
+    ) or "<tr><td colspan=\"5\" class=\"empty\">전술별 커버리지 데이터가 없습니다.</td></tr>"
+
+    report_json_href = f"/reports/{text(report.get('report_id'))}"
     return f"""<!doctype html>
 <html lang="ko">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{text(report.get('campaign_name') or report.get('campaign_id'))} BAS 결과 보고서</title>
-  <style>
-    :root {{
-      color: #111827;
-      background: #f3f6f9;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      padding: 32px;
-      background: #f3f6f9;
-    }}
-    main {{ max-width: 1320px; margin: 0 auto; }}
-    header, section.panel {{
-      border: 1px solid #d9e2ec;
-      border-radius: 10px;
-      background: #fff;
-      box-shadow: 0 14px 34px rgba(15, 23, 42, 0.06);
-    }}
-    header {{
-      position: relative;
-      overflow: hidden;
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 170px;
-      gap: 22px;
-      padding: 26px 28px;
-      color: #0f172a;
-      border-top: 5px solid #0f766e;
-      background:
-        linear-gradient(90deg, rgba(15, 118, 110, 0.08), transparent 48%),
-        #fff;
-    }}
-    header::after {{
-      content: "";
-      position: absolute;
-      right: 28px;
-      bottom: 0;
-      width: 180px;
-      height: 4px;
-      background: linear-gradient(90deg, #0f766e, #2563eb);
-    }}
-    header > * {{ position: relative; z-index: 1; }}
-    .eyebrow {{ margin: 0 0 8px; color: #0f766e; font-size: 12px; font-weight: 900; letter-spacing: 0; }}
-    h1 {{ max-width: 840px; margin: 0 0 10px; font-size: 29px; line-height: 1.16; letter-spacing: 0; }}
-    h2 {{ margin: 0 0 8px; font-size: 18px; color: #0f172a; }}
-    .section-desc {{ margin: 0 0 16px; color: #64748b; }}
-    p, li {{ color: #475569; line-height: 1.68; }}
-    header p {{ max-width: 820px; color: #475569; }}
-    .meta {{ display: flex; flex-wrap: wrap; gap: 10px; color: #64748b; font-size: 13px; }}
-    .meta span {{ border: 1px solid #dbe4ee; border-radius: 999px; padding: 7px 11px; background: #f8fafc; color: #475569; }}
-    .score {{ display: grid; align-content: center; justify-items: center; border-radius: 9px; padding: 16px; background: #0f172a; color: #f8fafc; }}
-    .score strong {{ font-size: 44px; line-height: 1; }}
-    .score span {{ margin-top: 10px; color: #cbd5e1; font-weight: 900; }}
-    .score.good strong {{ color: #15803d; }}
-    .score.warn strong {{ color: #b45309; }}
-    .score.critical strong {{ color: #b91c1c; }}
-    .grid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0 0; }}
-    .metric {{
-      position: relative;
-      overflow: hidden;
-      border: 1px solid #dbe4ee;
-      border-radius: 9px;
-      padding: 15px;
-      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-    }}
-    .metric::before {{ content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: #64748b; }}
-    .metric-score::before {{ background: #0f172a; }}
-    .metric-total::before {{ background: #64748b; }}
-    .metric-detected::before {{ background: #16a34a; }}
-    .metric-blocked::before {{ background: #2563eb; }}
-    .metric-partial::before,
-    .metric-log::before,
-    .metric-alert::before {{ background: #f59e0b; }}
-    .metric-missed::before {{ background: #dc2626; }}
-    .metric-unchecked::before {{ background: #94a3b8; }}
-    .metric span {{ display: block; color: #64748b; font-size: 11px; font-weight: 900; }}
-    .metric strong {{ display: block; margin-top: 8px; color: #0f172a; font-size: 25px; line-height: 1; }}
-    section.panel {{ margin-top: 18px; padding: 24px; }}
-    section.panel h2 {{
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }}
-    section.panel h2::before {{
-      content: "";
-      width: 7px;
-      height: 24px;
-      border-radius: 999px;
-      background: #2563eb;
-    }}
-    .summary-list {{
-      border: 1px solid #e2e8f0;
-      border-radius: 9px;
-      padding: 14px 18px 14px 34px;
-      background: #f8fafc;
-    }}
-    .summary-list li + li {{ margin-top: 8px; }}
-    .flow-layout {{
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 14px;
-      align-items: start;
-    }}
-    .flow-track {{
-      display: flex;
-      gap: 34px;
-      overflow-x: auto;
-      min-height: 360px;
-      padding: 18px 14px 28px;
-      position: relative;
-      border: 1px solid #e2e8f0;
-      border-radius: 14px;
-      background:
-        radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.22) 1px, transparent 0) 0 0/22px 22px,
-        linear-gradient(180deg, #ffffff, #f8fafc);
-    }}
-    .flow-track::before {{
-      content: "";
-      position: absolute;
-      left: 38px;
-      right: 38px;
-      top: 156px;
-      height: 2px;
-      background: linear-gradient(90deg, rgba(37, 99, 235, 0), rgba(37, 99, 235, 0.32), rgba(15, 118, 110, 0.28), rgba(37, 99, 235, 0));
-    }}
-    .flow-stage {{
-      position: relative;
-      z-index: 1;
-      flex: 0 0 292px;
-      padding-top: 30px;
-    }}
-    .flow-stage.flow-lower {{
-      margin-top: 78px;
-    }}
-    .flow-stage:not(:last-child)::after {{
-      content: "";
-      position: absolute;
-      top: 93px;
-      right: -36px;
-      width: 36px;
-      height: 2px;
-      background: rgba(71, 85, 105, 0.42);
-      transform: rotate(18deg);
-      transform-origin: left center;
-    }}
-    .flow-stage.flow-lower:not(:last-child)::after {{
-      top: 54px;
-      transform: rotate(-18deg);
-    }}
-    .flow-stage:not(:last-child)::before {{
-      content: "";
-      position: absolute;
-      top: 100px;
-      right: -38px;
-      width: 0;
-      height: 0;
-      border-top: 5px solid transparent;
-      border-bottom: 5px solid transparent;
-      border-left: 8px solid rgba(71, 85, 105, 0.52);
-      transform: rotate(18deg);
-    }}
-    .flow-stage.flow-lower:not(:last-child)::before {{
-      top: 47px;
-      transform: rotate(-18deg);
-    }}
-    .flow-step-dot {{
-      position: absolute;
-      top: 0;
-      left: 18px;
-      display: grid;
-      place-items: center;
-      width: 38px;
-      height: 38px;
-      border-radius: 999px;
-      background: #0f172a;
-      color: #fff;
-      font-size: 12px;
-      font-weight: 950;
-      box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
-    }}
-    .flow-card {{
-      min-height: 190px;
-      border: 1px solid #dbe4ee;
-      border-top-width: 6px;
-      border-radius: 16px;
-      background: rgba(255, 255, 255, 0.94);
-      box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08);
-      overflow: hidden;
-    }}
-    .flow-stage header {{
-      padding: 17px 18px 12px;
-      border-bottom: 1px solid #e2e8f0;
-    }}
-    .flow-stage header strong,
-    .flow-stage header small {{ display: block; }}
-    .flow-stage header strong {{ color: #0f172a; font-size: 17px; letter-spacing: 0; }}
-    .flow-stage header small {{ margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 900; }}
-    .flow-route {{
-      margin: 0;
-      padding: 13px 18px 0;
-      color: #334155;
-      font-size: 13px;
-      line-height: 1.45;
-      font-weight: 800;
-    }}
-    .flow-assets {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 7px;
-      padding: 12px 18px 0;
-    }}
-    .flow-assets span {{
-      border: 1px solid #dbe4ee;
-      border-radius: 999px;
-      padding: 5px 9px;
-      background: #f8fafc;
-      color: #334155;
-      font-size: 11px;
-      font-weight: 900;
-    }}
-    .flow-status-strip {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 7px;
-      padding: 12px 18px 0;
-    }}
-    .flow-status-pill {{
-      border-radius: 999px;
-      padding: 5px 9px;
-      font-size: 11px;
-      font-weight: 950;
-    }}
-    .technique-chips {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      align-items: center;
-      padding: 12px 18px 18px;
-    }}
-    .technique-chips b {{
-      margin-right: 2px;
-      color: #64748b;
-      font-size: 10px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }}
-    .technique-chips span {{
-      border-radius: 7px;
-      padding: 5px 8px;
-      background: #eef2ff;
-      color: #3730a3;
-      font-size: 11px;
-      font-weight: 950;
-    }}
-    .stage-detected .flow-card {{ border-top-color: #16a34a; }}
-    .stage-partial .flow-card {{ border-top-color: #f59e0b; }}
-    .stage-missed .flow-card {{ border-top-color: #dc2626; }}
-    .stage-blocked .flow-card {{ border-top-color: #2563eb; }}
-    .stage-unchecked .flow-card {{ border-top-color: #94a3b8; }}
-    .stage-baseline .flow-card {{ border-top-color: #0f766e; }}
-    .legend-item.detected::before, .ttp-cell.detected, .badge.detected, .flow-status-pill.detected {{ background: #dcfce7; color: #166534; }}
-    .legend-item.partial::before, .ttp-cell.partial, .badge.partial, .flow-status-pill.partial {{ background: #fef3c7; color: #92400e; }}
-    .legend-item.missed::before, .ttp-cell.missed, .badge.missed, .flow-status-pill.missed {{ background: #fee2e2; color: #991b1b; }}
-    .legend-item.blocked::before, .ttp-cell.blocked, .badge.blocked, .flow-status-pill.blocked {{ background: #dbeafe; color: #1d4ed8; }}
-    .legend-item.unchecked::before, .ttp-cell.unchecked, .badge.unchecked, .flow-status-pill.unchecked {{ background: #e2e8f0; color: #334155; }}
-    .legend-item.baseline::before, .badge.baseline, .flow-status-pill.baseline {{ background: #ccfbf1; color: #0f766e; }}
-    .legend-box {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px 14px;
-      align-items: center;
-      border: 1px solid #dbe4ee;
-      border-radius: 10px;
-      padding: 14px;
-      background: #f8fafc;
-    }}
-    .legend-box strong {{ color: #0f172a; font-size: 13px; margin-right: 6px; }}
-    .legend-item {{
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: #475569;
-      font-size: 12px;
-      font-weight: 900;
-    }}
-    .legend-item::before {{
-      content: "";
-      width: 13px;
-      height: 13px;
-      border-radius: 4px;
-      border: 1px solid rgba(15, 23, 42, 0.08);
-    }}
-    .explain-grid {{
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-    }}
-    .explain-grid article {{
-      border: 1px solid #dbe4ee;
-      border-radius: 10px;
-      padding: 15px;
-      background: #f8fafc;
-    }}
-    .explain-grid strong {{ display: block; color: #0f172a; margin-bottom: 6px; }}
-    .explain-grid p {{ margin: 0; color: #64748b; font-size: 13px; }}
-    .matrix-head {{
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: start;
-      margin-bottom: 16px;
-    }}
-    .matrix-stats {{
-      display: grid;
-      grid-template-columns: repeat(5, minmax(78px, 1fr));
-      gap: 8px;
-      min-width: 500px;
-    }}
-    .matrix-stats span {{
-      border: 1px solid #dbe4ee;
-      border-radius: 8px;
-      padding: 9px 10px;
-      background: #f8fafc;
-      text-align: right;
-    }}
-    .matrix-stats span.executed {{ border-color: #f0b8b2; background: #fff7f6; }}
-    .matrix-stats b {{ display: block; color: #0f172a; font-size: 18px; line-height: 1; }}
-    .matrix-stats small {{ display: block; margin-top: 5px; color: #64748b; font-size: 10px; font-weight: 900; }}
-    .matrix-scroll {{
-      max-width: 100%;
-      overflow-x: auto;
-      border: 1px solid #dbe4ee;
-      border-radius: 4px;
-      background: #f8fafc;
-      -webkit-overflow-scrolling: touch;
-    }}
-    .mitre-board {{
-      min-width: 2240px;
-      display: grid;
-      grid-template-columns: repeat(14, minmax(150px, 1fr));
-      gap: 1px;
-      background: #dbe4ee;
-    }}
-    .mitre-column {{
-      min-height: 390px;
-      border: 0;
-      border-radius: 0;
-      background: #fff;
-      overflow: hidden;
-    }}
-    .mitre-column h3 {{
-      margin: 0;
-      min-height: 64px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 12px;
-      border-bottom: 1px solid #dbe4ee;
-      background: #f1f5f9;
-      color: #222831;
-      font-size: 12px;
-      font-weight: 800;
-      line-height: 1.25;
-      text-align: center;
-      overflow-wrap: anywhere;
-      word-break: keep-all;
-    }}
-    .ttp-cell {{
-      display: block;
-      margin: 8px;
-      min-height: 82px;
-      border-radius: 4px;
-      padding: 10px;
-      border: 1px solid #dbe4ee;
-      background: #fff;
-      color: #64748b;
-    }}
-    .ttp-cell strong, .ttp-cell small {{ display: block; }}
-    .ttp-cell strong {{ color: #222831; font-size: 13px; line-height: 1.35; font-weight: 850; }}
-    .ttp-cell code {{ color: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; font-weight: 850; }}
-    .ttp-cell small {{ margin-top: 6px; color: inherit; font-size: 11px; line-height: 1.35; font-weight: 800; }}
-    .ttp-cell.executed {{
-      border-color: #b42318;
-      background: #fff;
-      color: #b42318;
-      box-shadow: inset 4px 0 0 #b42318;
-    }}
-    .ttp-cell.executed strong {{ color: #b42318; }}
-    .ttp-cell.scope {{
-      border-color: #606975;
-      background: #f8fafc;
-      color: #475569;
-      box-shadow: inset 4px 0 0 #606975;
-    }}
-    .ttp-cell.library {{
-      border-color: #e2e8f0;
-      background: #fff;
-      color: #94a3b8;
-    }}
-    .ttp-cell.library strong {{ color: #64748b; }}
-    .ttp-cell.empty-cell {{
-      border-style: dashed;
-      background: #f8fafc;
-      color: #94a3b8;
-    }}
-    .matrix-legend {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 12px;
-      color: #64748b;
-      font-size: 12px;
-      font-weight: 900;
-    }}
-    .matrix-legend span {{
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-    }}
-    .matrix-legend i {{
-      width: 12px;
-      height: 12px;
-      border-radius: 3px;
-      border: 1px solid #dbe4ee;
-      background: #fff;
-    }}
-    .matrix-legend .executed i {{ border-color: #b42318; background: #fff7f6; }}
-    .matrix-legend .scope i {{ border-color: #606975; background: #f8fafc; }}
-    .matrix-legend .library i {{ background: #fff; }}
-    .impact-table td:first-child small {{ display: block; margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 800; }}
-    .impact-bar {{ display: grid; grid-template-columns: minmax(92px, 1fr) 42px; gap: 9px; align-items: center; min-width: 160px; }}
-    .impact-bar i {{ height: 9px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }}
-    .impact-bar i b {{ display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #22c55e, #f59e0b 54%, #ef4444); }}
-    .impact-bar strong {{ color: #0f172a; font-size: 12px; font-weight: 900; text-align: right; }}
-    .tactic-grid {{ display: grid; gap: 16px; }}
-    .tactic-chart {{
-      border: 1px solid #dbe4ee;
-      border-radius: 10px;
-      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-      overflow: hidden;
-      padding: 18px 18px 14px;
-    }}
-    .tactic-chart h3 {{ margin: 0 0 12px; color: #0f172a; font-size: 16px; text-align: center; }}
-    .chart-body {{ display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; align-items: start; }}
-    .chart-axis {{
-      display: grid;
-      grid-template-rows: repeat(10, 16px);
-      height: 160px;
-      padding-top: 1px;
-      color: #64748b;
-      font-size: 10px;
-      font-weight: 800;
-      text-align: right;
-    }}
-    .stacked-chart {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
-      align-items: end;
-      column-gap: 9px;
-      min-height: 214px;
-      padding: 8px 0 0;
-      background-image: linear-gradient(to top, #dbeafe 1px, transparent 1px);
-      background-size: 100% 16px;
-      border-bottom: 2px solid #cbd5e1;
-    }}
-    .stacked-bar-item {{ display: grid; grid-template-rows: 160px 18px minmax(34px, auto); justify-items: center; gap: 5px; min-width: 0; }}
-    .stacked-bar {{
-      align-self: end;
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-end;
-      width: 36px;
-      height: 160px;
-      overflow: hidden;
-      background: #e2e8f0;
-      border: 1px solid #dbe4ee;
-      border-radius: 3px 3px 0 0;
-    }}
-    .stacked-bar i {{ display: block; width: 100%; min-height: 0; }}
-    .stacked-bar .covered.log {{ background: #f97316; }}
-    .stacked-bar .covered.alert {{ background: #0ea5e9; }}
-    .stacked-bar .not-covered {{ background: #334155; }}
-    .stacked-bar-item strong {{ color: #334155; font-size: 11px; }}
-    .stacked-bar-item span {{ color: #334155; font-size: 10px; font-weight: 900; line-height: 1.15; text-align: center; word-break: keep-all; }}
-    .chart-legend {{ display: flex; justify-content: center; gap: 16px; margin-top: 10px; color: #334155; font-size: 11px; font-weight: 900; }}
-    .chart-legend span::before {{ content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 5px; border-radius: 2px; vertical-align: -1px; }}
-    .chart-legend .log-dot::before {{ background: #f97316; }}
-    .chart-legend .alert-dot::before {{ background: #0ea5e9; }}
-    .chart-legend .miss-dot::before {{ background: #334155; }}
-    table {{ width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }}
-    th, td {{ border-bottom: 1px solid #e2e8f0; padding: 12px 13px; text-align: left; vertical-align: top; }}
-    th {{ color: #475569; background: #f1f5f9; font-size: 12px; position: sticky; top: 0; z-index: 1; }}
-    th span, th small {{ display: block; }}
-    th span {{ color: #0f172a; font-size: 12px; font-weight: 900; }}
-    th small {{ margin-top: 3px; color: #64748b; font-size: 10px; font-weight: 800; }}
-    td {{ background: #fff; }}
-    tbody tr:nth-child(even) td {{ background: #fbfdff; }}
-    tbody tr:hover td {{ background: #f8fafc; }}
-    tbody tr.row-good td:first-child {{ border-left: 4px solid #16a34a; }}
-    tbody tr.row-warn td:first-child {{ border-left: 4px solid #d97706; }}
-    tbody tr.row-critical td:first-child {{ border-left: 4px solid #dc2626; }}
-    tbody tr.row-blocked td:first-child {{ border-left: 4px solid #64748b; }}
-    .table-wrap {{ overflow-x: auto; border: 1px solid #dbe4ee; border-radius: 10px; background: #fff; }}
-    .report-shell {{ display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 18px; margin-top: 18px; align-items: start; }}
-    .report-nav {{
-      position: sticky;
-      top: 18px;
-      display: grid;
-      gap: 7px;
-      padding: 13px;
-      border: 1px solid #d9e2ec;
-      border-radius: 10px;
-      background: rgba(255, 255, 255, 0.94);
-      box-shadow: 0 18px 44px rgba(15, 23, 42, 0.07);
-    }}
-    .report-nav span {{ padding: 4px 6px 8px; color: #64748b; font-size: 11px; font-weight: 900; text-transform: uppercase; }}
-    .report-nav button {{
-      width: 100%;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 12px 13px;
-      background: transparent;
-      color: #334155;
-      font: inherit;
-      font-size: 13px;
-      font-weight: 900;
-      text-align: left;
-      cursor: pointer;
-    }}
-    .report-nav button:hover,
-    .report-nav button.active {{ border-color: #2563eb; background: #0f172a; color: #f8fafc; }}
-    .report-content {{ min-width: 0; }}
-    .report-block {{ display: none; margin-top: 0; }}
-    .report-block.active {{ display: block; }}
-    .report-block > .panel:first-child {{ margin-top: 0; }}
-    .coverage-table {{ min-width: 1450px; }}
-    .asset-control-table td:first-child small {{ display: block; margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 800; }}
-    .gap-analysis-table {{ min-width: 1180px; }}
-    .gap-analysis-table td:first-child small {{ display: block; margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 800; }}
-    .badge {{
-      display: inline-flex;
-      align-items: center;
-      min-height: 24px;
-      border-radius: 999px;
-      padding: 4px 10px;
-      font-size: 12px;
-      font-weight: 900;
-      white-space: nowrap;
-    }}
-    .badge.good {{ color: #166534; background: #dcfce7; }}
-    .badge.warn {{ color: #92400e; background: #fef3c7; }}
-    .badge.critical {{ color: #991b1b; background: #fee2e2; }}
-    .badge.detected {{ color: #166534; background: #dcfce7; }}
-    .badge.partial {{ color: #92400e; background: #fef3c7; }}
-    .badge.missed {{ color: #991b1b; background: #fee2e2; }}
-    .badge.blocked {{ color: #1d4ed8; background: #dbeafe; }}
-    .badge.baseline {{ color: #0f766e; background: #ccfbf1; }}
-    .badge.unchecked,
-    .badge.neutral {{ color: #334155; background: #e2e8f0; }}
-    .empty {{ color: #64748b; text-align: center; }}
-    @media (max-width: 820px) {{
-      body {{ padding: 16px; }}
-      header {{ grid-template-columns: 1fr; padding: 24px; }}
-      h1 {{ font-size: 28px; }}
-      .report-shell {{ grid-template-columns: 1fr; }}
-      .report-nav {{ position: static; }}
-      .grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-      .flow-layout {{ grid-template-columns: 1fr; }}
-      .explain-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-      .matrix-head {{ display: grid; }}
-      .matrix-stats {{ grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; }}
-      .matrix-stats span {{ text-align: left; }}
-      .chart-body {{ grid-template-columns: 36px minmax(0, 1fr); }}
-      .stacked-chart {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-    }}
-    @media (max-width: 520px) {{
-      body {{ padding: 12px; }}
-      header {{ padding: 22px; }}
-      h1 {{ font-size: 26px; line-height: 1.16; }}
-      section.panel {{ padding: 18px; }}
-      .grid {{ grid-template-columns: 1fr; }}
-      .explain-grid {{ grid-template-columns: 1fr; }}
-    }}
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div>
-        <p class="eyebrow">BAS 탐지 커버리지 검증 보고서</p>
-        <h1>{text(report.get('campaign_name') or report.get('campaign_id'))} 실행 결과</h1>
-        <p>이 보고서는 공격 성공 여부보다 로그 수집, 탐지 룰, 커버리지 공백, 시스템 영향도, 개선 방향을 기준으로 BAS 실행 결과를 정리합니다.</p>
-        <div class="meta">
-          <span>Report {text(report.get('report_id'))}</span>
-          <span>대상 {text(report.get('campaign_id'))}</span>
-          <span>생성 시각 {text(report.get('generated_at'))}</span>
-        </div>
-      </div>
-      <div class="score {score_class}">
-        <strong>{score}</strong>
-        <span>{text(score_label)}</span>
-      </div>
-    </header>
-    <div class="report-shell">
-      <aside class="report-nav" aria-label="Report sections">
-        <span>Report View</span>
-        <button type="button" class="active" data-target="summary">한눈에 보기</button>
-        <button type="button" data-target="detection">탐지 결과</button>
-        <button type="button" data-target="improvement">개선 방향</button>
-        <button type="button" data-target="appendix">부록</button>
-      </aside>
-      <div class="report-content">
-        <div class="report-block active" data-section="summary">
-          <section class="panel">
-            <h2>핵심 지표</h2>
-            <p class="section-desc">탐지 체계가 실제 로그와 알림까지 이어졌는지 요약한 값입니다.</p>
-            <div class="grid">{metrics_html}</div>
-          </section>
-          <section class="panel">
-            <div class="matrix-head">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{text(report_title)} BAS 실행 결과 보고서</title>
+    <style>
+      :root {{
+        color-scheme: light;
+        --page: #eef3f7;
+        --paper: #ffffff;
+        --panel: #f8fafc;
+        --panel-strong: #f1f5f9;
+        --ink: #0f172a;
+        --muted: #5f6f85;
+        --subtle: #8a98aa;
+        --line: #d7e0ea;
+        --soft-line: #e7edf4;
+        --blue: #2563eb;
+        --blue-soft: #dbeafe;
+        --teal: #0f766e;
+        --green: #15803d;
+        --green-soft: #dcfce7;
+        --amber: #b45309;
+        --amber-soft: #fef3c7;
+        --red: #b42318;
+        --red-soft: #fee2e2;
+        --slate: #334155;
+        --shadow: 0 18px 55px rgba(15, 23, 42, 0.1);
+        --radius: 8px;
+      }}
+      * {{ box-sizing: border-box; }}
+      html {{ scroll-behavior: smooth; }}
+      body {{
+        margin: 0;
+        background: linear-gradient(180deg, rgba(255,255,255,.45), rgba(255,255,255,0)), var(--page);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+        font-size: 14px;
+        line-height: 1.55;
+        letter-spacing: 0;
+      }}
+      a {{ color: inherit; }}
+      .shell {{ width: min(1320px, calc(100vw - 44px)); margin: 28px auto; }}
+      .paper {{ overflow: hidden; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }}
+      .header {{
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        gap: 28px;
+        padding: 30px 34px 24px;
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(135deg, rgba(15,118,110,.08), rgba(37,99,235,.05)), #fff;
+      }}
+      .title-row {{ display: flex; align-items: flex-start; gap: 14px; }}
+      .mark {{ display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid #b8c7d8; border-radius: 8px; color: var(--teal); background: #fff; flex: 0 0 auto; }}
+      h1, h2, h3, p {{ margin: 0; }}
+      h1 {{ font-size: clamp(25px, 3vw, 34px); line-height: 1.14; font-weight: 850; letter-spacing: 0; }}
+      .subtitle {{ margin-top: 7px; color: var(--muted); font-size: 14px; font-weight: 620; }}
+      .meta {{ display: grid; gap: 10px; align-content: start; padding: 2px 0 0; }}
+      .meta-row {{ display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; color: var(--ink); font-size: 13px; }}
+      .meta-row span {{ color: var(--muted); font-weight: 800; }}
+      .summary-band {{ display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center; margin-top: 22px; padding: 17px 18px; border: 1px solid #9ac8dc; border-radius: var(--radius); background: linear-gradient(90deg, #f0fcff, #fff); }}
+      .summary-band strong {{ color: var(--teal); font-size: 15px; }}
+      .summary-band p {{ color: var(--ink); font-size: 17px; font-weight: 780; word-break: keep-all; }}
+      .summary-band em {{ color: var(--green); font-style: normal; }}
+      .summary-band b {{ color: var(--red); }}
+      .section {{ padding: 18px 34px 0; }}
+      .section:last-child {{ padding-bottom: 30px; }}
+      .section-title {{ display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }}
+      .section-title h2 {{ font-size: 17px; font-weight: 830; letter-spacing: 0; }}
+      .section-title span {{ color: var(--muted); font-size: 12px; font-weight: 760; }}
+      .kpi-grid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }}
+      .kpi-card {{ display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 13px; align-items: center; min-height: 106px; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }}
+      .icon-box {{ display: grid; place-items: center; width: 42px; height: 42px; border-radius: 8px; border: 1px solid currentColor; }}
+      .good {{ color: var(--green); }} .warn {{ color: var(--amber); }} .bad {{ color: var(--red); }} .info {{ color: var(--blue); }} .neutral {{ color: var(--slate); }}
+      .kpi-card span {{ display: block; color: var(--muted); font-size: 12px; font-weight: 760; }}
+      .kpi-card strong {{ display: block; margin-top: 3px; color: var(--ink); font-size: 29px; line-height: 1; font-weight: 850; }}
+      .kpi-card small {{ display: block; margin-top: 5px; color: var(--subtle); font-size: 11px; font-weight: 720; }}
+      svg {{ width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }}
+      .tiny-icon {{ width: 15px; height: 15px; color: var(--slate); }}
+      .matrix-panel {{ border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }}
+      .matrix-head {{ display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--soft-line); }}
+      .matrix-head p {{ color: var(--muted); font-size: 12px; font-weight: 660; }}
+      .matrix-stats {{ display: grid; grid-template-columns: repeat(5, minmax(78px, 1fr)); gap: 8px; min-width: 500px; }}
+      .matrix-stats span {{ border: 1px solid var(--soft-line); border-radius: 8px; padding: 8px 10px; background: var(--panel); text-align: right; }}
+      .matrix-stats span.executed {{ border-color: #f0b8b2; background: #fff7f6; }}
+      .matrix-stats b {{ display: block; color: var(--ink); font-size: 18px; line-height: 1; }}
+      .matrix-stats small {{ display: block; margin-top: 5px; color: var(--muted); font-size: 10px; font-weight: 900; }}
+      .matrix-scroll {{ max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-strong); -webkit-overflow-scrolling: touch; }}
+      .mitre-board {{ min-width: 2240px; display: grid; grid-template-columns: repeat(14, minmax(150px, 1fr)); gap: 1px; background: var(--line); }}
+      .mitre-column {{ min-height: 390px; display: flex; flex-direction: column; background: #fff; }}
+      .mitre-column h3 {{ min-height: 64px; display: flex; align-items: center; justify-content: center; margin: 0; padding: 12px; border-bottom: 1px solid var(--line); background: var(--panel-strong); color: #222831; font-size: 12px; font-weight: 800; line-height: 1.25; text-align: center; overflow-wrap: anywhere; word-break: keep-all; }}
+      .ttp-cell {{ display: block; min-height: 82px; margin: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--muted); }}
+      .ttp-cell strong, .ttp-cell small {{ display: block; }}
+      .ttp-cell strong {{ color: #222831; font-size: 13px; line-height: 1.35; font-weight: 850; }}
+      .ttp-cell code {{ color: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; font-weight: 850; }}
+      .ttp-cell small {{ margin-top: 6px; color: inherit; font-size: 11px; line-height: 1.35; font-weight: 800; }}
+      .ttp-cell.executed {{ border-color: var(--red); background: #fff; color: var(--red); box-shadow: inset 4px 0 0 var(--red); }}
+      .ttp-cell.executed strong {{ color: var(--red); }}
+      .ttp-cell.scope {{ border-color: #606975; background: #f8fafc; color: #475569; box-shadow: inset 4px 0 0 #606975; }}
+      .ttp-cell.library {{ border-color: #e2e8f0; background: #fff; color: #94a3b8; }}
+      .ttp-cell.library strong {{ color: #64748b; }}
+      .ttp-cell.empty-cell {{ border-style: dashed; background: #f8fafc; color: #94a3b8; }}
+      .legend {{ display: flex; flex-wrap: wrap; gap: 10px; padding: 0 16px 14px; }}
+      .legend span {{ display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 760; }}
+      .legend i {{ width: 11px; height: 11px; border-radius: 3px; border: 1px solid var(--line); }}
+      .path {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 28px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }}
+      .path-node {{ position: relative; min-height: 112px; padding: 15px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }}
+      .path-node:not(:last-child)::after {{ content: ""; position: absolute; top: 50%; right: -15px; width: 16px; height: 16px; border-top: 2px solid #66758a; border-right: 2px solid #66758a; transform: translateY(-50%) rotate(45deg); }}
+      .path-node strong {{ display: block; font-size: 13px; font-weight: 840; }}
+      .path-node small {{ display: block; margin-top: 7px; min-height: 34px; color: var(--muted); font-size: 12px; font-weight: 650; }}
+      .chip {{ display: inline-flex; align-items: center; margin-top: 10px; padding: 5px 8px; border-radius: 999px; font-size: 11px; font-weight: 840; background: var(--panel); }}
+      .chip.good {{ background: var(--green-soft); }} .chip.warn {{ background: var(--amber-soft); }} .chip.bad {{ background: var(--red-soft); }} .chip.info {{ background: var(--blue-soft); }}
+      .environment {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }}
+      .asset {{ min-height: 128px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }}
+      .asset-head {{ display: flex; align-items: center; gap: 8px; }}
+      .asset-head strong {{ font-size: 13px; }}
+      .asset p {{ margin-top: 10px; min-height: 36px; color: var(--muted); font-size: 12px; }}
+      .status {{ display: inline-flex; align-items: center; gap: 6px; color: var(--teal); font-size: 11px; font-weight: 820; }}
+      .dot {{ width: 7px; height: 7px; border-radius: 999px; background: currentColor; }}
+      .metric-explainer {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }}
+      .explain-card {{ min-height: 118px; padding: 15px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }}
+      .explain-card strong {{ display: block; color: var(--ink); font-size: 13px; }}
+      .explain-card p {{ margin-top: 8px; color: var(--muted); font-size: 12px; font-weight: 650; }}
+      .split {{ display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr); gap: 16px; }}
+      .panel {{ border: 1px solid var(--line); border-radius: var(--radius); background: #fff; overflow: hidden; }}
+      .panel-header {{ padding: 14px 16px; border-bottom: 1px solid var(--soft-line); background: var(--panel); }}
+      .panel-header h3 {{ font-size: 15px; }}
+      .panel-header p {{ margin-top: 4px; color: var(--muted); font-size: 12px; }}
+      .table-scroll {{ overflow-x: auto; }}
+      table {{ width: 100%; border-collapse: collapse; min-width: 640px; }}
+      th, td {{ padding: 11px 12px; border-bottom: 1px solid var(--soft-line); text-align: left; vertical-align: top; font-size: 12px; }}
+      th {{ background: var(--panel-strong); color: var(--ink); font-weight: 850; }}
+      td {{ color: var(--slate); }}
+      .num.good {{ color: var(--green); font-weight: 850; }} .num.bad {{ color: var(--red); font-weight: 850; }}
+      .progress {{ display: grid; grid-template-columns: minmax(90px, 1fr) 36px; gap: 8px; align-items: center; min-width: 130px; }}
+      .track {{ display: block; height: 8px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }}
+      .fill {{ display: block; height: 100%; background: var(--blue); }} .fill.zero {{ width: 0; }}
+      .backlog-list {{ display: grid; gap: 10px; padding: 14px; }}
+      .backlog-item {{ padding: 12px; border: 1px solid var(--soft-line); border-radius: var(--radius); background: var(--panel); }}
+      .backlog-item strong {{ display: block; font-size: 13px; }}
+      .backlog-item p {{ margin-top: 6px; color: var(--muted); font-size: 12px; }}
+      .evidence-grid {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }}
+      .evidence-link {{ padding: 13px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; text-decoration: none; }}
+      .evidence-link strong {{ display: block; font-size: 13px; }}
+      .evidence-link span {{ display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }}
+      .empty {{ padding: 16px; color: var(--muted); text-align: center; }}
+      @media (max-width: 980px) {{
+        .shell {{ width: min(100% - 20px, 1320px); margin: 10px auto; }}
+        .header {{ grid-template-columns: 1fr; padding: 24px 20px; }}
+        .meta-row {{ grid-template-columns: 92px minmax(0, 1fr); }}
+        .summary-band {{ grid-template-columns: 1fr; }}
+        .section {{ padding: 18px 20px 0; }}
+        .kpi-grid, .environment, .metric-explainer, .evidence-grid {{ grid-template-columns: 1fr; }}
+        .path {{ grid-template-columns: 1fr; gap: 10px; }}
+        .path-node:not(:last-child)::after {{ display: none; }}
+        .split {{ grid-template-columns: 1fr; }}
+        .matrix-stats {{ grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; width: 100%; }}
+        .matrix-stats span {{ text-align: left; }}
+      }}
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <article class="paper" aria-label="SpaceBar BAS 실행 결과 보고서">
+        <header class="header">
+          <div>
+            <div class="title-row">
+              <div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3.5 8 7 10 3.5-2 7-5 7-10V6l-7-3Z" /><path d="m8.5 12 2.4 2.4 5-5" /></svg></div>
               <div>
-                <h2>TTPs Matrix View</h2>
-                <p class="section-desc">BAS Library 전체 Technique 중 현재 캠페인 범위와 실제 실행 Technique을 구분해 보여줍니다.</p>
+                <h1>SpaceBar BAS 실행 결과 보고서</h1>
+                <p class="subtitle">{subtitle}</p>
               </div>
+            </div>
+            <div class="summary-band">
+              <strong>Executive Summary</strong>
+              <p>{text(report.get('campaign_id'))} 환경에서 <em>{text(executed_count)}/{text(attack_total)} Technique</em>을 실행했고, 원천 로그는 <em>{text(log_matched_count)}/{text(attack_total)}</em>, Kibana Alert는 <b>{text(alert_matched_count)}/{text(attack_total)}</b>으로 확인됐습니다.</p>
+            </div>
+          </div>
+          <aside class="meta" aria-label="보고서 메타데이터">
+            <div class="meta-row"><span>보고서 ID</span><strong>{text(report.get('report_id'))}</strong></div>
+            <div class="meta-row"><span>대상 환경</span><strong>{text(report.get('campaign_id'))}</strong></div>
+            <div class="meta-row"><span>생성 시각</span><strong>{text(report.get('generated_at'))}</strong></div>
+            <div class="meta-row"><span>캠페인</span><strong>{text(report_title)}</strong></div>
+          </aside>
+        </header>
+
+        <section class="section" aria-label="핵심 지표">
+          <div class="section-title"><svg class="tiny-icon" viewBox="0 0 24 24"><path d="M4 19V5" /><path d="M4 19h16" /><path d="M8 16v-5M12 16V8M16 16v-3" /></svg><h2>핵심 지표</h2><span>이번 BAS 실행 결과를 퍼센티지와 개수로 먼저 요약</span></div>
+          <div class="kpi-grid">{kpi_cards_html}</div>
+        </section>
+
+        <section class="section" aria-label="TTP 매트릭스">
+          <div class="section-title"><svg class="tiny-icon" viewBox="0 0 24 24"><path d="M3 5h18M3 12h18M3 19h18" /><path d="M8 5v14M16 5v14" /></svg><h2>TTPs Matrix View</h2><span>BAS Library 전체 Technique 기준</span></div>
+          <div class="matrix-panel">
+            <div class="matrix-head">
+              <p>BAS Library 전체 Technique을 배치하고, 이번 BAS 실행 Technique만 빨간 테두리와 글자색으로 표시했습니다.</p>
               {matrix_ratio_html}
             </div>
-            <div class="matrix-scroll">
-              <div class="mitre-board">{mitre_matrix_html}</div>
+            <div class="matrix-scroll"><div class="mitre-board">{mitre_matrix_html}</div></div>
+            <div class="legend" aria-label="매트릭스 범례">
+              <span><i style="background: #fff7f6; border-color: #b42318"></i>이번 BAS 실행 Technique</span>
+              <span><i style="background: #f8fafc; border-color: #606975"></i>현재 캠페인 Scope이나 이번 실행 미포함</span>
+              <span><i style="background: #ffffff"></i>BAS Library Technique</span>
             </div>
-            <div class="matrix-legend" aria-label="TTP matrix legend">
-              <span class="executed"><i></i>이번 BAS 실행 Technique</span>
-              <span class="scope"><i></i>현재 캠페인 Scope이나 이번 실행 미포함</span>
-              <span class="library"><i></i>BAS Library에 등록된 다른 캠페인 Technique</span>
+          </div>
+        </section>
+
+        <section class="section" aria-label="공격 타임라인과 환경">
+          <div class="section-title"><svg class="tiny-icon" viewBox="0 0 24 24"><path d="M4 17h4M12 17h8M8 17l4-10 4 10" /><path d="M12 7v10" /></svg><h2>공격 타임라인</h2><span>자산 기준 공격 흐름을 먼저 보여준 뒤 세부 결과로 내려갑니다</span></div>
+          <div class="path">{path_nodes_html}</div>
+          <div class="section-title" style="margin-top: 16px"><svg class="tiny-icon" viewBox="0 0 24 24"><path d="M4 6h16v10H4z" /><path d="M8 20h8M12 16v4" /></svg><h2>환경 요약</h2><span>BAS Agent 및 ELK 관측 대상</span></div>
+          <div class="environment">{environment_html}</div>
+        </section>
+
+        <section class="section" aria-label="핵심 지표 설명">
+          <div class="section-title"><svg class="tiny-icon" viewBox="0 0 24 24"><path d="M12 17v-6" /><path d="M12 8h.01" /><circle cx="12" cy="12" r="9" /></svg><h2>핵심 지표 설명</h2><span>실행 성공과 탐지 성공을 분리해서 해석</span></div>
+          <div class="metric-explainer">
+            <div class="explain-card"><strong>실행 성공은 공격 흐름 검증</strong><p>Technique이 실제 환경에서 수행됐다는 뜻이며, 탐지 체계가 잡았다는 의미는 아닙니다.</p></div>
+            <div class="explain-card"><strong>원천 로그는 센서 가시성</strong><p>Sysmon, Windows Security, PowerShell, WinRM 로그가 ELK까지 들어왔는지 판단합니다.</p></div>
+            <div class="explain-card"><strong>Alert 탐지는 운영 탐지 룰</strong><p>Kibana Detection Rule이 실제 알림을 만들었는지 봅니다.</p></div>
+            <div class="explain-card"><strong>백로그는 후속 조치</strong><p>로그는 남았지만 Alert가 없는 Technique을 탐지 룰 튜닝 또는 신규 룰 작성 항목으로 전환합니다.</p></div>
+          </div>
+        </section>
+
+        <section class="section" aria-label="탐지 결과와 개선 백로그">
+          <div class="split">
+            <div class="panel">
+              <div class="panel-header"><h3>탐지 커버리지 요약</h3><p>MITRE tactic 단위로 실행, 로그 수집, 알림 탐지를 분리</p></div>
+              <div class="table-scroll">
+                <table>
+                  <thead><tr><th>단계</th><th>실행</th><th>로그 수집</th><th>알림 탐지</th><th>탐지 커버리지</th></tr></thead>
+                  <tbody>{tactic_summary_rows}</tbody>
+                </table>
+              </div>
             </div>
-          </section>
-          <section class="panel">
-            <h2>공격 흐름 / Flow</h2>
-            <p class="section-desc">실행 Technique의 흐름을 보여주고, 색상은 탐지 결과와 실행 상태의 의미에만 사용합니다.</p>
-            <div class="flow-layout">
-              <div class="flow-track">{flow_html}</div>
-              <aside class="legend-box">
-                <strong>색상 의미</strong>
-                {flow_legend_html}
-              </aside>
+            <div class="panel">
+              <div class="panel-header"><h3>개선 백로그</h3><p>미탐/부분탐지 항목의 후속 조치</p></div>
+              <div class="table-scroll">
+                <table>
+                  <thead><tr><th>우선순위</th><th>Technique</th><th>공백 유형</th><th>개선 방향</th><th>검증 방법</th></tr></thead>
+                  <tbody>{backlog_rows}</tbody>
+                </table>
+              </div>
             </div>
-          </section>
-          <section class="panel">
-            <h2>지표 설명</h2>
-            <p class="section-desc">정상 데이터와 공격 데이터를 분리하고, 로그 수집과 알림 발생을 따로 판단합니다.</p>
-            <div class="explain-grid">{explanation_cards_html}</div>
-            <ul class="summary-list">{meaning_html}</ul>
-          </section>
-          <section class="panel">
-            <h2>커버리지 결과</h2>
-            <p class="section-desc">MITRE tactic 단위로 로그 수집 여부와 실제 알림 발생 여부를 분리해 보여줍니다.</p>
-            <div class="tactic-grid">{tactic_chart_html}</div>
-          </section>
-        </div>
-        <div class="report-block" data-section="detection">
-          <section class="panel">
-            <h2>미탐 원인 및 필요 센서</h2>
-            <p class="section-desc">미탐, 부분탐지, 검증 미완료 항목만 모아 왜 안 잡혔는지와 어떤 센서가 필요한지 보여줍니다.</p>
-            <div class="table-wrap">
-              <table class="gap-analysis-table">
-                <thead>
-                  <tr>
-                    {th("테크닉", "Technique")}
-                    {th("탐지 결과", "Detection Result")}
-                    {th("공백 유형", "Gap Type")}
-                    {th("왜 안 잡혔는지", "Why It Was Missed")}
-                    {th("필요 센서", "Required Sensor")}
-                    {th("개선 계획", "Improvement Plan")}
-                  </tr>
-                </thead>
-                <tbody>{gap_analysis_rows}</tbody>
-              </table>
-            </div>
-          </section>
-          <section class="panel">
-            <h2>BAS 상세 결과표</h2>
-            <p class="section-desc">Technique별로 기대 로그, 탐지 룰, 탐지 결과, 영향도, 개선 방향만 남긴 발표용 결과표입니다.</p>
-            <div class="table-wrap">
-              <table class="coverage-table">
-                <thead>
-                  <tr>
-                    {th("테크닉 ID", "Technique ID")}
-                    {th("공격명", "Attack Name")}
-                    {th("대상 자산", "Target Asset")}
-                    {th("기대 로그", "Expected Log")}
-                    {th("탐지 룰", "Detection Rule")}
-                    {th("탐지 결과", "Detection Result")}
-                    {th("커버리지 상태", "Coverage Status")}
-                    {th("시스템 영향도", "System Impact")}
-                    {th("위험도", "Risk Level")}
-                    {th("권장 센서", "Recommended Sensor")}
-                    {th("개선 계획", "Improvement Plan")}
-                  </tr>
-                </thead>
-                <tbody>{coverage_rows}</tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-        <div class="report-block" data-section="improvement">
-          <section class="panel">
-            <h2>자산/보안 솔루션 매핑</h2>
-            <p class="section-desc">현재 환경의 자산, 보안 솔루션, 로그 소스가 어떤 공격 흐름을 볼 수 있는지 요약합니다.</p>
-            <div class="table-wrap">
-              <table class="asset-control-table">
-                <thead>
-                  <tr>
-                    {th("자산", "Asset")}
-                    {th("보안 솔루션", "Security Control")}
-                    {th("로그 소스", "Log Source")}
-                    {th("커버리지", "Coverage")}
-                  </tr>
-                </thead>
-                <tbody>{asset_mapping_rows}</tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-        <div class="report-block" data-section="appendix">
-          <section class="panel">
-            <h2>원본 파일 링크</h2>
-            <p class="section-desc">아래 파일들은 사람이 바로 읽기보다 검증, 재현, 스프레드시트 분석, ATT&CK Navigator 업로드를 위한 원본 자료입니다.</p>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    {th("자료", "Artifact")}
-                    {th("내용", "Description")}
-                    {th("링크", "Link")}
-                  </tr>
-                </thead>
-                <tbody>{appendix_rows}</tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-      </div>
-    </div>
-  </main>
-  <script>
-    const reportButtons = document.querySelectorAll(".report-nav button");
-    const reportBlocks = document.querySelectorAll(".report-block");
-    function activateReportSection(id) {{
-      reportButtons.forEach((button) => button.classList.toggle("active", button.dataset.target === id));
-      reportBlocks.forEach((block) => block.classList.toggle("active", block.dataset.section === id));
-    }}
-    reportButtons.forEach((button) => {{
-      button.addEventListener("click", () => activateReportSection(button.dataset.target));
-    }});
-  </script>
-</body>
+          </div>
+        </section>
+
+        <section class="section" aria-label="증거와 산출물">
+          <div class="section-title"><svg class="tiny-icon" viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /><path d="M8 8h8M8 12h8M8 16h5" /></svg><h2>증거와 산출물</h2><span>후속 분석을 위한 원본 자료</span></div>
+          <div class="evidence-grid">
+            <a class="evidence-link" href="{report_json_href}"><strong>Report JSON</strong><span>분류 전/후 실행 결과</span></a>
+            <a class="evidence-link" href="technical.md"><strong>technical.md</strong><span>Technique별 상세 근거</span></a>
+            <a class="evidence-link" href="coverage.csv"><strong>coverage.csv</strong><span>커버리지 매핑표</span></a>
+            <a class="evidence-link" href="backlog.csv"><strong>backlog.csv</strong><span>탐지 개선 백로그</span></a>
+            <a class="evidence-link" href="navigator.json"><strong>navigator.json</strong><span>ATT&CK Navigator Layer</span></a>
+          </div>
+        </section>
+      </article>
+    </main>
+  </body>
 </html>"""
 
 

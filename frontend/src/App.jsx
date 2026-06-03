@@ -24,15 +24,70 @@ const ASSET_POSITIONS = {
 
 const MAP_POSITION_OVERRIDES = {
   "SB-AD": {
-    fs01: { left: 61.5, top: 34 },
-    elk: { left: 61.5, top: 77.5 },
+    attacker: { left: 13.5, top: 52 },
+    pc01: { left: 36.5, top: 46 },
+    fs01: { left: 61.5, top: 36 },
+    dc01: { left: 87, top: 50 },
+    elk: { left: 61.5, top: 73 },
   },
   "SB-05": {
-    "sb05-kubernetes": { left: 37.5, top: 34 },
-    "prod-platform": { left: 37.5, top: 78 },
-    "sb05-elk": { left: 85.5, top: 34 },
-    "cloudtrail-sqs-pipeline": { left: 85.5, top: 78 },
+    "sb05-attacker": { left: 13.5, top: 52 },
+    "sb05-kubernetes": { left: 37.5, top: 36 },
+    "prod-platform": { left: 37.5, top: 73 },
+    "sb05-k8s-drain": { left: 62.5, top: 49 },
+    "sb05-elk": { left: 85.5, top: 36 },
+    "cloudtrail-sqs-pipeline": { left: 85.5, top: 73 },
   },
+  "SB-01": {
+    "bas-operator": { left: 10.5, top: 50 },
+    "jenkins-controller": { left: 30, top: 39 },
+    "nginx-app": { left: 50, top: 49 },
+    "postgresql-db": { left: 69, top: 58 },
+    "elk-siem": { left: 89, top: 43 },
+  },
+  "SB-AV": {
+    external: { left: 9.5, top: 54 },
+    bastion: { left: 25.5, top: 42 },
+    pms: { left: 41.5, top: 48 },
+    win01: { left: 57.5, top: 39 },
+    dc01: { left: 73.5, top: 51 },
+    soc01: { left: 89.5, top: 44 },
+  },
+};
+
+const MAP_LINK_OVERRIDES = {
+  "SB-AD": [
+    { source_asset_id: "attacker", target_asset_id: "pc01", label: "초기 실행 지점", tone: "red" },
+    { source_asset_id: "pc01", target_asset_id: "fs01", label: "파일 서버 접근", tone: "red" },
+    { source_asset_id: "pc01", target_asset_id: "dc01", label: "AD 조회 / 인증 이벤트", tone: "amber" },
+    { source_asset_id: "fs01", target_asset_id: "elk", label: "서버 로그 수집", tone: "blue" },
+    { source_asset_id: "dc01", target_asset_id: "elk", label: "도메인 로그 수집", tone: "blue" },
+  ],
+  "SB-05": [
+    { source_asset_id: "sb05-attacker", target_asset_id: "sb05-kubernetes", label: "kubeconfig 기반 API 접근", tone: "red" },
+    { source_asset_id: "sb05-kubernetes", target_asset_id: "prod-platform", label: "업무 namespace 검증", tone: "red" },
+    { source_asset_id: "sb05-attacker", target_asset_id: "sb05-k8s-drain", label: "수집 archive 업로드", tone: "amber" },
+    { source_asset_id: "sb05-kubernetes", target_asset_id: "sb05-elk", label: "Kubernetes audit log", tone: "blue" },
+    { source_asset_id: "sb05-k8s-drain", target_asset_id: "cloudtrail-sqs-pipeline", label: "CloudTrail data event", tone: "amber" },
+    { source_asset_id: "cloudtrail-sqs-pipeline", target_asset_id: "sb05-elk", label: "AWS 로그 전달", tone: "blue" },
+  ],
+  "SB-01": [
+    { source_asset_id: "bas-operator", target_asset_id: "jenkins-controller", label: "Jenkins 접근 검증", tone: "red" },
+    { source_asset_id: "jenkins-controller", target_asset_id: "nginx-app", label: "배포 키 기반 App 접근", tone: "red" },
+    { source_asset_id: "nginx-app", target_asset_id: "postgresql-db", label: "업무 DB 조회", tone: "amber" },
+    { source_asset_id: "jenkins-controller", target_asset_id: "elk-siem", label: "Jenkins 로그 수집", tone: "blue" },
+    { source_asset_id: "nginx-app", target_asset_id: "elk-siem", label: "App / audit 로그 수집", tone: "blue" },
+    { source_asset_id: "postgresql-db", target_asset_id: "elk-siem", label: "DB 로그 수집", tone: "blue" },
+  ],
+  "SB-AV": [
+    { source_asset_id: "external", target_asset_id: "bastion", label: "외부 진입", tone: "red" },
+    { source_asset_id: "bastion", target_asset_id: "pms", label: "PMS 접근", tone: "red" },
+    { source_asset_id: "pms", target_asset_id: "win01", label: "PMS Agent 업데이트 체인", tone: "red" },
+    { source_asset_id: "win01", target_asset_id: "dc01", label: "AD / DC 접근", tone: "amber" },
+    { source_asset_id: "pms", target_asset_id: "soc01", label: "PMS 로그 수집", tone: "blue" },
+    { source_asset_id: "win01", target_asset_id: "soc01", label: "Endpoint 로그 수집", tone: "blue" },
+    { source_asset_id: "dc01", target_asset_id: "soc01", label: "DC 로그 수집", tone: "blue" },
+  ],
 };
 
 const ASSET_FALLBACKS = [
@@ -51,6 +106,65 @@ function getMapPositionOverride(targetId, assetId, fallbackPosition) {
   const campaignId = String(targetId || "").toUpperCase();
   const normalizedAssetId = String(assetId || "").toLowerCase();
   return MAP_POSITION_OVERRIDES[campaignId]?.[normalizedAssetId] || fallbackPosition;
+}
+
+function getMapLinkOverrides(targetId) {
+  const campaignId = String(targetId || "").toUpperCase();
+  return MAP_LINK_OVERRIDES[campaignId] || null;
+}
+
+function isTelemetryAsset(asset) {
+  const haystack = [
+    asset?.asset_id,
+    asset?.name,
+    asset?.hostname,
+    asset?.platform,
+    asset?.role,
+    asset?.segment_id,
+    asset?.log_collection_status,
+  ].map((value) => String(value || "").toLowerCase()).join(" ");
+  return /(elk|siem|soc|monitor|log|detection|cloudtrail|sqs)/.test(haystack);
+}
+
+function buildDefaultTopologyPaths(assets) {
+  const normalizedAssets = normalizeList(assets).filter((asset) => asset?.asset_id);
+  if (normalizedAssets.length < 2) return [];
+
+  const telemetryAssets = normalizedAssets.filter(isTelemetryAsset);
+  const topologyAssets = normalizedAssets.filter((asset) => !isTelemetryAsset(asset));
+  const sourceAsset = topologyAssets.find((asset) => /attacker|operator|external|bastion|compromised/.test(String(asset.asset_id || asset.name || "").toLowerCase()))
+    || topologyAssets[0]
+    || normalizedAssets[0];
+  const coreAsset = topologyAssets.find((asset) => asset.asset_id !== sourceAsset.asset_id && /(server|controller|cluster|jenkins|pms|pc|app|fs|kubernetes)/.test(String(`${asset.asset_id} ${asset.name} ${asset.role} ${asset.platform}`).toLowerCase()))
+    || topologyAssets.find((asset) => asset.asset_id !== sourceAsset.asset_id)
+    || normalizedAssets.find((asset) => asset.asset_id !== sourceAsset.asset_id);
+
+  const paths = [];
+  const seen = new Set();
+  const addPath = (source, target, label, tone) => {
+    if (!source?.asset_id || !target?.asset_id || source.asset_id === target.asset_id) return;
+    const key = `${source.asset_id}->${target.asset_id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    paths.push({
+      source_asset_id: source.asset_id,
+      target_asset_id: target.asset_id,
+      label,
+      tone,
+    });
+  };
+
+  addPath(sourceAsset, coreAsset, "Topology entry", "red");
+  topologyAssets
+    .filter((asset) => asset.asset_id !== sourceAsset.asset_id && asset.asset_id !== coreAsset?.asset_id)
+    .forEach((asset, index) => {
+      addPath(coreAsset || sourceAsset, asset, "Topology branch", index % 2 ? "amber" : "red");
+    });
+  telemetryAssets.forEach((asset) => {
+    addPath(coreAsset || sourceAsset, asset, "Telemetry collection", "blue");
+  });
+
+  return paths;
 }
 
 function readDashboardCache() {
@@ -951,14 +1065,11 @@ export default function App() {
   }, [assets]);
 
   const mapLinks = useMemo(() => {
-    const configuredPaths = normalizeList(target?.attack_paths).filter(shouldShowMapPath);
+    const overridePaths = getMapLinkOverrides(target?.target_id || campaignId);
+    const configuredPaths = overridePaths || normalizeList(target?.attack_paths).filter(shouldShowMapPath);
     const displayPaths = configuredPaths.length > 0
       ? configuredPaths
-      : assets.slice(0, -1).map((asset, index) => ({
-        source_asset_id: asset.asset_id,
-        target_asset_id: assets[index + 1]?.asset_id,
-        label: "Default topology flow",
-      }));
+      : buildDefaultTopologyPaths(assets);
 
     return displayPaths.map((path, index) => {
       const sourceId = String(path.source_asset_id || "").toLowerCase();
@@ -976,7 +1087,7 @@ export default function App() {
           sourceId,
           targetId,
           label: path.label,
-          tone: ["red", "blue", "amber"][index % 3],
+          tone: path.tone || ["red", "blue", "amber"][index % 3],
           d: `M ${x} ${y} C ${x + 6} ${y - 12}, ${x + 18} ${y - 10}, ${x + 14} ${y + 2}`,
         };
       }
@@ -998,7 +1109,7 @@ export default function App() {
         sourceId,
         targetId,
         label: path.label,
-        tone: ["red", "blue", "amber"][index % 3],
+        tone: path.tone || ["red", "blue", "amber"][index % 3],
         d: `M ${start.left} ${start.top} C ${start.left} ${laneTop}, ${end.left} ${laneTop}, ${end.left} ${end.top}`,
       };
     }).filter(Boolean);

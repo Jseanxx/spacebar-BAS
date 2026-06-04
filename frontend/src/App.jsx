@@ -1333,7 +1333,7 @@ export default function App() {
     ? operationById.get(representativeReport.source_id) || null
     : null;
   const latestOperation = selectedRun ? null : (
-    selectedOperation || liveOperation || representativeOperation || campaignOperations[0] || null
+    selectedOperation || liveOperation || campaignOperations[0] || representativeOperation || null
   );
   const canCancelLatestOperation = Boolean(
     latestOperation?.operation_id && ["pending", "queued", "running"].includes(latestOperation.status),
@@ -1367,7 +1367,9 @@ export default function App() {
     || (latestOperation?.operation_id
       ? campaignReports.find((report) => report.source_id === latestOperation.operation_id)
       : null);
-  const latestReport = operationReport || representativeReport || campaignReports[0] || reports[0] || null;
+  const latestReport = latestOperation
+    ? operationReport
+    : representativeReport || campaignReports[0] || reports[0] || null;
   const reportSummary = latestReport?.summary || {};
   const selectedOperationKey = latestOperation?.operation_id || "";
   const operationSelectOptions = useMemo(() => {

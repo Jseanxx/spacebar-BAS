@@ -105,6 +105,8 @@ EXECUTION_STATUS_LABELS = {
 
 GAP_LABELS = {
     "not_checked": "검증 미완료",
+    "alert_query_missing": "Kibana Alert 미설정",
+    "elk_connection_failed": "ELK 연결/조회 실패",
     "agent_or_execution_failed": "에이전트/실행 실패",
     "no_alert": "알림 룰 미탐",
     "query_too_narrow": "쿼리 범위 재검토",
@@ -115,6 +117,7 @@ GAP_LABELS = {
 ACTION_LABELS = {
     "keep": "유지",
     "tune_or_create_rule": "탐지 룰 튜닝 또는 신규 생성",
+    "configure_alert_query": "Kibana Alert 쿼리 매핑 추가",
     "fix_telemetry_then_rule": "로그 수집 경로 보완 후 룰 작성",
     "fix_validation_pipeline": "ELK 쿼리/연동 검증",
     "fix_agent_or_execution": "Agent 또는 실행 조건 점검",
@@ -127,6 +130,7 @@ ACTION_LABELS = {
 ACTION_REASONS_KO = {
     "keep": "원본 로그와 탐지 알림이 모두 확인되었습니다.",
     "tune_or_create_rule": "원본 로그는 있으나 매칭되는 탐지 알림이 없습니다.",
+    "configure_alert_query": "이 Technique에 매핑된 Kibana Alert 조회 조건이 없습니다.",
     "fix_telemetry_then_rule": "원본 로그와 탐지 알림이 모두 확인되지 않았습니다.",
     "fix_validation_pipeline": "ELK 쿼리, 연결 상태 또는 실시간 검증 증거를 확인해야 합니다.",
     "fix_agent_or_execution": "BAS 단계가 완료되지 않아 탐지 여부를 검증할 수 없습니다.",
@@ -360,6 +364,22 @@ def is_matched(check):
     return bool((check or {}).get("matched"))
 
 
+def check_status(check):
+    if is_matched(check):
+        return "matched"
+    if is_checked(check):
+        return "not_matched"
+
+    message = str((check or {}).get("message") or "").lower()
+    if "no alert query configured" in message:
+        return "not_configured"
+    if "no elk query configured" in message or "no query configured" in message:
+        return "not_configured"
+    if "failed" in message or "urlopen error" in message or "connection" in message or "연결" in message:
+        return "check_failed"
+    return "not_checked"
+
+
 def event_count(check):
     value = (check or {}).get("event_count")
     return value if isinstance(value, int) else 0
@@ -415,9 +435,24 @@ def is_simulated_step(step):
     )
 
 
-def classify_gap(detection_status, source_checked, source_matched, alert_checked, alert_matched, simulated):
+def classify_gap(
+    detection_status,
+    source_checked,
+    source_matched,
+    alert_checked,
+    alert_matched,
+    simulated,
+    source_status=None,
+    alert_status=None,
+):
     if simulated:
         return "not_checked"
+    if detection_status == "blocked":
+        return None
+    if source_status == "check_failed" or alert_status == "check_failed":
+        return "elk_connection_failed"
+    if alert_status == "not_configured":
+        return "alert_query_missing"
     if detection_status == "execution_failed":
         return "agent_or_execution_failed"
     if detection_status == "not_checked":
@@ -451,6 +486,8 @@ def classify_detection_status(step):
     source_matched = is_matched(elk_check)
     alert_checked = is_checked(alert_check)
     alert_matched = is_matched(alert_check)
+    source_status = check_status(elk_check)
+    alert_status = check_status(alert_check)
     simulated = execution_status == "simulated"
     fallback_status = fallback_detection_status(step)
 
@@ -477,27 +514,35 @@ def classify_detection_status(step):
             source_matched = True
             alert_checked = True
             alert_matched = True
+            source_status = "matched"
+            alert_status = "matched"
         elif detection_status == "logged_only":
             source_checked = True
             source_matched = True
             alert_checked = True
             alert_matched = False
+            source_status = "matched"
+            alert_status = "not_matched"
         elif detection_status == "alert_without_source_sample":
             source_checked = True
             source_matched = False
             alert_checked = True
             alert_matched = True
+            source_status = "not_matched"
+            alert_status = "matched"
         elif detection_status == "missed":
             source_checked = True
             source_matched = False
             alert_checked = True
             alert_matched = False
+            source_status = "not_matched"
+            alert_status = "not_matched"
 
     return {
         "execution_status": execution_status,
         "detection_status": detection_status,
-        "source_status": "matched" if source_matched else "not_matched" if source_checked else "not_checked",
-        "alert_status": "matched" if alert_matched else "not_matched" if alert_checked else "not_checked",
+        "source_status": source_status,
+        "alert_status": alert_status,
         "source_event_count": event_count(elk_check),
         "alert_count": event_count(alert_check),
         "gap_type": classify_gap(
@@ -507,12 +552,15 @@ def classify_detection_status(step):
             alert_checked,
             alert_matched,
             simulated,
+            source_status,
+            alert_status,
         ),
     }
 
 
 def recommendation_for(step, classification):
     status = classification["detection_status"]
+    gap_type = classification.get("gap_type")
 
     if status == "baseline":
         return {
@@ -530,6 +578,11 @@ def recommendation_for(step, classification):
             "reason": "Source telemetry and alert evidence both matched.",
         }
     if status == "logged_only":
+        if gap_type == "alert_query_missing":
+            return {
+                "action": "configure_alert_query",
+                "reason": "Source telemetry exists, but no Kibana Alert query mapping is configured for this technique.",
+            }
         return {
             "action": "tune_or_create_rule",
             "reason": "Source telemetry exists, but no matching alert was found.",
@@ -540,6 +593,11 @@ def recommendation_for(step, classification):
             "reason": "Neither source telemetry nor alert evidence matched.",
         }
     if status == "not_checked":
+        if gap_type == "alert_query_missing":
+            return {
+                "action": "configure_alert_query",
+                "reason": "Kibana Alert query mapping is missing, so alert validation was not performed.",
+            }
         return {
             "action": "fix_validation_pipeline",
             "reason": "ELK query, connection, or live validation evidence was not available.",
@@ -828,6 +886,10 @@ def detection_gap_reason(step):
     source_status = step.get("source_status")
     alert_status = step.get("alert_status")
 
+    if gap_type == "alert_query_missing" or alert_status == "not_configured":
+        return "이 Technique에 매핑된 Kibana Alert 조회 조건이 없습니다. Alert index와 rule id/name 기준으로 alert_queries를 추가해야 합니다."
+    if gap_type == "elk_connection_failed" or source_status == "check_failed" or alert_status == "check_failed":
+        return "ELK 연결 또는 Elasticsearch 조회가 실패했습니다. Controller에서 ELK URL, 인증 정보, 터널/보안그룹, alert index 접근 가능 여부를 확인해야 합니다."
     if detection_status == "missed":
         if gap_type == "no_telemetry" or (source_status == "not_matched" and alert_status == "not_matched"):
             return "원본 로그와 탐지 알림이 모두 확인되지 않았습니다. 로그 수집 경로, 인덱스 매핑, 센서 설치 상태를 먼저 확인해야 합니다."
@@ -1357,14 +1419,20 @@ def build_tactic_coverage(steps):
                 "key": tactic,
                 "label": TACTIC_LABELS.get(tactic, tactic),
                 "total": 0,
+                "log_total": 0,
                 "log_matched": 0,
+                "alert_total": 0,
                 "alert_matched": 0,
                 "not_checked": 0,
             }
         row = grouped[tactic]
         row["total"] += 1
+        if step.get("source_status") in ("matched", "not_matched"):
+            row["log_total"] += 1
         if step.get("source_status") == "matched":
             row["log_matched"] += 1
+        if step.get("alert_status") in ("matched", "not_matched"):
+            row["alert_total"] += 1
         if step.get("alert_status") == "matched":
             row["alert_matched"] += 1
         if step.get("source_status") == "not_checked" and step.get("alert_status") == "not_checked":
@@ -1513,15 +1581,18 @@ def render_summary_html(report):
         return f"<th><span>{text(ko)}</span><small>{text(en)}</small></th>"
 
     def stacked_bar(row, matched_key, matched_label, missed_label, class_name):
-        total = row.get("total") or 0
+        total_key = "log_total" if matched_key == "log_matched" else "alert_total"
+        total = row.get(total_key) or 0
         matched = row.get(matched_key) or 0
         matched_percent = round((matched / total) * 100) if total else 0
         missed_percent = max(0, 100 - matched_percent)
+        unchecked = max(0, (row.get("total") or 0) - total)
+        unchecked_note = f" · Not checked {unchecked}" if unchecked else ""
         return (
             "<div class=\"stacked-bar-item\">"
             "<div class=\"stacked-bar\">"
-            f"<i class=\"not-covered\" style=\"height: {missed_percent}%\" title=\"{text(missed_label)} {total - matched}/{total}\"></i>"
-            f"<i class=\"covered {class_name}\" style=\"height: {matched_percent}%\" title=\"{text(matched_label)} {matched}/{total}\"></i>"
+            f"<i class=\"not-covered\" style=\"height: {missed_percent}%\" title=\"{text(missed_label)} {total - matched}/{total}{unchecked_note}\"></i>"
+            f"<i class=\"covered {class_name}\" style=\"height: {matched_percent}%\" title=\"{text(matched_label)} {matched}/{total}{unchecked_note}\"></i>"
             "</div>"
             f"<strong>{matched}/{total}</strong>"
             f"<span>{text(row.get('label'))}</span>"
@@ -1979,9 +2050,17 @@ def render_summary_html(report):
         1 for step in attack_steps_for_matrix
         if step.get("source_status") == "matched"
     )
+    log_checked_count = sum(
+        1 for step in attack_steps_for_matrix
+        if step.get("source_status") in ("matched", "not_matched")
+    )
     alert_matched_count = sum(
         1 for step in attack_steps_for_matrix
         if step.get("alert_status") == "matched"
+    )
+    alert_checked_count = sum(
+        1 for step in attack_steps_for_matrix
+        if step.get("alert_status") in ("matched", "not_matched")
     )
     attack_total = summary.get("attack_steps", 0) or executed_count or len(attack_steps_for_matrix)
     backlog_total = len(backlog) or summary.get("logged_only_count", 0) + summary.get("missed_count", 0) + summary.get("not_checked_count", 0)
@@ -2016,15 +2095,15 @@ def render_summary_html(report):
         ),
         kpi_card(
             "원천 로그 수집",
-            percent_label(log_matched_count, attack_total),
-            f"Source telemetry {log_matched_count}/{attack_total}",
+            percent_label(log_matched_count, log_checked_count),
+            f"Source telemetry {log_matched_count}/{log_checked_count} · 미확인 {max(0, attack_total - log_checked_count)}",
             "good",
             "<path d=\"M6 3h12v18H6z\" /><path d=\"M9 7h6M9 11h6M9 15h3\" />",
         ),
         kpi_card(
             "Kibana Alert 탐지",
-            percent_label(alert_matched_count, attack_total),
-            f"Actionable alert {alert_matched_count}/{attack_total}",
+            percent_label(alert_matched_count, alert_checked_count),
+            f"Actionable alert {alert_matched_count}/{alert_checked_count} · 미확인 {max(0, attack_total - alert_checked_count)}",
             "bad",
             "<path d=\"M12 3 22 20H2L12 3Z\" /><path d=\"M12 9v5M12 17h.01\" />",
         ),
@@ -2290,7 +2369,7 @@ def render_summary_html(report):
             </div>
             <div class="summary-band">
               <strong>Executive Summary</strong>
-              <p>{text(report.get('campaign_id'))} 환경에서 <em>{text(executed_count)}/{text(attack_total)} Technique</em>을 실행했고, 원천 로그는 <em>{text(log_matched_count)}/{text(attack_total)}</em>, Kibana Alert는 <b>{text(alert_matched_count)}/{text(attack_total)}</b>으로 확인됐습니다.</p>
+              <p>{text(report.get('campaign_id'))} 환경에서 <em>{text(executed_count)}/{text(attack_total)} Technique</em>을 실행했고, 원천 로그는 <em>{text(log_matched_count)}/{text(log_checked_count)}</em>, Kibana Alert는 <b>{text(alert_matched_count)}/{text(alert_checked_count)}</b>으로 확인됐습니다. 미확인 항목은 No Alert가 아니라 ELK 연결/쿼리/실행 차단 상태를 별도로 확인해야 합니다.</p>
             </div>
           </div>
           <aside class="meta" aria-label="보고서 메타데이터">

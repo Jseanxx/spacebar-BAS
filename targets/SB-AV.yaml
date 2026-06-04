@@ -252,6 +252,7 @@ elk:
   url: http://127.0.0.1:19200
   index: hanguel-ad-agent-*
   alert_index: hanguel-alerts-*
+  alert_campaign_id: SB-07
   alert_rule_prefix: sb07-
   alert_wait_seconds: 25
 

@@ -1044,14 +1044,52 @@ def get_operation_step_evidence(step):
         or result_module.get("runtime_context")
         or {}
     )
+    campaign_id = (
+        step.get("campaign_id")
+        or step.get("source_campaign_id")
+        or result_step.get("campaign_id")
+        or result_step.get("source_campaign_id")
+    )
+    step_order = step.get("order") or result_step.get("order") or runtime_context.get("_step_order")
+    definition_params = {}
+    if campaign_id and step_order is not None:
+        try:
+            campaign = load_campaign(campaign_id)
+            for flow_step in campaign.get("flow", []):
+                if flow_step.get("order") == step_order:
+                    definition_params = flow_step.get("params") or {}
+                    break
+        except Exception:
+            definition_params = {}
+
+    step_params = step.get("params") if isinstance(step.get("params"), dict) else {}
+    result_params = result_step.get("params") if isinstance(result_step.get("params"), dict) else {}
+    evidence_key = (
+        module_result.get("evidence_key")
+        or result_module.get("evidence_key")
+        or step.get("evidence_key")
+        or result_step.get("evidence_key")
+        or step_params.get("evidence_key")
+        or step_params.get("behavior")
+        or result_params.get("evidence_key")
+        or result_params.get("behavior")
+        or definition_params.get("evidence_key")
+        or definition_params.get("behavior")
+    )
 
     return {
-        "evidence_key": module_result.get("evidence_key") or result_module.get("evidence_key"),
-        "target_id": step.get("target_id") or result_step.get("target_id"),
+        "evidence_key": evidence_key,
+        "target_id": (
+            step.get("target_id")
+            or result_step.get("target_id")
+            or step.get("target")
+            or result_step.get("target")
+            or campaign_id
+        ),
         "operation_id": step.get("operation_id") or runtime_context.get("_operation_id"),
         "job_id": step.get("job_id") or runtime_context.get("_job_id"),
         "execution_marker": step.get("execution_marker") or runtime_context.get("_execution_marker"),
-        "step_order": step.get("order") or runtime_context.get("_step_order"),
+        "step_order": step_order,
         "time_window": {
             "started_at": result_step.get("started_at") or step.get("started_at"),
             "finished_at": result_step.get("finished_at") or step.get("finished_at"),
@@ -1060,7 +1098,8 @@ def get_operation_step_evidence(step):
 
 
 def should_defer_check_step(step):
-    if step.get("status") in ("simulated", "blocked", "failed"):
+    status = step.get("status") or step.get("execution_status")
+    if status in ("simulated", "failed"):
         return False
 
     evidence = get_operation_step_evidence(step)
@@ -1070,6 +1109,10 @@ def should_defer_check_step(step):
 def run_step_elk_check(step):
     evidence = get_operation_step_evidence(step)
     target = load_target(evidence["target_id"])
+    time_window = evidence.get("time_window") or {}
+    status = step.get("status") or step.get("execution_status")
+    if status in ("blocked", "blocked_by_safety_gate"):
+        time_window = {}
     return check_elk(
         target,
         evidence["evidence_key"],
@@ -1078,7 +1121,8 @@ def run_step_elk_check(step):
             "job_id": evidence.get("job_id"),
             "execution_marker": evidence.get("execution_marker"),
             "step_order": evidence.get("step_order"),
-            "time_window": evidence.get("time_window") or {},
+            "blocked_existing_alert_lookup": status in ("blocked", "blocked_by_safety_gate"),
+            "time_window": time_window,
         },
     )
 
@@ -1143,6 +1187,7 @@ def attach_deferred_elk_checks(operation):
 
     operation["elk_validation_status"] = "completed"
     operation["elk_validation_finished_at"] = now_kst()
+    write_operation(operation)
     return operation
 
 

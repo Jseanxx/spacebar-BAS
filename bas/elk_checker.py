@@ -101,10 +101,17 @@ def resolve_alert_query(target, evidence_key):
     if configured_query:
         return configured_query, "configured"
 
-    rule_prefix = target.get("elk", {}).get("alert_rule_prefix")
+    elk_config = target.get("elk", {})
+    rule_prefix = elk_config.get("alert_rule_prefix")
     if rule_prefix and evidence_key:
+        alert_campaign_id = (
+            elk_config.get("alert_campaign_id")
+            or target.get("alert_campaign_id")
+            or target.get("campaign_id")
+        )
+        campaign_clause = f'campaign.id:"{alert_campaign_id}" AND ' if alert_campaign_id else ""
         return (
-            f'campaign.id:"SB-07" AND '
+            campaign_clause +
             f'(rule.id:"{rule_prefix}*" OR hanguel.rule_id:"{rule_prefix}*" OR '
             f'alert.rule_id:"{rule_prefix}*" OR detection.rule_id:"{rule_prefix}*" OR '
             f'kibana.alert.rule.name:"{rule_prefix}*")'
@@ -367,14 +374,27 @@ def check_elk(target, evidence_key, execution_context=None):
         }
 
     if not query:
-        return {
+        source_check = {
             "checked": False,
             "matched": None,
             "event_count": None,
             "index": index,
             "query": query,
             "query_source": query_source,
-            "alert_check": {
+            "sample_events": [],
+            "message": f"No ELK query configured for evidence key: {evidence_key}",
+        }
+        if alert_query:
+            source_check["alert_check"] = run_live_check(
+                elk_config,
+                alert_index,
+                alert_query,
+                alert_query_source,
+                execution_context=execution_context,
+                time_window=time_window,
+            )
+        else:
+            source_check["alert_check"] = {
                 "checked": False,
                 "matched": None,
                 "event_count": None,
@@ -382,11 +402,9 @@ def check_elk(target, evidence_key, execution_context=None):
                 "query": alert_query,
                 "query_source": alert_query_source,
                 "sample_events": [],
-                "message": "Source query is missing, alert query was not executed.",
-            },
-            "sample_events": [],
-            "message": f"No ELK query configured for evidence key: {evidence_key}",
-        }
+                "message": f"No alert query configured for evidence key: {evidence_key}",
+            }
+        return source_check
 
     source_check = run_live_check(
         elk_config,
